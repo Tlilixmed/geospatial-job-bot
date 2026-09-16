@@ -3,17 +3,65 @@
 # Run `python -m geojobbot validate-sources` after editing.
 
 [ats]
-# NOTE: these slugs are starting examples and have NOT been verified against the live APIs.
-# The run summary and `validate-sources` report any that are INVALID or EMPTY_UNVERIFIED.
-greenhouse = ["planet", "maxar", "nearmap", "stantec", "fugro", "wsp", "carto", "mapbox"]
-lever = ["ecopia", "fireflyaerospace", "hexagon", "geoiq"]
-ashby = ["overture", "felt", "wherobots"]
-smartrecruiters = []
-workable = []
-recruitee = []
+# Every slug below was checked against the live public API on 2026-09-16 (job counts in brackets
+# are the whole board, before geospatial filtering). Unknown SmartRecruiters and Workable
+# accounts also answer 200 with zero jobs, so only add those after confirming a non-empty list.
+greenhouse = [
+  "esri",            # Esri (451)
+  "planetlabs",      # Planet Labs (115)
+  "woolpert",        # Woolpert - geospatial/AEC (110)
+  "geotab",          # Geotab, Canada - telematics (81)
+  "muonspace",       # Muon Space - earth observation (120)
+  "spire",           # Spire Global - satellite data (39)
+  "blacksky",        # BlackSky - satellite imagery (24)
+  "navvis",          # NavVis - mobile mapping / LiDAR (25)
+  "albedo",          # Albedo - VHR imagery (11)
+  "developmentseed", # Development Seed - geospatial software (1)
+  "nearspacelabs",   # Near Space Labs - aerial imagery (1)
+  "capellaspace",    # Capella Space - SAR (0 at last check, board exists)
+]
+lever = [
+  "aeva",            # Aeva - LiDAR sensors (45)
+  "tomtom",          # TomTom - maps (18)
+  "orbitalsidekick", # Orbital Sidekick - hyperspectral (2)
+  "dronedeploy",     # DroneDeploy - drone mapping (0 at last check, board exists)
+]
+ashby = [
+  "iceye",           # ICEYE - SAR satellites (183)
+  "skydio",          # Skydio - drones (134)
+  "mapbox",          # Mapbox (51)
+  "element84",       # Element 84 - geospatial software (3)
+  "skywatch",        # SkyWatch, Canada - satellite data (2)
+]
+smartrecruiters = [
+  "nearmap",         # Nearmap - aerial imagery (34)
+]
+workable = [
+  "pix4d",           # Pix4D - photogrammetry (3)
+  "umbra",           # Umbra - SAR (2)
+]
+recruitee = [
+  "sweco",           # Sweco Nederland - engineering consultancy (175)
+  "tetratech",       # Tetra Tech Netherlands (33)
+  "hydrosat",        # Hydrosat - thermal satellite imagery (9)
+]
 personio = []
-# Workday: paste the public career-site URL, e.g. "https://tenant.wd5.myworkdayjobs.com/External"
-workday = []
+# Workday: paste the public career-site URL, e.g. "https://tenant.wd5.myworkdayjobs.com/External".
+# The site name after the host must be exact. Large tenants are searched by geospatial keywords,
+# not downloaded in full.
+workday = [
+  "https://trimble.wd1.myworkdayjobs.com/TrimbleCareers", # Trimble - surveying/geospatial (244)
+  "https://fugro.wd3.myworkdayjobs.com/Careers",          # Fugro - geo-data (135)
+  "https://faro.wd1.myworkdayjobs.com/Faro",              # FARO - laser scanning (3)
+  "https://hntb.wd5.myworkdayjobs.com/Hntb_Careers",      # HNTB - infrastructure engineering (523)
+  "https://leidos.wd5.myworkdayjobs.com/External",        # Leidos - many GEOINT roles (2000+)
+  "https://parsons.wd5.myworkdayjobs.com/Search",         # Parsons - geospatial/defence (1900+)
+  "https://kbr.wd5.myworkdayjobs.com/Kbr_Careers",        # KBR - geospatial/defence (1750+)
+]
+
+# Not on any supported ATS (checked): Maxar, Hexagon, Stantec, WSP, Carto, Ecopia, Felt,
+# Overture Maps, Wherobots, Bentley Systems, Safe Software. Add them as career sites below
+# once you have verified that the page exposes JSON-LD or job links.
 
 # Company career pages without a supported ATS API. The bot extracts JSON-LD/embedded jobs,
 # detects embedded ATS boards, follows job links and reads job sitemaps (robots.txt honoured).

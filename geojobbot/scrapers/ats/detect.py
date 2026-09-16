@@ -50,7 +50,9 @@ def parse_workday_url(url: str) -> BoardRef | None:
     if not segments or segments[0].lower() in {"job", "jobs", "login", "userhome"}:
         return None
     site = segments[0]
-    if not _valid_slug(site):
+    # Workday site names are chosen by the tenant; "Careers" or "Search" are common and legitimate,
+    # so only the generic Workday paths excluded above are reserved here, not RESERVED_SLUGS.
+    if not SLUG_RE.match(site):
         return None
     return BoardRef("workday", f"{tenant}/{wd}/{site}")
 

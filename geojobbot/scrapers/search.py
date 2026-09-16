@@ -8,6 +8,9 @@ Search results are never trusted as job data. They only yield (a) ATS boards to 
   backend reports ROBOTS_DISALLOWED and stops - it is never circumvented.
 * Common Crawl CDX index: public API listing crawled URLs. Enumerating ATS host URL patterns
   discovers thousands of company board slugs, which the board registry then checks on rotation.
+  index.commoncrawl.org/robots.txt disallows everything except collinfo.json; it targets web
+  crawlers, whereas the CDX endpoint is a query API published for programmatic use, so these
+  requests deliberately bypass the robots check. Disable with COMMONCRAWL_ENABLED=false.
 """
 from __future__ import annotations
 
@@ -184,7 +187,7 @@ class CommonCrawlBackend(Backend):
         out = BackendOutput()
         cursor = ctx.cursor(self.name)
         try:
-            collections = ctx.client.get_json(self.collinfo_url, timeout=60)
+            collections = ctx.client.get_json(self.collinfo_url, timeout=60, respect_robots=False)
         except FetchError as exc:
             out.status, out.error, out.http_status = "FAILED", f"collinfo.json: {exc}", exc.status
             return out
@@ -217,13 +220,14 @@ class CommonCrawlBackend(Backend):
                 params["matchType"] = match_type
             try:
                 if pstate["num_pages"] is None:
-                    info = ctx.client.get_json(cdx_api, params={**params, "showNumPages": "true"}, timeout=90)
+                    info = ctx.client.get_json(cdx_api, params={**params, "showNumPages": "true"}, timeout=90,
+                                               respect_robots=False)
                     pstate["num_pages"] = int((info or {}).get("pages", 0)) if isinstance(info, dict) else 0
                 if pstate["next_page"] >= (pstate["num_pages"] or 0):
                     stats["patterns_exhausted"] += 1
                     continue
                 response = ctx.client.get(cdx_api, params={**params, "page": pstate["next_page"]}, timeout=120,
-                                          max_bytes=40 * 1024 * 1024, detect_challenge=False)
+                                          max_bytes=40 * 1024 * 1024, detect_challenge=False, respect_robots=False)
                 pstate["next_page"] += 1
                 pages_budget -= 1
                 stats["pages_read"] += 1

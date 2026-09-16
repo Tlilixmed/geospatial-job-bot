@@ -28,6 +28,10 @@ def test_detect_native_ids():
     assert detect("https://acme.recruitee.com/o/gis-analyst")[0] == "recruitee:acme:gis-analyst"
     wd = detect("https://acme.wd5.myworkdayjobs.com/en-US/External/job/Denver-CO/GIS-Analyst_R12345")
     assert wd[1].slug == "acme/wd5/External" and wd[0] == "workday:acme:R12345"
+    # tenant-chosen site names that collide with generic reserved words are still valid on Workday
+    assert detect("https://fugro.wd3.myworkdayjobs.com/Careers")[1].slug == "fugro/wd3/Careers"
+    assert detect("https://parsons.wd5.myworkdayjobs.com/en-US/Search")[1].slug == "parsons/wd5/Search"
+    assert detect("https://acme.wd5.myworkdayjobs.com/en-US/jobs")[1] is None
     assert detect("https://boards.greenhouse.io/embed/job_board?for=acme")[1].key == "greenhouse:acme"
     assert detect("https://boards.greenhouse.io/robots.txt")[1] is None
     assert detect("https://example.com/") == (None, None)

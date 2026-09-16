@@ -275,7 +275,7 @@ In a dry run, alerts are printed rather than sent and no state is written, unles
 - `[[rss_feeds]]`
 - extra search queries
 
-> The ATS slugs shipped in `sources.toml` are starting examples and **have not been verified against the live APIs** (the sandbox this was built in could not reach them). Run `validate-sources` or check the first run summary, then fix or remove anything reported `INVALID`.
+> Every ATS slug shipped in `sources.toml` was checked against the live public APIs on 2026-09-16 (the file lists the job count per board). Companies change ATS providers, so run `validate-sources` or check the run summary after editing and fix or remove anything reported `INVALID`. SmartRecruiters and Workable answer with an empty list for unknown accounts, so confirm a non-empty board before adding one there.
 
 **Environment variables** (all optional unless noted):
 
@@ -334,7 +334,7 @@ In a dry run, alerts are printed rather than sent and no state is written, unles
 ## 8. Honest limitations
 
 - **Live APIs were not reachable during development.** All adapters are tested against mocked responses built from the public API formats. Greenhouse, Lever, Ashby and Himalayas formats were checked against documentation. Workable (widget API), Recruitee, Personio, Jobicy, Arbeitnow, RemoteOK and USAJOBS parsers are based on their known public formats but have not been exercised live. If a provider has changed its format, that source reports `SCHEMA_MISMATCH`/`FAILED` rather than silently returning nothing.
-- **Search discovery is weak by design.** Google and Bing can't be scraped legitimately. DuckDuckGo's HTML endpoint is likely disallowed by robots.txt; the bot will then report `ROBOTS_DISALLOWED` and stop. SearXNG works only with an instance you run. Common Crawl lags the live web by weeks: it finds *companies* (boards), not fresh postings, which the rotation then checks live.
+- **Search discovery is weak by design.** Google and Bing can't be scraped legitimately. DuckDuckGo's HTML endpoint is likely disallowed by robots.txt; the bot will then report `ROBOTS_DISALLOWED` and stop. SearXNG works only with an instance you run. Common Crawl lags the live web by weeks: it finds *companies* (boards), not fresh postings, which the rotation then checks live. `index.commoncrawl.org/robots.txt` disallows everything but `collinfo.json`; because the CDX index is a query API published for programmatic use rather than a site to crawl, this is the one place the bot does not apply robots.txt. Set `COMMONCRAWL_ENABLED=false` if you disagree. The index server is often overloaded and returns 5xx; the backend then reports `FAILED` for that run and tries again next time.
 - **Rotation is slow at scale.** With tens of thousands of discovered boards, a full pass takes days to weeks. Boards that produce relevant jobs are promoted to every run.
 - **No JavaScript rendering.** Pages that load jobs only through client-side JavaScript, without JSON-LD or embedded JSON, can't be extracted. Workday is handled through its public JSON endpoints.
 - **Blocked sites stay blocked.** No CAPTCHA solving, login, stealth browsers or proxies are used. Such failures are recorded and skipped.
