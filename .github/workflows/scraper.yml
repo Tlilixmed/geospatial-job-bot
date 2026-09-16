@@ -51,6 +51,7 @@ jobs:
           ADZUNA_APP_ID: ${{ secrets.ADZUNA_APP_ID }}
           ADZUNA_APP_KEY: ${{ secrets.ADZUNA_APP_KEY }}
           JOOBLE_API_KEY: ${{ secrets.JOOBLE_API_KEY }}
+          JSEARCH_API_KEY: ${{ secrets.JSEARCH_API_KEY }}
           SEARXNG_URL: ${{ vars.SEARXNG_URL }}
           # Repository variables override these defaults (Settings -> Secrets and variables -> Actions -> Variables)
           PREFERRED_LOCATIONS: ${{ vars.PREFERRED_LOCATIONS || 'Canada,Tunisia,Tunisie,Tunis' }}

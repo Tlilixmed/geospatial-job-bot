@@ -84,9 +84,9 @@ class Settings:
     high_threshold: int = 70
     medium_threshold: int = 55
     notify_possible: bool = True
-    max_job_age_hours: int = 48
-    rotation_max_job_age_hours: int = 336
-    max_alerts_per_run: int = 25
+    max_job_age_hours: int = 360  # 15 days: postings older than this are never alerted
+    rotation_max_job_age_hours: int = 360
+    max_alerts_per_run: int = 50
     max_notify_attempts: int = 5
     alert_on_changes: bool = False
     preferred_locations: list[str] = field(default_factory=list)
@@ -129,6 +129,14 @@ class Settings:
     adzuna_countries: list[str] = field(default_factory=lambda: ["ca", "gb", "us"])
     jooble_api_key: str | None = None
     jooble_locations: list[str] = field(default_factory=list)  # falls back to preferred_locations
+    # JSearch (RapidAPI): "query@country" entries rotated across runs, JSEARCH_REQUESTS_PER_RUN per run.
+    # The free tier allows 200 requests/month: one per 4-hourly run stays inside it.
+    jsearch_api_key: str | None = None
+    jsearch_requests_per_run: int = 1
+    jsearch_queries: list[str] = field(default_factory=lambda: [
+        "GIS geospatial geomatics@ca", "SIG géomatique topographe@tn", "GIS analyst remote@us",
+        "LiDAR photogrammetry surveying@ca", "cartographer remote sensing@ca", "ingénieur SIG géomatique@fr",
+    ])
     feeds_enabled: list[str] = field(default_factory=lambda: ["remotive", "jobicy", "himalayas", "arbeitnow", "remoteok"])
     disabled_backends: list[str] = field(default_factory=list)
 
@@ -156,7 +164,8 @@ class Settings:
 
     def secrets(self) -> list[str]:
         return [s for s in (self.r2_access_key_id, self.r2_secret_access_key, self.telegram_bot_token,
-                            self.usajobs_api_key, self.adzuna_app_key, self.jooble_api_key) if s]
+                            self.usajobs_api_key, self.adzuna_app_key, self.jooble_api_key,
+                            self.jsearch_api_key) if s]
 
 
 def load_sources(path: str) -> dict:
@@ -236,6 +245,9 @@ def load_settings() -> Settings:
     s.adzuna_countries = [c.lower() for c in env_list("ADZUNA_COUNTRIES", s.adzuna_countries)]
     s.jooble_api_key = env_str("JOOBLE_API_KEY")
     s.jooble_locations = env_list("JOOBLE_LOCATIONS", s.jooble_locations)
+    s.jsearch_api_key = env_str("JSEARCH_API_KEY")
+    s.jsearch_requests_per_run = max(0, env_int("JSEARCH_REQUESTS_PER_RUN", s.jsearch_requests_per_run))
+    s.jsearch_queries = env_list("JSEARCH_QUERIES", s.jsearch_queries)
     s.feeds_enabled = env_list("FEEDS_ENABLED", s.feeds_enabled)
     s.disabled_backends = env_list("DISABLED_BACKENDS", s.disabled_backends)
 

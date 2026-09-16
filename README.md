@@ -33,7 +33,7 @@ Finds relevant GIS / geospatial / surveying / LiDAR / remote-sensing jobs from l
 | Generic extraction | `generic_pages` | Any queued public job page: JSON-LD `JobPosting` → embedded JSON → structured HTML. ATS URLs are fetched through the ATS API instead. |
 | Public feeds | `remotive`, `jobicy`, `himalayas`, `arbeitnow`, `remoteok`, `rss_feeds`, `usajobs` | Rate-respecting JSON/RSS feeds (each has a minimum interval). `rss_feeds` ships with GoGeomatics (Canada), GISjobs.com, Government of Canada Job Bank searches and Tunisie Travail searches. |
 | Job boards without feeds | `career_sites` with `source_type = "feed"` | Keyword search pages of boards such as Keejob (Tunisia): job links are followed and each posting's JSON-LD is read. |
-| Aggregator APIs (optional) | `adzuna`, `jooble` | Free API keys. Adzuna covers Canada, UK, US and more; Jooble covers Tunisia, the Maghreb and Canada. |
+| Aggregator APIs (optional) | `adzuna`, `jooble`, `jsearch` | Free API keys. Adzuna covers Canada, UK, US and more; Jooble covers Tunisia, the Maghreb and Canada; JSearch returns Google for Jobs results (LinkedIn, Indeed, Glassdoor, employer sites) with full descriptions. |
 | Search (optional) | `search_searxng`, `search_duckduckgo` | Discovery only: results are never used as job data. |
 | Supplementary | `jobspy` | Optional `python-jobspy`: Indeed and LinkedIn by default (Glassdoor, Bayt, Google can be enabled), one Indeed country per location, LinkedIn descriptions fetched for scoring. |
 
@@ -100,14 +100,14 @@ A job is alerted only when **all** of these hold:
 - it was seen live this run;
 - it hasn't been notified yet;
 - it has retry budget left;
-- it isn't stale. The age limit is 48h (`MAX_JOB_AGE_HOURS`), or 14 days for jobs from rotating discovered boards (`ROTATION_MAX_JOB_AGE_HOURS`), because those boards are checked less often. A job is never rejected just for lacking a posting date.
+- it isn't stale. The age limit is 15 days (`MAX_JOB_AGE_HOURS=360`, also `ROTATION_MAX_JOB_AGE_HOURS` for rotating discovered boards). The same window drives each source's own "posted within" filter (JobSpy, Adzuna, USAJOBS, JSearch). A job is never rejected just for lacking a posting date.
 
 Delivery rules:
 
 - **Format.** By default each run sends one numbered digest (`ALERT_FORMAT=digest`): High matches first, then Possible, one entry per job with company, score, location, date, salary, top skills and the apply link. It is split into several messages only when it exceeds Telegram's 4096-character limit. `ALERT_FORMAT=individual` sends one message per job instead.
 - `notified=true` is written only after Telegram confirms delivery (per message, so every job in a delivered digest part is marked). A failed send is retried on later runs, up to `MAX_NOTIFY_ATTEMPTS`.
 - State is checkpointed to R2 *before* alerts are sent, so a crash can't cause a flood of repeats.
-- Alerts per run are capped (`MAX_ALERTS_PER_RUN`, default 25), highest scores first; the rest wait for the next run.
+- Alerts per run are capped (`MAX_ALERTS_PER_RUN`, default 50), highest scores first; the rest wait for the next run.
 
 ---
 
@@ -178,6 +178,7 @@ Optional secrets, each enabling one more source:
 | `USAJOBS_API_KEY`, `USAJOBS_EMAIL` | free key from developer.usajobs.gov |
 | `ADZUNA_APP_ID`, `ADZUNA_APP_KEY` | free at developer.adzuna.com (Canada, UK, US, AU, DE, FR… — not Tunisia) |
 | `JOOBLE_API_KEY` | free at jooble.org/api/about (covers Tunisia, the Maghreb and Canada) |
+| `JSEARCH_API_KEY` | free tier at rapidapi.com (JSearch, 200 requests/month): Google for Jobs results, i.e. LinkedIn, Indeed and Glassdoor postings with full descriptions, any country |
 
 Optional **variables** (`scraper.yml` applies sensible defaults when unset; Canada and Tunisia are the default locations):
 
@@ -301,8 +302,8 @@ In a dry run, alerts are printed rather than sent and no state is written, unles
 | `REQUIRE_R2` | `false` (`true` in Actions) | fail instead of falling back to local state |
 | `HIGH_MATCH_THRESHOLD` / `MEDIUM_MATCH_THRESHOLD` | `70` / `55` | tier thresholds |
 | `NOTIFY_POSSIBLE` | `true` | alert on Possible matches |
-| `MAX_JOB_AGE_HOURS` / `ROTATION_MAX_JOB_AGE_HOURS` | `48` / `336` | freshness limits |
-| `MAX_ALERTS_PER_RUN` / `MAX_NOTIFY_ATTEMPTS` | `25` / `5` | alert flood control and retry budget |
+| `MAX_JOB_AGE_HOURS` / `ROTATION_MAX_JOB_AGE_HOURS` | `360` / `360` | freshness limits (15 days) |
+| `MAX_ALERTS_PER_RUN` / `MAX_NOTIFY_ATTEMPTS` | `50` / `5` | alert flood control and retry budget |
 | `ALERT_ON_CHANGES` | `false` | re-alert when a notified job's title/location/salary/remote status changes |
 | `ALERT_FORMAT` | `digest` | `digest`: one numbered list per run · `individual`: one message per job |
 | `PREFERRED_LOCATIONS`, `ACCEPTED_REMOTE_SCOPES` | empty | location scoring |
@@ -321,6 +322,7 @@ In a dry run, alerts are printed rather than sent and no state is written, unles
 | `USAJOBS_API_KEY`, `USAJOBS_EMAIL` | empty | enables USAJOBS |
 | `ADZUNA_APP_ID`, `ADZUNA_APP_KEY`, `ADZUNA_COUNTRIES` | empty, empty, `ca,gb,us` | enables Adzuna |
 | `JOOBLE_API_KEY`, `JOOBLE_LOCATIONS` | empty, `PREFERRED_LOCATIONS` | enables Jooble |
+| `JSEARCH_API_KEY`, `JSEARCH_REQUESTS_PER_RUN`, `JSEARCH_QUERIES` | empty, `1`, six `query@country` entries for CA/TN/US/FR | enables JSearch; queries rotate across runs to stay inside the free quota |
 | `DISABLED_BACKENDS` | empty | e.g. `search_duckduckgo,arbeitnow` |
 | `SOURCE_CONCURRENCY` | `6` | parallel backends |
 | `RUN_TIME_BUDGET_MINUTES` | `40` | soft deadline; backends stop early and report PARTIAL |

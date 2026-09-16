@@ -24,7 +24,8 @@ from ..scrapers.ats.base import ATSBackend
 from ..scrapers.ats.more_ats import all_adapters
 from ..scrapers.base import Backend, RunContext
 from ..scrapers.feeds import (AdzunaBackend, ArbeitnowBackend, HimalayasBackend, JobicyBackend, JobSpyBackend,
-                              JoobleBackend, RemoteOKBackend, RemotiveBackend, RssFeedBackend, UsaJobsBackend)
+                              JoobleBackend, JSearchBackend, RemoteOKBackend, RemotiveBackend, RssFeedBackend,
+                              UsaJobsBackend)
 from ..scrapers.pages import CareerSitesBackend, GenericPagesBackend
 from ..scrapers.search import CommonCrawlBackend, DuckDuckGoBackend, SearxngBackend
 from ..storage.base import LocalStore, ObjectStore, StorageError
@@ -82,6 +83,7 @@ def build_backends(settings) -> list[Backend]:
         UsaJobsBackend(),
         AdzunaBackend(),
         JoobleBackend(),
+        JSearchBackend(),
         JobSpyBackend(),
     ]
     return backends

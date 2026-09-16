@@ -111,7 +111,7 @@ def test_alert_selection_dedup_and_retry_budget():
 
 
 def test_stale_blocking_and_rotation_window_and_missing_date():
-    settings = make_settings()
+    settings = make_settings(max_job_age_hours=48, rotation_max_job_age_hours=336)
     st = state()
     old = raw(posted_at=NOW - timedelta(days=5))
     undated = raw(native_id="greenhouse:3", url="https://boards.greenhouse.io/acme/jobs/3", apply_url=None,

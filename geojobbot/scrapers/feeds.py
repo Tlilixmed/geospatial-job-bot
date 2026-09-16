@@ -9,6 +9,8 @@
   USAJOBS    https://data.usajobs.gov/api/search (free API key + email, optional)
   Adzuna     https://api.adzuna.com/v1/api/jobs/{country}/search/1 (free app id + key, optional)
   Jooble     https://jooble.org/api/{key} (free API key, optional; covers Tunisia and Canada among others)
+  JSearch    https://jsearch.p.rapidapi.com/search (RapidAPI key, free 200 req/month; Google for Jobs index,
+             which carries LinkedIn, Indeed and Glassdoor postings with full descriptions)
   JobSpy     python-jobspy library (optional, supplementary: Indeed, LinkedIn, Glassdoor, Bayt, Google)
 
 Each feed runs at most once per ``min_interval_hours`` (tracked in R2 state) to respect the
@@ -121,6 +123,11 @@ class JsonFeedBackend(Backend):
 def _link_native(url: str | None) -> str | None:
     native, _ = detect(url) if url else (None, None)
     return native
+
+
+def days_window(settings) -> int:
+    """The alert freshness window in whole days, used as each source's own 'posted within' filter."""
+    return max(1, -(-int(settings.max_job_age_hours) // 24))
 
 
 class RemotiveBackend(JsonFeedBackend):
@@ -414,7 +421,8 @@ class UsaJobsBackend(Backend):
         for keyword in self.keywords:
             try:
                 data = ctx.client.get_json("https://data.usajobs.gov/api/search", headers=headers, respect_robots=False,
-                                           params={"Keyword": keyword, "ResultsPerPage": 100, "DatePosted": 7})
+                                           params={"Keyword": keyword, "ResultsPerPage": 100,
+                                                   "DatePosted": min(60, days_window(ctx.settings))})
             except FetchError as exc:
                 errors.append(f"{keyword}: {exc.kind}")
                 if exc.kind in ("AUTH_REQUIRED", "BLOCKED", "RATE_LIMITED"):
@@ -541,8 +549,8 @@ class JobSpyBackend(Backend):
                 if not sites:
                     continue
                 kwargs = dict(site_name=sites, search_term=term, location=location,
-                              results_wanted=ctx.settings.jobspy_results_wanted, hours_old=72,
-                              country_indeed=country, verbose=0)
+                              results_wanted=ctx.settings.jobspy_results_wanted,
+                              hours_old=int(ctx.settings.max_job_age_hours), country_indeed=country, verbose=0)
                 if "linkedin" in sites and ctx.settings.jobspy_linkedin_fetch_description:
                     kwargs["linkedin_fetch_description"] = True
                 try:
@@ -636,7 +644,7 @@ class AdzunaBackend(Backend):
                     break
                 url = self.api.format(country=country)
                 params = {"app_id": ctx.settings.adzuna_app_id, "app_key": ctx.settings.adzuna_app_key, "what": term,
-                          "results_per_page": 50, "max_days_old": 3, "sort_by": "date",
+                          "results_per_page": 50, "max_days_old": days_window(ctx.settings), "sort_by": "date",
                           "content-type": "application/json"}
                 try:
                     data = ctx.client.get_json(url, params=params, respect_robots=False)
@@ -773,5 +781,108 @@ class JoobleBackend(Backend):
             employment_type=item.get("type") or None, salary=item.get("salary") or None, posted_at=posted,
             posted_at_reliable=posted is not None, native_id=_link_native(url),
             source_job_id=f"jooble:{item['id']}" if item.get("id") else None, extraction_method="api",
+            geo_context=True,
+        )
+
+
+class JSearchBackend(Backend):
+    """JSearch on RapidAPI: Google for Jobs results (LinkedIn, Indeed, Glassdoor and employer sites) with full
+    descriptions. The free tier is 200 requests a month, so the configured "query@country" list rotates and
+    only JSEARCH_REQUESTS_PER_RUN queries run per execution (one per 4-hourly run = ~180/month)."""
+
+    name = "jsearch"
+    phase = "extraction"
+    source_type = "aggregator"
+    api = "https://jsearch.p.rapidapi.com/search"
+    host = "jsearch.p.rapidapi.com"
+
+    def enabled(self, ctx):
+        ok, reason = super().enabled(ctx)
+        if ok and not ctx.settings.jsearch_api_key:
+            return False, "JSEARCH_API_KEY not set"
+        if ok and not (ctx.settings.jsearch_queries and ctx.settings.jsearch_requests_per_run):
+            return False, "no JSearch queries or JSEARCH_REQUESTS_PER_RUN=0"
+        return ok, reason
+
+    @staticmethod
+    def date_posted(settings) -> str:
+        days = days_window(settings)
+        return "today" if days <= 1 else "3days" if days <= 3 else "week" if days <= 7 else "month"
+
+    def run(self, ctx: RunContext) -> BackendOutput:
+        out = BackendOutput()
+        queries = ctx.settings.jsearch_queries
+        cursor = ctx.cursor(self.name)
+        start = int(cursor.get("index", 0)) % len(queries)
+        n = min(ctx.settings.jsearch_requests_per_run, len(queries))
+        headers = {"X-RapidAPI-Key": ctx.settings.jsearch_api_key, "X-RapidAPI-Host": self.host}
+        errors, ok, seen = [], 0, set()
+        for offset in range(n):
+            if ctx.out_of_time(200):
+                break
+            spec = queries[(start + offset) % len(queries)]
+            cursor["index"] = (start + offset + 1) % len(queries)
+            query, _, country = spec.partition("@")
+            params = {"query": query.strip(), "page": 1, "num_pages": 1, "date_posted": self.date_posted(ctx.settings)}
+            if country.strip():
+                params["country"] = country.strip().lower()
+            try:
+                data = ctx.client.get_json(self.api, params=params, headers=headers, respect_robots=False)
+            except FetchError as exc:
+                errors.append(f"{spec}: {exc.kind}")
+                if exc.kind in ("AUTH_REQUIRED", "BLOCKED", "RATE_LIMITED"):
+                    break  # 429 here means the monthly quota is gone: stop spending requests
+                continue
+            items = data.get("data") if isinstance(data, dict) else None
+            if not isinstance(items, list):
+                errors.append(f"{spec}: unexpected structure")
+                continue
+            ok += 1
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                try:
+                    job = self.to_raw(item)
+                except Exception:
+                    ctx.record_parser_error(self.name)
+                    continue
+                key = job.source_job_id or job.url
+                if not job.title or key in seen:
+                    continue
+                seen.add(key)
+                if ctx.prefilter(job.title, True):
+                    out.jobs.append(job)
+                else:
+                    out.prefiltered_out += 1
+        out.details = {"queries_ok": ok, "errors": errors[:10], "next_index": cursor.get("index")}
+        if out.jobs:
+            ctx.snapshot(self.name, [j.snapshot() for j in out.jobs])
+        if ok == 0:
+            out.status, out.error = "FAILED", errors[0] if errors else "no successful requests"
+        elif errors:
+            out.status = "PARTIAL"
+        return out
+
+    @staticmethod
+    def to_raw(item: dict) -> RawJob:
+        posted = parse_datetime(item.get("job_posted_at_datetime_utc"))
+        if posted is None and item.get("job_posted_at_timestamp"):
+            posted = datetime.fromtimestamp(int(item["job_posted_at_timestamp"]), tz=timezone.utc)
+        url = item.get("job_apply_link") or item.get("job_google_link")
+        location = ", ".join(str(x) for x in (item.get("job_city"), item.get("job_state"), item.get("job_country")) if x)
+        salary = None
+        if item.get("job_min_salary") or item.get("job_max_salary"):
+            salary = (f"{item.get('job_salary_currency') or ''} {item.get('job_min_salary') or ''}–"
+                      f"{item.get('job_max_salary') or ''} {item.get('job_salary_period') or ''}").strip()
+        remote = item.get("job_is_remote")
+        return RawJob(
+            source_type="aggregator", source_name=f"jsearch:{item.get('job_publisher') or 'google'}",
+            source_url="https://jsearch.p.rapidapi.com/search", title=html_to_text(item.get("job_title")),
+            company=item.get("employer_name") or None, url=url, apply_url=url,
+            description=html_to_text(item.get("job_description")), location_raw=location,
+            remote_flag=bool(remote) if remote is not None else None,
+            employment_type=item.get("job_employment_type") or None, salary=salary, posted_at=posted,
+            posted_at_reliable=posted is not None, native_id=_link_native(url),
+            source_job_id=f"jsearch:{item['job_id']}" if item.get("job_id") else None, extraction_method="api",
             geo_context=True,
         )

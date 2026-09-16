@@ -1,7 +1,7 @@
 from conftest import GIS_DESCRIPTION, FakeResponse, FakeSession, make_ctx, make_settings
 
-from geojobbot.scrapers.feeds import (AdzunaBackend, HimalayasBackend, JobSpyBackend, JoobleBackend, RemoteOKBackend,
-                                      RemotiveBackend, RssFeedBackend, UsaJobsBackend)
+from geojobbot.scrapers.feeds import (AdzunaBackend, HimalayasBackend, JobSpyBackend, JoobleBackend, JSearchBackend,
+                                      RemoteOKBackend, RemotiveBackend, RssFeedBackend, UsaJobsBackend, days_window)
 from geojobbot.scrapers.search import CommonCrawlBackend, DuckDuckGoBackend, SearxngBackend
 
 
@@ -119,6 +119,36 @@ def test_adzuna_auth_failure_stops_early_and_hides_key():
     out = AdzunaBackend().run(make_ctx(s, make_settings(adzuna_app_id="id", adzuna_app_key="SECRETKEY", adzuna_countries=["ca", "gb"])))
     assert out.status == "FAILED" and out.error == "ca/GIS: AUTH_REQUIRED" and len(s.calls) == 1
     assert "SECRETKEY" not in str(out.details)
+
+
+def test_jsearch_rotates_queries_within_budget_and_parses():
+    payload = {"status": "OK", "data": [
+        {"job_id": "abc", "job_title": "GIS Analyst", "employer_name": "MapCo", "job_publisher": "LinkedIn",
+         "job_apply_link": "https://www.linkedin.com/jobs/view/1", "job_description": GIS_DESCRIPTION, "job_is_remote": False,
+         "job_posted_at_datetime_utc": "2026-09-15T08:00:00.000Z", "job_city": "Tunis", "job_state": None, "job_country": "TN",
+         "job_min_salary": None, "job_max_salary": None, "job_employment_type": "FULLTIME"},
+        {"job_id": "def", "job_title": "Nurse", "job_apply_link": "https://x.example/1"}]}
+    s = FakeSession({"https://jsearch.p.rapidapi.com/search": FakeResponse(200, payload)})
+    ctx = make_ctx(s, make_settings(jsearch_api_key="KEY", jsearch_queries=["GIS@ca", "SIG@tn", "LiDAR@us"],
+                                    jsearch_requests_per_run=1, max_job_age_hours=360))
+    out = JSearchBackend().run(ctx)
+    assert out.status == "SUCCESS" and [j.title for j in out.jobs] == ["GIS Analyst"] and out.prefiltered_out == 1
+    job = out.jobs[0]
+    assert (job.company, job.source_name, job.location_raw, job.source_job_id) == ("MapCo", "jsearch:LinkedIn", "Tunis, TN", "jsearch:abc")
+    assert job.posted_at.day == 15 and job.description == GIS_DESCRIPTION and job.employment_type == "FULLTIME"
+    assert len(s.calls) == 1 and all(p in s.calls[0][1] for p in ("query=GIS", "country=ca", "date_posted=month"))
+    assert ctx.cursor("jsearch")["index"] == 1
+    JSearchBackend().run(ctx)  # next run takes the next query
+    assert "query=SIG" in s.calls[1][1] and "country=tn" in s.calls[1][1] and ctx.cursor("jsearch")["index"] == 2
+    assert JSearchBackend().enabled(make_ctx(FakeSession()))[0] is False
+    assert days_window(make_settings(max_job_age_hours=360)) == 15 and days_window(make_settings(max_job_age_hours=48)) == 2
+
+
+def test_jsearch_quota_exhausted_stops_spending():
+    s = FakeSession({"https://jsearch.p.rapidapi.com/search": FakeResponse(429, {"message": "quota exceeded"})})
+    out = JSearchBackend().run(make_ctx(s, make_settings(jsearch_api_key="KEY", jsearch_requests_per_run=3)))
+    assert out.status == "FAILED" and "RATE_LIMITED" in out.error
+    assert len({c[1] for c in s.calls}) == 1  # retries of the first query only, never the next queries
 
 
 def test_jooble_posts_per_term_and_location():
