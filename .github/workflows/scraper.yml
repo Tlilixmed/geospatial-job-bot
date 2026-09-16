@@ -1,0 +1,58 @@
+name: Geospatial job scraper
+
+on:
+  schedule:
+    - cron: "0 */4 * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Print alerts instead of sending, and do not write state"
+        type: boolean
+        default: false
+
+concurrency:
+  group: geospatial-job-scraper
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-optional.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r requirements-optional.txt || echo "::warning::python-jobspy failed to install; JobSpy backend will be skipped"
+
+      - name: Run bot
+        env:
+          R2_ENDPOINT_URL: ${{ secrets.R2_ENDPOINT_URL }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          USAJOBS_API_KEY: ${{ secrets.USAJOBS_API_KEY }}
+          USAJOBS_EMAIL: ${{ secrets.USAJOBS_EMAIL }}
+          SEARXNG_URL: ${{ vars.SEARXNG_URL }}
+          PREFERRED_LOCATIONS: ${{ vars.PREFERRED_LOCATIONS }}
+          ACCEPTED_REMOTE_SCOPES: ${{ vars.ACCEPTED_REMOTE_SCOPES }}
+          BOT_USER_AGENT: ${{ vars.BOT_USER_AGENT }}
+          REQUIRE_R2: "true"
+          DRY_RUN: ${{ inputs.dry_run && 'true' || 'false' }}
+          RUN_TIME_BUDGET_MINUTES: "45"
+        run: python -m geojobbot run

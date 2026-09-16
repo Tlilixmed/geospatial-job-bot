@@ -1,0 +1,40 @@
+# Sources configuration. Every board listed here is validated each run:
+# invalid slugs are reported as INVALID in the run summary (never silently "0 jobs").
+# Run `python -m geojobbot validate-sources` after editing.
+
+[ats]
+# NOTE: these slugs are starting examples and have NOT been verified against the live APIs.
+# The run summary and `validate-sources` report any that are INVALID or EMPTY_UNVERIFIED.
+greenhouse = ["planet", "maxar", "nearmap", "stantec", "fugro", "wsp", "carto", "mapbox"]
+lever = ["ecopia", "fireflyaerospace", "hexagon", "geoiq"]
+ashby = ["overture", "felt", "wherobots"]
+smartrecruiters = []
+workable = []
+recruitee = []
+personio = []
+# Workday: paste the public career-site URL, e.g. "https://tenant.wd5.myworkdayjobs.com/External"
+workday = []
+
+# Company career pages without a supported ATS API. The bot extracts JSON-LD/embedded jobs,
+# detects embedded ATS boards, follows job links and reads job sitemaps (robots.txt honoured).
+# [[career_sites]]
+# name = "Example Surveying Ltd"
+# url = "https://www.example.com/careers"
+# geospatial = true                 # company is geospatial: generic titles get evaluated
+# job_url_pattern = "/careers/job/" # optional regex restricting which links are job pages
+# sitemap = "https://www.example.com/sitemap-jobs.xml"  # optional; otherwise robots.txt sitemaps
+# max_pages = 40
+
+# [[rss_feeds]]
+# name = "example-gis-board"
+# url = "https://jobs.example.org/feed.rss"
+# source_type = "feed"
+# geospatial = true
+
+[search]
+# Additional queries for SearXNG/DuckDuckGo discovery (results are only used to find pages/boards)
+extra_queries = [
+  '"GIS technician" utility mapping job',
+  '"LiDAR technician" job',
+  '"land information" GIS job opening',
+]

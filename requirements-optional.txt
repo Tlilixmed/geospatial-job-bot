@@ -1,0 +1,2 @@
+# Supplementary aggregator discovery. Optional: the bot runs without it.
+python-jobspy>=1.1.80
