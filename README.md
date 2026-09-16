@@ -73,7 +73,8 @@ Invalid configured slugs are listed prominently in the run summary and GitHub st
 - **Negative titles** (Director, VP, Recruiter, Nurse, Electrical Engineer, …) are rejected. "Architect" is overridden when the title is geospatial ("GIS Architect"). "Engineer" is never excluded globally.
 - **Title-only sources.** A strong geospatial title with no description available is floored at *Possible* and labelled "Title-only evidence".
 - **Evidence-only explanations.** "Why it matched" bullets are generated only from terms actually found in the job text.
-- **Rejection codes:** `NO_RELEVANT_TITLE`, `NEGATIVE_TITLE`, `INSUFFICIENT_GEOSPATIAL_SIGNALS`, `LOW_TECHNICAL_RELEVANCE`, `LOCATION_MISMATCH`, `LOW_SCORE`.
+- **Work authorisation.** Postings that require an existing right to work, citizenship or permanent residency, a security clearance, or that state no visa sponsorship is offered (English and French wording) are rejected with `WORK_AUTHORIZATION_REQUIRED`, unless the job is in one of `HOME_COUNTRIES` (default `Tunisia`) or the posting says sponsorship is available, in which case "Visa sponsorship offered" appears in the evidence and the digest shows 🛂. Disable with `EXCLUDE_WORK_AUTH_REQUIRED=false`.
+- **Rejection codes:** `NO_RELEVANT_TITLE`, `NEGATIVE_TITLE`, `INSUFFICIENT_GEOSPATIAL_SIGNALS`, `LOW_TECHNICAL_RELEVANCE`, `LOCATION_MISMATCH`, `WORK_AUTHORIZATION_REQUIRED`, `LOW_SCORE`.
 - **French postings.** Titles such as "Ingénieur SIG", "Géomaticien", "Topographe", "Cartographe" or "Chargé d'études SIG" and French skill and domain wording (télédétection, photogrammétrie, nuages de points, levés topographiques, "maîtrise de QGIS exigée"…) are recognised alongside English, so Tunisian, Maghreb and Québec sources score properly. Accents are folded before title matching.
 - **Customising.** Edit `geojobbot/matching/profile.py` to add roles, skills, domains or negatives.
 
@@ -129,7 +130,8 @@ Safety rules:
 - The document is decoded again after serialisation, before any upload.
 - The previous version is copied to `backups/` before each overwrite.
 - **Optimistic concurrency:** if the state's ETag changed since load, the write goes to `conflicts/` and the run fails instead of clobbering data. The workflow's `concurrency` group normally prevents this anyway.
-- A missing state object while backups exist restores the newest valid backup; the bot never silently starts empty. Corrupt state also falls back to backups. If none are usable the run stops, unless `ALLOW_STATE_RESET=true`.
+- A missing state object while backups exist restores the newest valid backup; the bot never silently starts empty. Corrupt state also falls back to backups. If none are usable, or the state is missing while `runs/` reports exist, the run stops (exit 1) unless `ALLOW_STATE_RESET=true`.
+- Every save is read back (`HEAD`) before the run continues; a write that is not visible afterwards fails the run.
 - If R2 is unreachable, the run aborts **before** scraping or alerting (exit code 1).
 - Old `raw/` and `runs/` objects are deleted once a day.
 
@@ -309,6 +311,7 @@ In a dry run, alerts are printed rather than sent and no state is written, unles
 | `PREFERRED_LOCATIONS`, `ACCEPTED_REMOTE_SCOPES` | empty | location scoring |
 | `STRICT_LOCATION_FILTER` | `false` | reject non-matching locations |
 | `EXTRA_NEGATIVE_TITLES` | empty | comma-separated extra exclusions |
+| `EXCLUDE_WORK_AUTH_REQUIRED`, `HOME_COUNTRIES` | `true`, `Tunisia` | reject postings needing existing work authorisation / no sponsorship, except in home countries |
 | `ROTATION_BOARDS_PER_ATS` | `60` | discovered boards checked per ATS per run |
 | `MAX_DETAIL_FETCHES_PER_BOARD` | `30` | per-job detail requests per board |
 | `GENERIC_PAGES_PER_RUN` / `GENERIC_PAGES_PER_HOST` / `PAGE_REFETCH_DAYS` | `80` / `15` / `7` | generic crawler budget |
@@ -346,7 +349,7 @@ In a dry run, alerts are printed rather than sent and no state is written, unles
 - **Invalid slugs** are listed each run. Use `inspect --boards INVALID` to see all of them, including discovered boards, which are re-checked after 60 days.
 - **Too many or too few alerts.** Adjust the thresholds, `NOTIFY_POSSIBLE`, `EXTRA_NEGATIVE_TITLES`, or the location variables. Add missing skills or roles in `profile.py`.
 - **Recovering state.** Copy an object from `state/backups/` over `state/state.json.gz`, e.g. with `rclone` or `aws s3 cp --endpoint-url $R2_ENDPOINT_URL`. If a `conflicts/` object appears, two writers overlapped: inspect both, keep the one you want and delete the other.
-- **Resetting everything.** Delete `state/` in the bucket (backups included). The next run is a first run, with alerts capped by `MAX_ALERTS_PER_RUN`.
+- **Resetting everything.** Delete `state/` in the bucket (backups included) **and** `runs/`, or set `ALLOW_STATE_RESET=true` for one run: a missing state while `runs/` still holds reports is treated as data loss and the run refuses to start fresh, because doing so would re-alert every job. The next run is then a first run, with alerts capped by `MAX_ALERTS_PER_RUN`.
 - **Adding a site-specific extractor.** Call `register_site_adapter(host_regex, func)` in `geojobbot/scrapers/generic.py`.
 - **Adding a new ATS.** Implement `ATSAdapter.fetch_board` (optionally `fetch_job`), add URL detection in `scrapers/ats/detect.py`, and register it in `all_adapters()`.
 

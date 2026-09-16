@@ -20,6 +20,8 @@ INSUFFICIENT_GEOSPATIAL_SIGNALS = "INSUFFICIENT_GEOSPATIAL_SIGNALS"
 LOW_TECHNICAL_RELEVANCE = "LOW_TECHNICAL_RELEVANCE"
 LOCATION_MISMATCH = "LOCATION_MISMATCH"
 LOW_SCORE = "LOW_SCORE"
+WORK_AUTHORIZATION_REQUIRED = "WORK_AUTHORIZATION_REQUIRED"
+SPONSORSHIP_EVIDENCE = "Visa sponsorship offered"
 
 SEP = r"[\s\-/&,:|()]+"
 
@@ -83,6 +85,30 @@ def _compiled_roles():
 def _compiled_negatives(extra: tuple[str, ...]):
     items = list(P.NEGATIVE_TITLES) + list(extra)
     return [(neg, re.compile(r"(?<![a-z0-9])" + re.escape(fold(neg)) + r"(?![a-z0-9])")) for neg in items]
+
+
+@lru_cache(maxsize=None)
+def _compiled_work_auth():
+    return tuple([re.compile(p) for p in group]
+                 for group in (P.WORK_AUTH_REQUIRED, P.SPONSORSHIP_OFFERED, P.WORK_AUTH_COMPATIBLE))
+
+
+def work_authorization(text: str, location: dict, cfg: P.MatchConfig) -> tuple[bool, bool]:
+    """Return (requires_existing_authorization, sponsorship_offered) for the posting text.
+
+    Not required when the job is in one of cfg.home_countries, when sponsorship is offered, or when the
+    posting only asks for the right to work in the candidate's own country of residence.
+    """
+    required_rx, offered_rx, compatible_rx = _compiled_work_auth()
+    folded = fold(text)
+    offered = any(rx.search(folded) for rx in offered_rx)
+    compatible = any(rx.search(folded) for rx in compatible_rx)
+    country = fold(location.get("country") or "")
+    scope = fold(location.get("remote_scope") or "")
+    homes = [fold(c) for c in cfg.home_countries if c.strip()]
+    at_home = bool(homes) and (country in homes or scope in homes)
+    required = not (at_home or offered or compatible) and any(rx.search(folded) for rx in required_rx)
+    return required, offered
 
 
 @lru_cache(maxsize=None)
@@ -227,6 +253,9 @@ def score_job(title: str, description: str, location: dict, cfg: P.MatchConfig |
         title_points = 0
     if loc_mismatch and cfg.strict_location:
         rejections.append(LOCATION_MISMATCH)
+    auth_required, sponsorship = work_authorization(full_text, location or {}, cfg)
+    if auth_required and cfg.exclude_work_auth_required:
+        rejections.append(WORK_AUTHORIZATION_REQUIRED)
 
     score = title_points + tech_points + domain_points + resp_points + loc_points
     title_only = False
@@ -263,6 +292,8 @@ def score_job(title: str, description: str, location: dict, cfg: P.MatchConfig |
         why.append(hit.canonical)
     if loc_evidence:
         why.append(loc_evidence)
+    if sponsorship:
+        why.append(SPONSORSHIP_EVIDENCE)
     if title_only:
         why.append("Title-only evidence (source provided no description)")
 

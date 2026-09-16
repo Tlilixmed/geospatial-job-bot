@@ -120,7 +120,16 @@ class StateManager:
                 self.etag = None
                 self.loaded = True
                 return state
-            log.info("no existing state found: starting fresh (first run)")
+            previous_runs = self.store.list_keys(self.key("runs/"))
+            if previous_runs and not self.allow_reset:
+                # Earlier runs wrote reports here, so starting empty would re-alert every job they saw.
+                raise StateCorruptError(
+                    f"{self.state_key} is missing although {len(previous_runs)} objects exist under "
+                    f"{self.key('runs/')} (store={self.store.name}); refusing to start fresh. Check the bucket, "
+                    f"restore a backup, or set ALLOW_STATE_RESET=true to start over deliberately"
+                )
+            log.info("no existing state found at %s (store=%s): starting fresh (first run)", self.state_key,
+                     self.store.name)
             self.first_run = True
             self.loaded = True
             self.etag = None
@@ -175,11 +184,14 @@ class StateManager:
             self._backed_up_this_run = True
             self._prune_backups()
         etag = self.store.put_bytes(self.state_key, payload, "application/gzip")
-        if etag is None:
-            head = self.store.head(self.state_key)
-            etag = head["etag"] if head else None
-        self.etag = etag
-        return etag
+        head = self.store.head(self.state_key)  # read back: the object must be there for the next runner
+        if head is None:
+            raise StateCorruptError(f"{self.state_key} could not be read back after writing it (store={self.store.name})")
+        if head.get("size") not in (None, 0, len(payload)):
+            raise StateCorruptError(f"{self.state_key} read back with {head['size']} bytes, wrote {len(payload)}")
+        self.etag = etag or head["etag"]
+        log.info("state saved: %s (%d bytes, %d jobs)", self.state_key, len(payload), len(state.get("jobs", {})))
+        return self.etag
 
     def _prune_backups(self) -> None:
         try:

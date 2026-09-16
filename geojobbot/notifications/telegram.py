@@ -47,6 +47,8 @@ def _digest_entry(rec: dict, index: int) -> str:
         facts.append(f"📅 {posted.strftime('%d %b')}")
     if rec.get("salary"):
         facts.append(f"💰 {_esc(rec['salary'])}")
+    if "Visa sponsorship offered" in (rec.get("why_matched") or []):
+        facts.append("🛂 sponsorship offered")
     skills = [s.split(" (")[0] for s in rec.get("matched_skills") or []]
     tail = []
     if skills:

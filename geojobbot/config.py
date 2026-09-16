@@ -93,6 +93,8 @@ class Settings:
     accepted_remote_scopes: list[str] = field(default_factory=list)
     strict_location: bool = False
     extra_negative_titles: list[str] = field(default_factory=list)
+    exclude_work_auth_required: bool = True  # drop postings needing existing authorisation / no sponsorship
+    home_countries: list[str] = field(default_factory=lambda: ["Tunisia"])
 
     # telegram
     telegram_bot_token: str | None = None
@@ -160,6 +162,8 @@ class Settings:
             accepted_remote_scopes=self.accepted_remote_scopes,
             strict_location=self.strict_location,
             extra_negative_titles=self.extra_negative_titles,
+            exclude_work_auth_required=self.exclude_work_auth_required,
+            home_countries=self.home_countries,
         )
 
     def secrets(self) -> list[str]:
@@ -214,6 +218,8 @@ def load_settings() -> Settings:
     s.accepted_remote_scopes = env_list("ACCEPTED_REMOTE_SCOPES", s.accepted_remote_scopes)
     s.strict_location = env_bool("STRICT_LOCATION_FILTER", s.strict_location)
     s.extra_negative_titles = env_list("EXTRA_NEGATIVE_TITLES", s.extra_negative_titles)
+    s.exclude_work_auth_required = env_bool("EXCLUDE_WORK_AUTH_REQUIRED", s.exclude_work_auth_required)
+    s.home_countries = env_list("HOME_COUNTRIES", s.home_countries)
 
     s.telegram_bot_token = env_str("TELEGRAM_BOT_TOKEN")
     s.telegram_chat_id = env_str("TELEGRAM_CHAT_ID")

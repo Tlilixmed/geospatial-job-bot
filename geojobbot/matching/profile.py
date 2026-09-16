@@ -157,7 +157,11 @@ DOMAIN_TERMS = [
                                r"\bmining\s+(?:claims?|tenements?|concessions?|titles?)\b", r"\btenements?\b"),
          family="mineral_tenure"),
     Term("Mining", 3, (r"\bmining\b", r"\bmineral\s+exploration\b", r"\bmine\s+(?:site|planning|survey\w*)\b",
-                       r"\bmini[èe]re?s?\b")),
+                       r"\bmini[èe]re?s?\b", r"\bexploration\s+(?:mini[èe]re|g[ée]ologique)\b",
+                       r"\btitres?\s+miniers?\b", r"\bpermis\s+(?:minier|de\s+recherche|d.exploration)\b",
+                       r"\bstaking\b", r"\bclaim\s+(?:maps?|staking|overlaps?)\b")),
+    Term("Geology", 3, (r"\bgeolog\w*", r"\blitholog\w*", r"\bg[ée]olog\w*", r"\bdrill\s*holes?\b", r"\bore\s+bod\w+"),
+         family="geology"),
     Term("LiDAR", 5, (r"\blidar\b", r"\blaser\s+scann\w*", r"\bbalayage\s+laser\b", r"\bscanner\s+laser\b"),
          family="lidar"),
     Term("Point clouds", 5, (r"\bpoint[\s-]?clouds?\b", r"\bnuages?\s+de\s+points\b"), family="lidar"),
@@ -225,6 +229,45 @@ PREFERRED_HINTS = (r"\b(prefer\w*|nice[\s-]to[\s-]have|asset|desirabl\w+|bonus|p
 
 CATEGORY_CAPS = {"title": 40, "tech": 25, "domain": 20, "responsibilities": 10, "location": 5}
 
+# Work authorisation. Postings that demand an existing right to work, citizenship or a security
+# clearance, or state that no visa sponsorship is offered, are rejected unless the job is in one of
+# MatchConfig.home_countries or the posting says sponsorship is available. Patterns run on the
+# accent-folded, lowercased text.
+WORK_AUTH_REQUIRED = [
+    r"\b(?:must|need|needs|required?|expected) (?:to )?(?:be |have |hold |possess )?(?:currently |already )?(?:legally )?"
+    r"(?:authori[sz]ed|eligible|entitled|permitted|able|allowed) to (?:work|live and work)\b",
+    r"\b(?:legal |unrestricted |existing |current |valid |permanent )?(?:authori[sz]ation|right|rights|eligibility|permission|entitlement) "
+    r"to (?:work|live and work) in\b",
+    r"\b(?:no|not|unable to|cannot|can not|will not|won.t|does not|do not|don.t|isn.t able to|is not able to) "
+    r"(?:currently |be able to |offer |provide |consider )?(?:any |visa |immigration |employment |work )?sponsor",
+    r"\bwithout (?:the need for |need of |requiring |current or future )?(?:visa |employer )?sponsorship\b",
+    r"\bsponsorship (?:is|will) (?:not|unavailable)|\bsponsorship (?:is )?not (?:available|offered|provided|possible)\b",
+    r"\b(?:u\.?s\.?a?\.?|american|canadian|british|uk|australian|eu|german|french|dutch) (?:citizens?|citizenship|nationals?)\b",
+    r"\bpermanent residen(?:t|ts|cy|ce)\b", r"\bgreen card\b",
+    r"\b(?:security|secret|top secret|government|dv|sc|baseline) clearance\b", r"\bts/sci\b", r"\bclearance (?:is )?required\b",
+    r"\b(?:valid |current )?(?:work|employment) (?:permit|visa|authori[sz]ation)\b", r"\bopen work permit\b",
+    # French
+    r"\b(?:autorisation|permis) de travail\b", r"\bcitoyennete (?:canadienne|francaise|americaine)\b",
+    r"\bcitoyens? (?:canadiens?|francais)\b", r"\bresiden(?:t|ts|ce) permanent(?:s|e)?\b",
+    r"\b(?:sans|pas de|aucun) parrainage\b", r"\bne (?:parraine|parrainons|parrainent) pas\b",
+    r"\bhabilitation (?:de securite|secret)\b",
+]
+# Wording that only asks for the right to work where the candidate already lives (remote-from-anywhere roles).
+WORK_AUTH_COMPATIBLE = [
+    r"\b(?:authori[sz]ed|eligible|entitled|permitted|able|allowed|right) to work in (?:their|your|the|his|her) "
+    r"(?:own )?(?:country|location|place|jurisdiction) of residence\b",
+    r"\bwork (?:from |in )?(?:the )?country (?:where|in which) (?:you|they) (?:live|reside|are based)\b",
+    r"\bautoris\w+ (?:a|de) travailler dans (?:votre|son|leur) pays de residence\b",
+]
+SPONSORSHIP_OFFERED = [
+    r"\b(?:visa |work permit |immigration )?sponsorship (?:is |will be |can be |may be )?(?:available|offered|provided|possible|considered)\b",
+    r"\b(?:we |company |employer )?(?:will|can|able to|happy to|willing to|open to|may) (?:offer |provide |consider |assist with )?"
+    r"(?:visa |work permit |immigration )?sponsor(?:ship|ing)?\b",
+    r"\bwe sponsor\b", r"\bvisa (?:support|assistance|sponsorship and relocation)\b", r"\brelocation (?:and|&|\+) visa\b",
+    r"\b(?:relocation|immigration) (?:assistance|support|package) (?:is )?(?:available|offered|provided)\b",
+    r"\bparrainage (?:de )?visa (?:disponible|offert|possible)\b", r"\b(?:aide|soutien) (?:a l.|pour l.)?immigration\b",
+]
+
 
 @dataclass
 class MatchConfig:
@@ -235,3 +278,5 @@ class MatchConfig:
     strict_location: bool = False
     extra_negative_titles: list[str] = field(default_factory=list)
     title_only_min_points: int = 34
+    exclude_work_auth_required: bool = True
+    home_countries: list[str] = field(default_factory=lambda: ["Tunisia"])  # no work authorisation needed there

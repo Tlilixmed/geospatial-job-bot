@@ -112,6 +112,29 @@ def test_deterministic():
     assert a == b
 
 
+def test_work_authorization_exclusion_and_exemptions():
+    us = GIS_DESCRIPTION + " Applicants must be authorized to work in the United States; we are unable to sponsor visas."
+    r = M.score_job("GIS Analyst", us, {"city": "Denver", "country": "United States", "raw": "Denver, CO"})
+    assert r.tier == "rejected" and M.WORK_AUTHORIZATION_REQUIRED in r.rejection_reasons
+    # the same wording on a job in the candidate's own country is irrelevant
+    tn = M.score_job("GIS Analyst", us, {"city": "Tunis", "country": "Tunisia", "raw": "Tunis"})
+    assert M.WORK_AUTHORIZATION_REQUIRED not in tn.rejection_reasons and tn.tier == "high"
+    # an explicit sponsorship offer overrides authorisation boilerplate and is shown as evidence
+    ok = M.score_job("GIS Analyst", GIS_DESCRIPTION + " Security clearance not needed. Visa sponsorship is available.", REMOTE)
+    assert M.WORK_AUTHORIZATION_REQUIRED not in ok.rejection_reasons and M.SPONSORSHIP_EVIDENCE in ok.why_matched
+    clearance = M.score_job("GIS Analyst", GIS_DESCRIPTION + " Active TS/SCI clearance required.", REMOTE)
+    assert M.WORK_AUTHORIZATION_REQUIRED in clearance.rejection_reasons
+    fr = M.score_job("Ingénieur SIG", GIS_DESCRIPTION + " Citoyenneté canadienne ou résidence permanente exigée.",
+                     {"country": "Canada", "raw": "Montréal"})
+    assert M.WORK_AUTHORIZATION_REQUIRED in fr.rejection_reasons
+    anywhere = M.score_job("GIS Analyst", GIS_DESCRIPTION + " Visa sponsorship is not available. Applicants must be "
+                           "authorized to work in their country of residence.", REMOTE)
+    assert M.WORK_AUTHORIZATION_REQUIRED not in anywhere.rejection_reasons  # remote from home is fine
+    off = M.score_job("GIS Analyst", us, REMOTE, MatchConfig(exclude_work_auth_required=False))
+    assert M.WORK_AUTHORIZATION_REQUIRED not in off.rejection_reasons
+    assert M.score_job("GIS Analyst", GIS_DESCRIPTION, REMOTE).rejection_reasons == []
+
+
 # ------------------------------------------------------------------ French postings
 FR_DESCRIPTION = (
     "Nous recrutons un Ingénieur SIG pour la cartographie des réseaux. Missions : analyse spatiale, numérisation, "

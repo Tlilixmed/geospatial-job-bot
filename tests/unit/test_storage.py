@@ -26,6 +26,21 @@ def test_store_contract(store):
     assert store.get_bytes("a/b.json") is None
 
 
+def test_missing_state_with_previous_runs_refuses_to_start_fresh(store):
+    store.put_bytes("runs/latest.json", b"{}")
+    with pytest.raises(StateCorruptError, match="refusing to start fresh"):
+        StateManager(store).load()
+    manager = StateManager(store, allow_reset=True)
+    assert manager.load()["jobs"] == {} and manager.first_run
+
+
+def test_save_reads_back_the_object(store):
+    manager = StateManager(store)
+    state = manager.load()
+    assert manager.save(state, "run1")
+    assert store.head("state/state.json.gz")["size"] > 0
+
+
 def test_r2_unreachable_is_error_not_missing():
     s3 = FakeS3()
     s3.fail = ConnectionError("network down")
