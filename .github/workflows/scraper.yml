@@ -3,6 +3,8 @@ name: Geospatial job scraper
 on:
   schedule:
     - cron: "0 */4 * * *"
+  push:
+    branches: [main]   # every push runs the bot once on the new code (the concurrency group prevents overlap)
   workflow_dispatch:
     inputs:
       dry_run:
