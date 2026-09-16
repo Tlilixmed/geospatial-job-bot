@@ -98,6 +98,7 @@ class Settings:
     telegram_bot_token: str | None = None
     telegram_chat_id: str | None = None
     telegram_delay_s: float = 1.2
+    alert_format: str = "digest"  # digest: one numbered list per run | individual: one message per job
 
     # discovery budgets
     rotation_boards_per_ats: int = 60
@@ -115,11 +116,19 @@ class Settings:
     usajobs_api_key: str | None = None
     usajobs_email: str | None = None
     jobspy_enabled: bool = True
-    jobspy_sites: list[str] = field(default_factory=lambda: ["indeed"])
+    jobspy_sites: list[str] = field(default_factory=lambda: ["indeed", "linkedin"])
     jobspy_terms_per_run: int = 3
+    # "Location" or "Location@indeed_country" (e.g. "Canada@canada", "Tunisia@worldwide"); the country
+    # selects the Indeed/Glassdoor site and falls back to jobspy_country_indeed.
     jobspy_locations: list[str] = field(default_factory=lambda: ["Remote"])
-    jobspy_results_wanted: int = 30
+    jobspy_results_wanted: int = 15
     jobspy_country_indeed: str = "USA"
+    jobspy_linkedin_fetch_description: bool = True
+    adzuna_app_id: str | None = None
+    adzuna_app_key: str | None = None
+    adzuna_countries: list[str] = field(default_factory=lambda: ["ca", "gb", "us"])
+    jooble_api_key: str | None = None
+    jooble_locations: list[str] = field(default_factory=list)  # falls back to preferred_locations
     feeds_enabled: list[str] = field(default_factory=lambda: ["remotive", "jobicy", "himalayas", "arbeitnow", "remoteok"])
     disabled_backends: list[str] = field(default_factory=list)
 
@@ -147,7 +156,7 @@ class Settings:
 
     def secrets(self) -> list[str]:
         return [s for s in (self.r2_access_key_id, self.r2_secret_access_key, self.telegram_bot_token,
-                            self.usajobs_api_key) if s]
+                            self.usajobs_api_key, self.adzuna_app_key, self.jooble_api_key) if s]
 
 
 def load_sources(path: str) -> dict:
@@ -200,6 +209,9 @@ def load_settings() -> Settings:
     s.telegram_bot_token = env_str("TELEGRAM_BOT_TOKEN")
     s.telegram_chat_id = env_str("TELEGRAM_CHAT_ID")
     s.telegram_delay_s = max(1.2, env_float("TELEGRAM_DELAY_SECONDS", s.telegram_delay_s))
+    s.alert_format = (env_str("ALERT_FORMAT", s.alert_format) or s.alert_format).lower()
+    if s.alert_format not in ("digest", "individual"):
+        raise ValueError(f"ALERT_FORMAT must be 'digest' or 'individual', got {s.alert_format!r}")
 
     s.rotation_boards_per_ats = env_int("ROTATION_BOARDS_PER_ATS", s.rotation_boards_per_ats)
     s.max_detail_fetches_per_board = env_int("MAX_DETAIL_FETCHES_PER_BOARD", s.max_detail_fetches_per_board)
@@ -218,6 +230,12 @@ def load_settings() -> Settings:
     s.jobspy_locations = env_list("JOBSPY_LOCATIONS", s.jobspy_locations)
     s.jobspy_results_wanted = env_int("JOBSPY_RESULTS_WANTED", s.jobspy_results_wanted)
     s.jobspy_country_indeed = env_str("JOBSPY_COUNTRY_INDEED", s.jobspy_country_indeed)
+    s.jobspy_linkedin_fetch_description = env_bool("JOBSPY_LINKEDIN_FETCH_DESCRIPTION", s.jobspy_linkedin_fetch_description)
+    s.adzuna_app_id = env_str("ADZUNA_APP_ID")
+    s.adzuna_app_key = env_str("ADZUNA_APP_KEY")
+    s.adzuna_countries = [c.lower() for c in env_list("ADZUNA_COUNTRIES", s.adzuna_countries)]
+    s.jooble_api_key = env_str("JOOBLE_API_KEY")
+    s.jooble_locations = env_list("JOOBLE_LOCATIONS", s.jooble_locations)
     s.feeds_enabled = env_list("FEEDS_ENABLED", s.feeds_enabled)
     s.disabled_backends = env_list("DISABLED_BACKENDS", s.disabled_backends)
 

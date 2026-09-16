@@ -69,7 +69,7 @@ def build_summary(report: dict) -> str:
         f"  Rejected: {c.get('tier_rejected', 0)}",
         "",
         "Alerts:",
-        f"  Sent: {c.get('alerts_sent', 0)}",
+        f"  Sent: {c.get('alerts_sent', 0)} job(s) in {c.get('messages_sent', 0)} message(s)",
         f"  Failed: {c.get('alerts_failed', 0)}",
         f"  Blocked (stale posting): {c.get('blocked_stale', 0)}",
         f"  Deferred (per-run cap): {c.get('deferred_by_cap', 0)}",

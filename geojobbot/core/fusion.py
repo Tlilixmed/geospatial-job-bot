@@ -22,6 +22,9 @@ from ..utils.text import fold, normalize_company, normalize_title, sha1
 from ..utils.urls import canonicalize_url, is_aggregator
 
 FUZZY_STATE_MATCH_DAYS = 60
+# Below this many characters a description is an excerpt (feed summaries run 200-280 chars); the matcher
+# uses the same bar to decide whether a job has a description at all.
+FULL_DESCRIPTION_CHARS = 300
 
 
 @dataclass
@@ -210,8 +213,8 @@ def fuse(raws: list[RawJob], state_jobs: dict, now) -> list[FusedJob]:
         best_loc = locs[members[0]]
 
         description = ""
-        for raw in group_raws:  # best-priority description of meaningful length, else the longest
-            if len(raw.description or "") >= 200:
+        for raw in group_raws:  # best-priority *full* description, else the longest excerpt
+            if len(raw.description or "") >= FULL_DESCRIPTION_CHARS:
                 description = raw.description
                 break
         if not description:

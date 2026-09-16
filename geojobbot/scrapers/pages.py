@@ -25,6 +25,18 @@ log = logging.getLogger(__name__)
 SITEMAP_HINT_RE = re.compile(r"job|career|vacanc|position|posting|opening|recruit", re.I)
 MAX_SITEMAP_FILES = 6
 MAX_SITEMAP_URLS = 5000
+# A [[career_sites]] entry may declare source_type to mark a job board rather than an employer page:
+# its postings then carry that authority in fusion and its name is never used as the employer.
+SITE_SOURCE_TYPES = {"employer_page", "feed", "aggregator", "government"}
+
+
+def site_source_type(site: dict) -> str:
+    value = str(site.get("source_type") or "employer_page").lower()
+    return value if value in SITE_SOURCE_TYPES else "employer_page"
+
+
+def site_company_hint(site: dict) -> str | None:
+    return site.get("name") if site_source_type(site) == "employer_page" else None
 
 
 def parse_sitemap(body: bytes) -> tuple[list[tuple[str, str | None]], list[str]]:
@@ -68,8 +80,8 @@ class CareerSitesBackend(Backend):
     def _queue_link(self, ctx, url: str, anchor: str, site: dict, origin: str, lastmod=None) -> bool:
         geo = bool(site.get("geospatial", True))
         priority = 85 if ctx.prefilter(anchor or url.rsplit("/", 1)[-1].replace("-", " "), False) else 40
-        return ctx.pages.add(url, origin=origin, priority=priority, geo_context=geo, lastmod=lastmod,
-                             company_hint=site.get("name"))
+        return ctx.pages.add(url, origin=origin, priority=priority, source_type=site_source_type(site),
+                             geo_context=geo, lastmod=lastmod, company_hint=site_company_hint(site))
 
     def _sitemaps(self, ctx, site: dict, pattern) -> tuple[int, list[str]]:
         queued, errors = 0, []
@@ -115,8 +127,8 @@ class CareerSitesBackend(Backend):
                 if queued >= max_pages:
                     break
                 if ctx.pages.add(url, origin="sitemap", priority=70 if relevance else 25,
-                                 geo_context=bool(site.get("geospatial", True)), lastmod=lastmod or None,
-                                 company_hint=site.get("name")):
+                                 source_type=site_source_type(site), geo_context=bool(site.get("geospatial", True)),
+                                 lastmod=lastmod or None, company_hint=site_company_hint(site)):
                     queued += 1
         return queued, errors
 
@@ -144,7 +156,8 @@ class CareerSitesBackend(Backend):
                     stats["boards_found"] += 1
                 extraction = extract_jobs(html, site["url"], ctx.now)
                 for job in extraction.jobs:
-                    job.company = job.company or site.get("name")
+                    job.company = job.company or site_company_hint(site)
+                    job.source_type = site_source_type(site)
                     job.geo_context = bool(site.get("geospatial", True))
                     if ctx.prefilter(job.title, job.geo_context):
                         out.jobs.append(job)
@@ -262,6 +275,8 @@ class GenericPagesBackend(Backend):
             for job in extraction.jobs:
                 if is_aggregator(item.url):
                     job.source_type = "aggregator"
+                elif item.source_type != "employer_page":
+                    job.source_type = item.source_type
                 job.company = job.company or item.company_hint
                 self._keep(ctx, out, job, item.geo_context)
             if canon:

@@ -32,6 +32,13 @@ DIRECT_ROLES = [
     "Cadastral Specialist", "Land Information Specialist", "LiDAR Specialist", "LiDAR Analyst",
     "LiDAR Technician", "Point Cloud Specialist", "Photogrammetry Specialist", "Photogrammetry Technician",
     "Remote Sensing Specialist", "UAV Mapping Specialist", "Drone Mapping Specialist",
+    # French titles (Tunisia, Maghreb, France, Québec, West Africa). Accents are folded before matching.
+    "Géomaticien", "Géomaticienne", "Ingénieur SIG", "Technicien SIG", "Technicienne SIG", "Analyste SIG",
+    "Administrateur SIG", "Développeur SIG", "Opérateur SIG", "Dessinateur SIG", "Chargé d'études SIG",
+    "Chef de projet SIG", "Ingénieur Géomatique", "Technicien Géomatique", "Spécialiste Géomatique",
+    "Cartographe", "Topographe", "Géomètre", "Géomètre-Topographe", "Ingénieur Topographe",
+    "Technicien Topographe", "Dessinateur Topographe", "Ingénieur Télédétection", "Chargé de Télédétection",
+    "Photogrammètre", "Analyste Géospatial", "Ingénieur Géospatial", "Géodésien", "Arpenteur-Géomètre",
 ]
 
 ADJACENT_ROLES = [
@@ -52,14 +59,22 @@ GEO_TITLE_TERMS = [
     r"\bremote\s+sensing\b", r"\bpoint[\s-]?cloud\b", r"\bcadastr\w*", r"\bsurvey(?:or|ing)\b",
     r"\bsurvey\s+(?:technician|tech|cad|crew|party|assistant)\b", r"\bland\s+(?:information|tenure|records)\b",
     r"\bmineral\s+tenure\b", r"\bspatial\s+(?:data|analyst|analysis|information|scientist)\b",
-    r"\b(?:mapping|mapper)\b", r"\bgeographic information\b", r"\bgeodes\w*", r"\bhydrograph\w*",
+    r"\b(?:mapping|mapper)\b", r"\bmap\s+(?:draft\w*|technician|editor|maker|production)\b",
+    r"\bgeographic information\b", r"\bgeodes\w*", r"\bhydrograph\w*",
     r"\bearth observation\b", r"\bgeodata\b",
+    # French (titles are accent-folded before these run)
+    r"\bsig\b", r"\bgeomatiq\w*", r"\bgeomaticien\w*", r"\btopograph\w*", r"\bgeometres?\b", r"\bteledetection\b",
+    r"\bgeodesien\w*", r"\bsystemes? d.information geographique", r"\barpent\w*",
 ]
 
 ROLE_NOUNS = (
     r"analyst|specialist|technician|tech|officer|coordinator|developer|engineer|scientist|manager|lead|"
     r"processor|editor|consultant|intern|assistant|administrator|drafter|designer|operator|mapper|associate|"
-    r"programmer|architect|professional|surveyor|expert"
+    r"programmer|architect|professional|surveyor|expert|drafts(?:man|woman|person)|"
+    # French role nouns
+    r"ingenieur|technicien(?:ne)?|analyste|chargee?|cartographe|topographe|geometre|geomaticien(?:ne)?|"
+    r"dessinat(?:eur|rice)|operat(?:eur|rice)|responsable|specialiste|developpeu(?:r|se)|administrat(?:eur|rice)|"
+    r"stagiaire|geodesien|arpenteur|chef de projet"
 )
 
 # Generic titles need at least MIN_GEO_SIGNALS distinct geospatial families in the text.
@@ -67,6 +82,8 @@ GENERIC_TITLE_PATTERNS = [
     r"\bdata\s+analyst\b", r"\bdata\s+technician\b", r"\banalyst\b", r"\btechnician\b", r"\bspecialist\b",
     r"\bengineer\b", r"\bdeveloper\b", r"\bscientist\b", r"\bcoordinator\b", r"\bdrafter\b",
     r"\bdraftsperson\b", r"\bdata\s+engineer\b", r"\bconsultant\b",
+    r"\bingenieur\b", r"\btechnicien(?:ne)?\b", r"\banalyste\b", r"\bdeveloppeu(?:r|se)\b", r"\bdessinat(?:eur|rice)\b",
+    r"\bchargee?\s+d.etudes\b", r"\bspecialiste\b", r"\bstagiaire\b",
 ]
 MIN_GEO_SIGNALS = 2
 
@@ -76,10 +93,14 @@ NEGATIVE_TITLES = [
     "Physician", "Lawyer", "Attorney", "Architect", "Interior Designer", "Structural Engineer",
     "Civil Structural Engineer", "Mechanical Engineer", "Electrical Engineer", "Chief", "Head of",
     "Sales Representative", "Business Development",
+    # French
+    "Directeur", "Directrice", "Directeur Général", "Commercial", "Commerciale", "Responsable Commercial",
+    "Comptable", "Infirmier", "Infirmière", "Avocat", "Architecte", "Ingénieur Électrique", "Ingénieur Mécanique",
+    "Ingénieur Électromécanique", "Chef d'agence",
 ]
 # Negative titles that are overridden when the title itself is clearly geospatial
 # (e.g. "GIS Architect" or "Enterprise Geospatial Architect").
-NEGATIVE_OVERRIDABLE = {"Architect"}
+NEGATIVE_OVERRIDABLE = {"Architect", "Architecte"}
 
 TECH_SKILLS = [
     Term("ArcGIS Pro", 7, (r"\b(?:esri\s+)?arcgis\s*pro\b",), family="esri"),
@@ -92,7 +113,7 @@ TECH_SKILLS = [
     Term("SQL", 3, (r"\bsql\b", r"\bpostgres(?:ql)?\b", r"\bt-sql\b", r"\bpl/?sql\b", r"\bmysql\b")),
     Term("PostGIS", 6, (r"\bpostgis\b",), family="spatial_db"),
     Term("FME", 6, (r"\bfme\b", r"\bsafe software\b"), family="fme"),
-    Term("AutoCAD", 3, (r"\bauto\s?cad\b", r"\bcivil\s*3d\b")),
+    Term("AutoCAD", 3, (r"\bauto\s?cad\b", r"\bcivil\s*3d\b", r"\bcovadis\b")),
     Term("MicroStation", 4, (r"\bmicro\s?station\b",)),
     Term("TerraScan", 6, (r"\bterra\s?scan\b", r"\bterrasolid\b"), family="lidar_tools"),
     Term("Smallworld", 6, (r"\bsmallworld\b",), family="utility_gis"),
@@ -100,7 +121,8 @@ TECH_SKILLS = [
     Term("Arcade", 3, (r"\barcade\b",), requires="ArcGIS"),
     Term("GeoJSON", 3, (r"\bgeo\s?json\b",), family="geo_formats"),
     Term("Spatial databases", 4, (r"\bspatial\s+databases?\b", r"\b(?:enterprise\s+|file\s+)?geodatabases?\b",
-                                  r"\bspatialite\b", r"\boracle\s+spatial\b"), family="spatial_db"),
+                                  r"\bspatialite\b", r"\boracle\s+spatial\b",
+                                  r"\bbases?\s+de\s+donn[ée]es\s+(?:spatiales?|g[ée]ographiques?)\b"), family="spatial_db"),
     Term("REST APIs", 2, (r"\brest(?:ful)?\s*(?:apis?|services?|endpoints?)\b",)),
     Term("GDAL/OGR", 3, (r"\bgdal\b", r"\bogr2ogr\b"), family="geo_libs"),
     Term("GeoPandas", 3, (r"\bgeopandas\b", r"\bshapely\b", r"\brasterio\b"), family="geo_libs"),
@@ -114,62 +136,92 @@ TECH_SKILLS = [
                                       r"\bmapbox\b", r"\bgeoserver\b", r"\bcesium(?:js)?\b"), family="web_mapping"),
 ]
 
+# Domain/responsibility patterns run on the raw text (case-insensitive, accents intact), so French
+# variants spell out their accented letters as character classes.
 DOMAIN_TERMS = [
-    Term("GIS", 4, (r"\bgis\b", r"\bgeographic(?:al)?\s+information\s+systems?\b"), family="gis"),
-    Term("Geospatial", 4, (r"\bgeo-?spatial\b",), family="gis"),
-    Term("Geomatics", 5, (r"\bgeomatics?\b",), family="geomatics"),
+    Term("GIS", 4, (r"\bgis\b", r"\bgeographic(?:al)?\s+information\s+systems?\b", r"\bsig\b",
+                    r"\bsyst[èe]mes?\s+d.information\s+g[ée]ographique"), family="gis"),
+    Term("Geospatial", 4, (r"\bg[ée]o-?spatial\w*",), family="gis"),
+    Term("Geomatics", 5, (r"\bg[ée]omatics?\b", r"\bg[ée]omatique\b", r"\bg[ée]omaticien\w*"), family="geomatics"),
     Term("Cartography", 5, (r"\bcartograph\w*",), family="cartography"),
     Term("Surveying", 4, (r"\b(?:land|topographic|cadastral|geodetic|construction|hydrographic|boundary)\s+survey\w*",
-                          r"\bsurveying\b", r"\bsurveyors?\b", r"\bgnss\b", r"\btotal\s+stations?\b"), family="surveying"),
+                          r"\bsurveying\b", r"\bsurveyors?\b", r"\bgnss\b", r"\btotal\s+stations?\b",
+                          r"\barpentage\b", r"\barpenteur\w*", r"\bg[ée]om[èe]tres?\b",
+                          r"\blev[ée]s?\s+topographiques?\b", r"\bstations?\s+totales?\b"), family="surveying"),
     Term("Topography", 3, (r"\btopograph\w*",), family="surveying"),
     Term("Cadastral", 5, (r"\bcadastr\w*",), family="land_admin"),
-    Term("Land administration", 5, (r"\bland\s+administration\b", r"\bland\s+regist\w*", r"\bland\s+records?\b"),
-         family="land_admin"),
+    Term("Land administration", 5, (r"\bland\s+administration\b", r"\bland\s+regist\w*", r"\bland\s+records?\b",
+                                    r"\bfonci[èe]re?s?\b", r"\bregistre\s+foncier\b"), family="land_admin"),
     Term("Land tenure", 5, (r"\bland\s+tenure\b",), family="land_admin"),
     Term("Mineral tenure", 6, (r"\bmineral\s+(?:tenure|claims?|titles?|rights|concessions?)\b",
                                r"\bmining\s+(?:claims?|tenements?|concessions?|titles?)\b", r"\btenements?\b"),
          family="mineral_tenure"),
-    Term("Mining", 3, (r"\bmining\b", r"\bmineral\s+exploration\b", r"\bmine\s+(?:site|planning|survey\w*)\b")),
-    Term("LiDAR", 5, (r"\blidar\b", r"\blaser\s+scann\w*"), family="lidar"),
-    Term("Point clouds", 5, (r"\bpoint[\s-]?clouds?\b",), family="lidar"),
-    Term("Photogrammetry", 5, (r"\bphotogrammetr\w*", r"\bortho-?(?:photo|imagery|mosaic|rectif)\w*"),
+    Term("Mining", 3, (r"\bmining\b", r"\bmineral\s+exploration\b", r"\bmine\s+(?:site|planning|survey\w*)\b",
+                       r"\bmini[èe]re?s?\b")),
+    Term("LiDAR", 5, (r"\blidar\b", r"\blaser\s+scann\w*", r"\bbalayage\s+laser\b", r"\bscanner\s+laser\b"),
+         family="lidar"),
+    Term("Point clouds", 5, (r"\bpoint[\s-]?clouds?\b", r"\bnuages?\s+de\s+points\b"), family="lidar"),
+    Term("Photogrammetry", 5, (r"\bphotogramm[ée]tr\w*", r"\bortho-?(?:photo|imagery|mosaic|rectif|image)\w*"),
          family="photogrammetry"),
     Term("Remote sensing", 5, (r"\bremote\s+sensing\b", r"\bsatellite\s+(?:imagery|images|data)\b",
-                               r"\bearth\s+observation\b", r"\bmultispectral\b", r"\bhyperspectral\b"),
-         family="remote_sensing"),
+                               r"\bearth\s+observation\b", r"\bmultispectral\b", r"\bhyperspectral\b",
+                               r"\bt[ée]l[ée]d[ée]tection\b", r"\bimage(?:s|rie)?\s+satellit\w*",
+                               r"\bobservation\s+de\s+la\s+terre\b"), family="remote_sensing"),
     Term("UAV", 4, (r"\buavs?\b", r"\bdrones?\b", r"\bunmanned\s+aerial\b", r"\brpas\b", r"\bsuas\b")),
     Term("Utility mapping", 5, (r"\butility\s+(?:mapping|gis|network\s+(?:data|model)|records|locat\w+)\b",
-                                r"\bsubsurface\s+utilit\w+"), family="utility_gis"),
-    Term("Telecom", 2, (r"\btelecom(?:s|munications?)?\b",)),
-    Term("Fiber", 2, (r"\bfib(?:er|re)\s+(?:optics?|networks?|design|routes?)\b", r"\bftth\b", r"\boutside\s+plant\b")),
+                                r"\bsubsurface\s+utilit\w+", r"\bcartographie\s+des?\s+r[ée]seaux\b",
+                                r"\br[ée]seaux\s+enterr[ée]s\b"), family="utility_gis"),
+    Term("Telecom", 2, (r"\bt[ée]l[ée]com(?:s|munications?)?\b",)),
+    Term("Fiber", 2, (r"\bfib(?:er|re)\s+(?:optics?|optique|networks?|design|routes?)\b", r"\bftth\b",
+                      r"\boutside\s+plant\b")),
     Term("Electric distribution", 3, (r"\belectric(?:al)?\s+distribution\b", r"\bpower\s+distribution\b",
-                                      r"\bdistribution\s+network\b")),
-    Term("Spatial analysis", 4, (r"\bspatial\s+(?:analysis|analytics|modell?ing|statistics)\b", r"\bgeoprocessing\b"),
-         family="spatial_analysis"),
-    Term("Spatial data", 3, (r"\bspatial\s+data\b", r"\bgeodata\b"), family="gis"),
+                                      r"\bdistribution\s+network\b",
+                                      r"\br[ée]seaux?\s+(?:de\s+)?distribution\s+[ée]lectrique\b")),
+    Term("Spatial analysis", 4, (r"\bspatial\s+(?:analysis|analytics|modell?ing|statistics)\b", r"\bgeoprocessing\b",
+                                 r"\banalyses?\s+spatiales?\b", r"\bg[ée]otraitement\b"), family="spatial_analysis"),
+    Term("Spatial data", 3, (r"\bspatial\s+data\b", r"\bgeodata\b",
+                             r"\bdonn[ée]es\s+(?:spatiales|g[ée]ographiques|g[ée]ospatiales|g[ée]or[ée]f[ée]renc[ée]es)\b"),
+         family="gis"),
     Term("Mapping", 3, (r"\b(?:gis|web|digital|base|mobile|utility|topographic|thematic|field|aerial)\s+mapping\b",
-                        r"\bmap\s+production\b"), family="mapping"),
+                        r"\bmap\s+production\b", r"\bproduction\s+cartographique\b",
+                        r"\bcartographie\s+(?:num[ée]rique|th[ée]matique|web|mobile|topographique)\b"), family="mapping"),
 ]
 
 RESPONSIBILITY_TERMS = [
-    Term("Digitizing / data capture", 2, (r"\bdigiti[sz]\w*", r"\bspatial\s+data\s+capture\b", r"\bvectori[sz]\w*")),
-    Term("Georeferencing", 2, (r"\bgeo-?referenc\w*", r"\brectification\b"), family="georef"),
-    Term("Map production", 2, (r"\bmap\s+(?:production|making|creation|layouts?)\b", r"\b(?:produce|create|prepare)\s+maps\b")),
-    Term("QA/QC", 2, (r"\bqa\s*/\s*qc\b", r"\bquality\s+(?:control|assurance)\b")),
+    Term("Digitizing / data capture", 2, (r"\bdigiti[sz]\w*", r"\bspatial\s+data\s+capture\b", r"\bvectori[sz]\w*",
+                                          r"\bnum[ée]risation\b",
+                                          r"\bsaisie\s+(?:de\s+)?donn[ée]es\s+(?:spatiales|g[ée]ographiques|sig)\b")),
+    Term("Georeferencing", 2, (r"\bg[ée]o-?r[ée]f[ée]renc\w*", r"\brectification\b"), family="georef"),
+    Term("Map production", 2, (r"\bmap\s+(?:production|making|creation|layouts?)\b", r"\b(?:produce|create|prepare)\s+maps\b",
+                               r"\bproduction\s+de\s+cartes\b",
+                               r"\b(?:r[ée]aliser|produire|[ée]laborer|cr[ée]er)\s+(?:des\s+|les\s+)?cartes\b",
+                               r"\bmise\s+en\s+page\s+cartographique\b")),
+    Term("QA/QC", 2, (r"\bqa\s*/\s*qc\b", r"\bquality\s+(?:control|assurance)\b",
+                      r"\bcontr[ôo]le\s+(?:de\s+(?:la\s+)?)?qualit[ée]\b", r"\bassurance\s+qualit[ée]\b")),
     Term("Spatial data management", 2, (r"\b(?:spatial|gis|geospatial)\s+data\s+(?:editing|maintenance|management|processing|conversion|migration|integration)\b",
-                                        r"\bdata\s+conversion\b")),
+                                        r"\bdata\s+conversion\b",
+                                        r"\b(?:gestion|mise\s+[àa]\s+jour|traitement|int[ée]gration)\s+(?:des?\s+)?(?:bases?\s+de\s+)?donn[ée]es\s+(?:spatiales|g[ée]ographiques|sig)\b")),
     Term("Coordinate systems", 2, (r"\bcoordinate\s+(?:reference\s+)?systems?\b", r"\bmap\s+projections?\b",
-                                   r"\bgeodetic\s+datums?\b"), family="geodesy"),
+                                   r"\bgeodetic\s+datums?\b", r"\bsyst[èe]mes?\s+de\s+coordonn[ée]es\b",
+                                   r"\bprojections?\s+cartographiques?\b",
+                                   r"\bsyst[èe]mes?\s+de\s+r[ée]f[ée]rence\s+(?:spatiale?|g[ée]od[ée]sique)\b"), family="geodesy"),
     Term("Field data collection", 2, (r"\bfield\s+data\s+collection\b", r"\bsurvey123\b", r"\bfield\s+maps\b",
-                                      r"\bgps\s+data\b"), family="field_gis"),
-    Term("Topology / attribution", 2, (r"\btopology\b", r"\battribute\s+(?:data|tables?)\b")),
+                                      r"\bgps\s+data\b", r"\bcollecte\s+de\s+donn[ée]es\s+(?:sur\s+le\s+)?terrain\b",
+                                      r"\b(?:re)?lev[ée]s?\s+(?:de\s+)?(?:terrain|topographiques?|gps|gnss)\b"), family="field_gis"),
+    Term("Topology / attribution", 2, (r"\btopology\b", r"\battribute\s+(?:data|tables?)\b", r"\btopologie\b")),
     Term("Web GIS / dashboards", 2, (r"\bweb\s+gis\b", r"\bweb\s+maps?\b", r"\bstory\s*maps?\b",
-                                     r"\bexperience\s+builder\b", r"\bgis\s+dashboards?\b"), family="web_mapping"),
-    Term("Point cloud classification", 2, (r"\bclassif\w+\s+(?:of\s+)?(?:lidar|point)",), family="lidar"),
+                                     r"\bexperience\s+builder\b", r"\bgis\s+dashboards?\b", r"\b(?:web\s*sig|sig\s+web)\b",
+                                     r"\bcartes?\s+(?:web|en\s+ligne|interactives?)\b"), family="web_mapping"),
+    Term("Point cloud classification", 2, (r"\bclassif\w+\s+(?:of\s+)?(?:lidar|point)",
+                                           r"\bclassification\s+(?:des?\s+)?nuages?\s+de\s+points\b"), family="lidar"),
 ]
 
-REQUIRED_HINTS = r"\b(required|must|minimum|essential|mandatory|need(?:s|ed)?\s+to\s+have|proficien\w+|experience\s+(?:with|in|using))\b"
-PREFERRED_HINTS = r"\b(prefer\w*|nice[\s-]to[\s-]have|asset|desirabl\w+|bonus|plus|ideally|advantage\w*|familiarity)\b"
+# Qualifier hints run on the accent-folded sentence around a skill, so French forms are written without accents.
+REQUIRED_HINTS = (r"\b(required|must|minimum|essential|mandatory|need(?:s|ed)?\s+to\s+have|proficien\w+|"
+                  r"experience\s+(?:with|in|using)|exig\w+|requis\w*|obligatoire|indispensable|imperati\w+|"
+                  r"maitris\w+|bonne\s+connaissance|connaissance\s+approfondie|experience\s+(?:en|avec|dans|sur))\b")
+PREFERRED_HINTS = (r"\b(prefer\w*|nice[\s-]to[\s-]have|asset|desirabl\w+|bonus|plus|ideally|advantage\w*|familiarity|"
+                   r"souhait\w+|atout|appreci\w+|idealement)\b")
 
 CATEGORY_CAPS = {"title": 40, "tech": 25, "domain": 20, "responsibilities": 10, "location": 5}
 

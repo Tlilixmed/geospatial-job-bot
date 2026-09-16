@@ -63,8 +63,60 @@ workday = [
 # Overture Maps, Wherobots, Bentley Systems, Safe Software. Add them as career sites below
 # once you have verified that the page exposes JSON-LD or job links.
 
-# Company career pages without a supported ATS API. The bot extracts JSON-LD/embedded jobs,
-# detects embedded ATS boards, follows job links and reads job sitemaps (robots.txt honoured).
+# ---------------------------------------------------------------------------- job boards (search pages)
+# Boards with neither an API nor a feed: the bot reads the search page, follows the links that match
+# job_url_pattern and extracts each posting's JSON-LD (robots.txt honoured, pages cached 7 days).
+# source_type = "feed" marks a board rather than an employer page: the board's name is never used
+# as the employer and its postings carry feed (not employer) authority in fusion.
+# geospatial = false: generic titles such as "Ingénieur" need geospatial evidence in the posting.
+# Keejob (Tunisia) had no SIG postings on 2026-09-16; the searches are cheap and catch new ones.
+
+[[career_sites]]
+name = "Keejob (SIG)"
+url = "https://www.keejob.com/offres-emploi/?keywords=SIG"
+source_type = "feed"
+geospatial = false
+job_url_pattern = 'keejob\.com/offres-emploi/\d+/'
+use_robots_sitemaps = false
+max_pages = 20
+
+[[career_sites]]
+name = "Keejob (géomatique)"
+url = "https://www.keejob.com/offres-emploi/?keywords=g%C3%A9omatique"
+source_type = "feed"
+geospatial = false
+job_url_pattern = 'keejob\.com/offres-emploi/\d+/'
+use_robots_sitemaps = false
+max_pages = 20
+
+[[career_sites]]
+name = "Keejob (topographe)"
+url = "https://www.keejob.com/offres-emploi/?keywords=topographe"
+source_type = "feed"
+geospatial = false
+job_url_pattern = 'keejob\.com/offres-emploi/\d+/'
+use_robots_sitemaps = false
+max_pages = 20
+
+[[career_sites]]
+name = "Keejob (cartographe)"
+url = "https://www.keejob.com/offres-emploi/?keywords=cartographe"
+source_type = "feed"
+geospatial = false
+job_url_pattern = 'keejob\.com/offres-emploi/\d+/'
+use_robots_sitemaps = false
+max_pages = 20
+
+[[career_sites]]
+name = "Keejob (télédétection)"
+url = "https://www.keejob.com/offres-emploi/?keywords=t%C3%A9l%C3%A9d%C3%A9tection"
+source_type = "feed"
+geospatial = false
+job_url_pattern = 'keejob\.com/offres-emploi/\d+/'
+use_robots_sitemaps = false
+max_pages = 20
+
+# Company career pages without a supported ATS API use the same table without source_type:
 # [[career_sites]]
 # name = "Example Surveying Ltd"
 # url = "https://www.example.com/careers"
@@ -73,11 +125,90 @@ workday = [
 # sitemap = "https://www.example.com/sitemap-jobs.xml"  # optional; otherwise robots.txt sitemaps
 # max_pages = 40
 
-# [[rss_feeds]]
-# name = "example-gis-board"
-# url = "https://jobs.example.org/feed.rss"
-# source_type = "feed"
-# geospatial = true
+# ---------------------------------------------------------------------------- RSS / Atom feeds
+# All feeds below returned entries on 2026-09-16.
+
+[[rss_feeds]]
+name = "gogeomatics"   # GoGeomatics Canada job board (WP Job Manager feed carries full postings)
+url = "https://gogeomatics.ca/?feed=job_feed"
+source_type = "feed"
+geospatial = true
+
+[[rss_feeds]]
+name = "gisjobs"       # GISjobs.com (mostly US)
+url = "https://www.gisjobs.com/rssjobs"
+source_type = "feed"
+geospatial = true
+
+# Government of Canada Job Bank (EN) and Guichet-Emplois (FR). The feed matches occupation titles,
+# not free text: "GIS" and "cartographer" return nothing, the searches below do.
+[[rss_feeds]]
+name = "jobbank-surveyor"
+url = "https://www.jobbank.gc.ca/jobsearch/feed/jobSearchRSSfeed?searchstring=surveyor&sort=M&rows=100"
+source_type = "government"
+geospatial = false
+
+[[rss_feeds]]
+name = "jobbank-survey-technician"
+url = "https://www.jobbank.gc.ca/jobsearch/feed/jobSearchRSSfeed?searchstring=survey%20technician&sort=M&rows=100"
+source_type = "government"
+geospatial = false
+
+[[rss_feeds]]
+name = "jobbank-geomatics"
+url = "https://www.jobbank.gc.ca/jobsearch/feed/jobSearchRSSfeed?searchstring=geomatics&sort=M&rows=100"
+source_type = "government"
+geospatial = true
+
+[[rss_feeds]]
+name = "guichetemplois-geomatique"
+url = "https://www.guichetemplois.gc.ca/jobsearch/feed/jobSearchRSSfeed?searchstring=g%C3%A9omatique&sort=M&rows=100"
+source_type = "government"
+geospatial = true
+
+[[rss_feeds]]
+name = "guichetemplois-arpenteur"
+url = "https://www.guichetemplois.gc.ca/jobsearch/feed/jobSearchRSSfeed?searchstring=arpenteur&sort=M&rows=100"
+source_type = "government"
+geospatial = false
+
+[[rss_feeds]]
+name = "guichetemplois-topographe"
+url = "https://www.guichetemplois.gc.ca/jobsearch/feed/jobSearchRSSfeed?searchstring=topographe&sort=M&rows=100"
+source_type = "government"
+geospatial = false
+
+# Tunisie Travail (WordPress job board): one feed per search term; titles read "Company recrute Title".
+# The "SIG" search is broad, so irrelevant titles are prefiltered; the others are precise.
+[[rss_feeds]]
+name = "tunisietravail-topographe"
+url = "https://www.tunisietravail.net/search/topographe/feed/rss2/"
+source_type = "feed"
+geospatial = false
+
+[[rss_feeds]]
+name = "tunisietravail-geomatique"
+url = "https://www.tunisietravail.net/search/g%C3%A9omatique/feed/rss2/"
+source_type = "feed"
+geospatial = false
+
+[[rss_feeds]]
+name = "tunisietravail-cartographe"
+url = "https://www.tunisietravail.net/search/cartographe/feed/rss2/"
+source_type = "feed"
+geospatial = false
+
+[[rss_feeds]]
+name = "tunisietravail-teledetection"
+url = "https://www.tunisietravail.net/search/t%C3%A9l%C3%A9d%C3%A9tection/feed/rss2/"
+source_type = "feed"
+geospatial = false
+
+[[rss_feeds]]
+name = "tunisietravail-sig"
+url = "https://www.tunisietravail.net/search/SIG/feed/rss2/"
+source_type = "feed"
+geospatial = false
 
 [search]
 # Additional queries for SearXNG/DuckDuckGo discovery (results are only used to find pages/boards)
@@ -85,4 +216,6 @@ extra_queries = [
   '"GIS technician" utility mapping job',
   '"LiDAR technician" job',
   '"land information" GIS job opening',
+  "\"ingénieur SIG\" offre d'emploi",
+  '"géomaticien" recrutement',
 ]

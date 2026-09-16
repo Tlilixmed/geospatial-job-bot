@@ -8,6 +8,7 @@ from __future__ import annotations
 import html
 import logging
 import time
+from datetime import datetime, timezone
 from typing import Callable
 
 import requests
@@ -18,10 +19,91 @@ from ..utils.location import ParsedLocation
 
 log = logging.getLogger(__name__)
 MAX_MESSAGE = 4096
+DIGEST_SKILLS_SHOWN = 4
 
 
 def _esc(value) -> str:
     return html.escape(str(value), quote=True) if value is not None else ""
+
+
+def _location_of(rec: dict) -> ParsedLocation:
+    return ParsedLocation(raw=rec.get("location_raw") or "", city=rec.get("city"), region=rec.get("region"),
+                          country=rec.get("country"), remote=rec.get("remote"), remote_scope=rec.get("remote_scope"),
+                          work_mode=rec.get("work_mode"))
+
+
+def _digest_entry(rec: dict, index: int) -> str:
+    """One numbered, three-line entry of the digest list."""
+    updated = bool(rec.get("notified") and rec.get("pending_update_alert"))
+    head = f"{index}. <b>{_esc(rec.get('title'))}</b>"
+    if rec.get("company"):
+        head += f" — {_esc(rec['company'])}"
+    head += f" · {int(rec.get('score') or 0)}/100"
+    if updated:
+        head = "🔁 " + head
+    facts = [f"📍 {_esc(_location_of(rec).display())}"]
+    posted = parse_datetime(rec.get("posted_at"))
+    if posted:
+        facts.append(f"📅 {posted.strftime('%d %b')}")
+    if rec.get("salary"):
+        facts.append(f"💰 {_esc(rec['salary'])}")
+    skills = [s.split(" (")[0] for s in rec.get("matched_skills") or []]
+    tail = []
+    if skills:
+        tail.append(_esc(", ".join(dict.fromkeys(skills[:DIGEST_SKILLS_SHOWN]))))
+    link = rec.get("apply_url") or rec.get("url")
+    if link:
+        tail.append(f'<a href="{_esc(link)}">Apply</a>')
+    lines = [head, "   " + " · ".join(facts)]
+    if tail:
+        lines.append("   " + " · ".join(tail))
+    return "\n".join(lines)
+
+
+def format_digest(records: list[dict], *, now=None, part_limit: int = MAX_MESSAGE) -> list[tuple[str, list[dict]]]:
+    """Format records as one numbered list, split into as few Telegram messages as fit.
+
+    Returns [(message_text, records_in_that_message)], so delivery can be tracked per message.
+    High matches come first, then Possible ones; numbering runs across parts.
+    """
+    if not records:
+        return []
+    high = [r for r in records if r.get("tier") == TIER_HIGH]
+    possible = [r for r in records if r.get("tier") != TIER_HIGH]
+    stamp = (now or datetime.now(timezone.utc)).strftime("%d %b %Y %H:%M UTC")
+    plural = "es" if len(records) != 1 else ""
+    header = (f"🗺️ <b>Geospatial jobs — {len(records)} new match{plural}</b>{{part}}\n"
+              f"<i>{stamp} · {len(high)} high · {len(possible)} possible</i>")
+
+    entries = []  # (section title on the first entry of a section, entry text, record)
+    index = 0
+    for section, group in (("🔥 <b>High matches</b>", high), ("🟡 <b>Possible matches</b>", possible)):
+        for position, rec in enumerate(group):
+            index += 1
+            entries.append((section if position == 0 else None, _digest_entry(rec, index), rec, section))
+
+    budget = part_limit - len(header) - 16  # room for " (part 10/10)"
+    parts: list[tuple[list[str], list[dict]]] = []
+    blocks, recs, size = [], [], 0
+    for section, text, rec, current_section in entries:
+        block = f"\n\n{section}\n\n{text}" if section else f"\n\n{text}"
+        if blocks and size + len(block) > budget:
+            parts.append((blocks, recs))
+            blocks, recs, size = [], [], 0
+            if section is None:  # continuation part: repeat the section title
+                block = f"\n\n{current_section} (cont.)\n\n{text}"
+        blocks.append(block)
+        recs.append(rec)
+        size += len(block)
+    if blocks:
+        parts.append((blocks, recs))
+
+    out = []
+    for number, (blocks, recs) in enumerate(parts, 1):
+        part = f" (part {number}/{len(parts)})" if len(parts) > 1 else ""
+        text = header.replace("{part}", part) + "".join(blocks)
+        out.append((text if len(text) <= part_limit else text[: part_limit - 1] + "…", recs))
+    return out
 
 
 def format_job_message(rec: dict, *, update: bool = False) -> str:

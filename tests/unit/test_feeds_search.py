@@ -1,7 +1,7 @@
 from conftest import GIS_DESCRIPTION, FakeResponse, FakeSession, make_ctx, make_settings
 
-from geojobbot.scrapers.feeds import (HimalayasBackend, JobSpyBackend, RemoteOKBackend, RemotiveBackend,
-                                      RssFeedBackend, UsaJobsBackend)
+from geojobbot.scrapers.feeds import (AdzunaBackend, HimalayasBackend, JobSpyBackend, JoobleBackend, RemoteOKBackend,
+                                      RemotiveBackend, RssFeedBackend, UsaJobsBackend)
 from geojobbot.scrapers.search import CommonCrawlBackend, DuckDuckGoBackend, SearxngBackend
 
 
@@ -54,6 +54,86 @@ def test_jobspy_degrades_when_missing():
     ctx = make_ctx(FakeSession(), make_settings(jobspy_enabled=True))
     ok, reason = JobSpyBackend().enabled(ctx)
     assert ok or reason is None or "not installed" in reason
+
+
+def test_jobspy_location_specs():
+    s = make_settings(jobspy_locations=["Remote", "Canada@canada", "Tunisia@worldwide", " "], jobspy_country_indeed="USA")
+    assert JobSpyBackend.location_specs(s) == [("Remote", "usa"), ("Canada", "canada"), ("Tunisia", "worldwide")]
+    assert JobSpyBackend.location_specs(make_settings(jobspy_locations=[])) == [("Remote", "usa")]
+
+
+def test_rss_wordpress_content_encoded_preferred_and_excerpts_queue_the_page():
+    rss = ('<rss xmlns:content="http://purl.org/rss/1.0/modules/content/"><channel><item><title>Geomatics Engineer</title>'
+           '<link>https://gogeomatics.ca/job/x/</link><description>short</description>'
+           '<content:encoded><![CDATA[<p>Full posting with QGIS and LiDAR</p>]]></content:encoded></item>'
+           '<item><title>GIS Technician</title><link>https://gogeomatics.ca/job/y/</link><description>excerpt</description></item>'
+           '</channel></rss>')
+    s = FakeSession({"https://gogeomatics.ca/?feed=job_feed": FakeResponse(200, rss, headers={"Content-Type": "application/rss+xml"})})
+    ctx = make_ctx(s)
+    out = RssFeedBackend([{"name": "gogeomatics", "url": "https://gogeomatics.ca/?feed=job_feed", "geospatial": True,
+                           "source_type": "feed"}]).run(ctx)
+    assert out.jobs[0].description == "Full posting with QGIS and LiDAR"
+    assert out.details["pages_queued"] == 2 and len(ctx.pages) == 2  # both are under 300 chars
+    queued = ctx.pages.pop_all()
+    assert {q.url for q in queued} == {"https://gogeomatics.ca/job/x/", "https://gogeomatics.ca/job/y/"}
+    assert all(q.source_type == "feed" and q.geo_context for q in queued)
+    assert RssFeedBackend.phase == "discovery"  # so the generic extractor reads the queued pages this run
+
+
+def test_rss_html_page_for_empty_search_is_not_an_error():
+    page = "<!DOCTYPE html><html><head><title>Aucun résultat</title></head><body>rien</body></html>"
+    s = FakeSession({"https://t.example/search/x/feed/": FakeResponse(200, page, headers={"Content-Type": "text/html; charset=UTF-8"})})
+    out = RssFeedBackend([{"name": "t-x", "url": "https://t.example/search/x/feed/"}]).run(make_ctx(s))
+    assert out.status == "SUCCESS" and out.jobs == [] and out.details["empty_html"] == ["t-x"] and out.details["errors"] == []
+
+
+def test_rss_html_named_entities_are_repaired():
+    rss = ('<?xml version="1.0" encoding="UTF-8"?><rss><channel><title>Recherche &raquo; cartographe</title>'
+           '<item><title>Carto &amp; Topo recrute Cartographe &eacute;</title><link>https://t.example/p/1</link>'
+           '<description>x</description></item></channel></rss>')
+    s = FakeSession({"https://t.example/feed": FakeResponse(200, rss, headers={"Content-Type": "application/rss+xml"})})
+    out = RssFeedBackend([{"name": "t", "url": "https://t.example/feed"}]).run(make_ctx(s))
+    assert out.status == "SUCCESS" and out.jobs[0].title == "Carto & Topo recrute Cartographe é"
+
+
+def test_adzuna_disabled_without_keys_parses_and_dedupes_across_terms():
+    assert AdzunaBackend().enabled(make_ctx(FakeSession()))[0] is False
+    payload = {"results": [
+        {"id": "1", "title": "<strong>GIS</strong> Technician", "description": "Maps and ArcGIS",
+         "redirect_url": "https://www.adzuna.ca/land/ad/1", "company": {"display_name": "MapCo"},
+         "location": {"display_name": "Calgary, Alberta"}, "created": "2026-09-15T10:00:00Z",
+         "salary_min": 50000, "salary_max": 60000, "contract_time": "full_time"},
+        {"id": "2", "title": "Chef", "redirect_url": "https://www.adzuna.ca/land/ad/2"}]}
+    s = FakeSession({"https://api.adzuna.com/v1/api/jobs/ca/search/1": FakeResponse(200, payload)})
+    ctx = make_ctx(s, make_settings(adzuna_app_id="id", adzuna_app_key="key", adzuna_countries=["ca"]))
+    out = AdzunaBackend().run(ctx)
+    assert out.status == "SUCCESS" and [j.title for j in out.jobs] == ["GIS Technician"]
+    job = out.jobs[0]
+    assert (job.company, job.source_job_id, job.salary, job.source_type) == ("MapCo", "adzuna:1", "50000–60000", "aggregator")
+    assert job.location_raw == "Calgary, Alberta" and job.employment_type == "full_time"
+    assert out.prefiltered_out == 1  # the same id from every term query is counted once
+
+
+def test_adzuna_auth_failure_stops_early_and_hides_key():
+    s = FakeSession({"https://api.adzuna.com/v1/api/jobs/ca/search/1": FakeResponse(401, {"error": "bad key"})})
+    out = AdzunaBackend().run(make_ctx(s, make_settings(adzuna_app_id="id", adzuna_app_key="SECRETKEY", adzuna_countries=["ca", "gb"])))
+    assert out.status == "FAILED" and out.error == "ca/GIS: AUTH_REQUIRED" and len(s.calls) == 1
+    assert "SECRETKEY" not in str(out.details)
+
+
+def test_jooble_posts_per_term_and_location():
+    payload = {"totalCount": 1, "jobs": [{"id": 9, "title": "Ingénieur SIG", "location": "Tunis", "snippet": "SIG et <b>QGIS</b>",
+                                          "salary": "", "type": "CDI", "link": "https://jooble.org/jdp/9", "company": "GeoTun",
+                                          "updated": "2026-09-15T00:00:00"}]}
+    s = FakeSession({"https://jooble.org/api/SECRET": FakeResponse(200, payload)})
+    ctx = make_ctx(s, make_settings(jooble_api_key="SECRET", jooble_locations=["Tunisia"]))
+    out = JoobleBackend().run(ctx)
+    assert out.status == "SUCCESS" and len(out.jobs) == 1
+    job = out.jobs[0]
+    assert (job.title, job.company, job.source_job_id, job.location_raw, job.description) == ("Ingénieur SIG", "GeoTun", "jooble:9", "Tunis", "SIG et QGIS")
+    assert s.calls[0][0] == "POST" and s.calls[0][2] == {"keywords": "GIS", "location": "Tunisia", "page": 1}
+    assert len(s.calls) == len(JoobleBackend.terms)
+    assert JoobleBackend().enabled(make_ctx(FakeSession()))[0] is False
 
 
 def test_duckduckgo_results_and_robots_stop():

@@ -39,6 +39,16 @@ def test_same_job_from_four_sources_fuses_to_one_with_best_fields():
     assert len(f.sources(NOW)) == 4
 
 
+def test_feed_excerpt_loses_to_full_page_description():
+    excerpt = "An excerpt of the posting. " * 9  # ~240 chars: feed summaries are this long
+    feed = raw(source_type="feed", source_name="rss:gogeomatics", native_id=None, url="https://gogeomatics.ca/job/x/",
+               apply_url=None, description=excerpt)  # feed + api bonus = 60
+    page = raw(source_type="feed", source_name="generic_jsonld", extraction_method="jsonld", native_id=None,
+               url="https://gogeomatics.ca/job/x/", apply_url=None, description=GIS_DESCRIPTION)  # feed + jsonld = 58
+    f = fuse([feed, page], {}, NOW)[0]
+    assert f.priority == 60 and f.description == GIS_DESCRIPTION
+
+
 def test_fuzzy_merge_for_aggregator_without_ids():
     a = raw()
     b = raw(source_type="feed", source_name="remotive", native_id=None, url="https://remotive.com/job/555",

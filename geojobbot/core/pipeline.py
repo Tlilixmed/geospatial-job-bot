@@ -19,12 +19,12 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 
 from ..models import SourceResult
-from ..notifications.telegram import TelegramNotifier, format_job_message
+from ..notifications.telegram import TelegramNotifier, format_digest, format_job_message
 from ..scrapers.ats.base import ATSBackend
 from ..scrapers.ats.more_ats import all_adapters
 from ..scrapers.base import Backend, RunContext
-from ..scrapers.feeds import (ArbeitnowBackend, HimalayasBackend, JobicyBackend, JobSpyBackend, RemoteOKBackend,
-                              RemotiveBackend, RssFeedBackend, UsaJobsBackend)
+from ..scrapers.feeds import (AdzunaBackend, ArbeitnowBackend, HimalayasBackend, JobicyBackend, JobSpyBackend,
+                              JoobleBackend, RemoteOKBackend, RemotiveBackend, RssFeedBackend, UsaJobsBackend)
 from ..scrapers.pages import CareerSitesBackend, GenericPagesBackend
 from ..scrapers.search import CommonCrawlBackend, DuckDuckGoBackend, SearxngBackend
 from ..storage.base import LocalStore, ObjectStore, StorageError
@@ -80,6 +80,8 @@ def build_backends(settings) -> list[Backend]:
         RemotiveBackend(), JobicyBackend(), HimalayasBackend(), ArbeitnowBackend(), RemoteOKBackend(),
         RssFeedBackend(sources.get("rss_feeds", []) or []),
         UsaJobsBackend(),
+        AdzunaBackend(),
+        JoobleBackend(),
         JobSpyBackend(),
     ]
     return backends
@@ -243,23 +245,25 @@ class Pipeline:
         if notifier is None and settings.telegram_configured and not settings.dry_run:
             notifier = TelegramNotifier(settings.telegram_bot_token, settings.telegram_chat_id,
                                         delay_s=settings.telegram_delay_s, sleep=self.sleep)
-        for rec in selected:
-            message = format_job_message(rec, update=bool(rec.get("notified") and rec.get("pending_update_alert")))
+        for message, batch in self._alert_messages(selected):
             if settings.dry_run:
                 print("\n--- DRY RUN ALERT ---\n" + message)
-                counts["alerts_pending"] += 1
+                counts["alerts_pending"] += len(batch)
                 continue
             if notifier is None:
-                counts["alerts_pending"] += 1
+                counts["alerts_pending"] += len(batch)
                 continue
             ok, error = notifier.send(message)
             if ok:
-                mark_notified(rec, utcnow())
-                counts["alerts_sent"] += 1
+                for rec in batch:
+                    mark_notified(rec, utcnow())
+                counts["alerts_sent"] += len(batch)
+                counts["messages_sent"] += 1
             else:
-                mark_failed(rec, error)
-                counts["alerts_failed"] += 1
-                log.warning("telegram delivery failed for %s: %s", rec["canonical_id"], error)
+                for rec in batch:
+                    mark_failed(rec, error)
+                counts["alerts_failed"] += len(batch)
+                log.warning("telegram delivery failed for %s: %s", ", ".join(r["canonical_id"] for r in batch), error)
         if notifier is None and selected and not settings.dry_run:
             log.warning("Telegram is not configured: %d alerts left pending", len(selected))
 
@@ -285,6 +289,13 @@ class Pipeline:
         report["duration_s"] = time.monotonic() - started
         self._emit(report)
         return exit_code, report
+
+    def _alert_messages(self, selected: list[dict]) -> list[tuple[str, list[dict]]]:
+        """Messages to send this run, each with the records it covers (marked notified only on delivery)."""
+        if self.settings.alert_format == "individual":
+            return [(format_job_message(rec, update=bool(rec.get("notified") and rec.get("pending_update_alert"))), [rec])
+                    for rec in selected]
+        return format_digest(selected, now=self.now)
 
     def _write_artifacts(self, manager: StateManager, report: dict, outcome, ctx: RunContext, state: dict) -> None:
         day = self.now.strftime("%Y-%m-%d")

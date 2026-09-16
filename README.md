@@ -31,9 +31,11 @@ Finds relevant GIS / geospatial / surveying / LiDAR / remote-sensing jobs from l
 | Board discovery | `commoncrawl`, search backends, career pages, generic pages | Discovers *new* company boards and adds them to a persistent registry. |
 | Career pages + sitemaps | `career_sites` | Configured company pages: JSON-LD jobs, embedded ATS boards, job links, job sitemaps. |
 | Generic extraction | `generic_pages` | Any queued public job page: JSON-LD `JobPosting` → embedded JSON → structured HTML. ATS URLs are fetched through the ATS API instead. |
-| Public feeds | `remotive`, `jobicy`, `himalayas`, `arbeitnow`, `remoteok`, `rss_feeds`, `usajobs` | Rate-respecting JSON/RSS feeds (each has a minimum interval). |
+| Public feeds | `remotive`, `jobicy`, `himalayas`, `arbeitnow`, `remoteok`, `rss_feeds`, `usajobs` | Rate-respecting JSON/RSS feeds (each has a minimum interval). `rss_feeds` ships with GoGeomatics (Canada), GISjobs.com, Government of Canada Job Bank searches and Tunisie Travail searches. |
+| Job boards without feeds | `career_sites` with `source_type = "feed"` | Keyword search pages of boards such as Keejob (Tunisia): job links are followed and each posting's JSON-LD is read. |
+| Aggregator APIs (optional) | `adzuna`, `jooble` | Free API keys. Adzuna covers Canada, UK, US and more; Jooble covers Tunisia, the Maghreb and Canada. |
 | Search (optional) | `search_searxng`, `search_duckduckgo` | Discovery only: results are never used as job data. |
-| Supplementary | `jobspy` | Optional `python-jobspy` aggregator discovery. |
+| Supplementary | `jobspy` | Optional `python-jobspy`: Indeed and LinkedIn by default (Glassdoor, Bayt, Google can be enabled), one Indeed country per location, LinkedIn descriptions fetched for scoring. |
 
 **Board registry and rotation.** Configured boards are fetched every run. Boards discovered by Common Crawl, search or career pages are stored in R2. Each run checks:
 
@@ -72,6 +74,7 @@ Invalid configured slugs are listed prominently in the run summary and GitHub st
 - **Title-only sources.** A strong geospatial title with no description available is floored at *Possible* and labelled "Title-only evidence".
 - **Evidence-only explanations.** "Why it matched" bullets are generated only from terms actually found in the job text.
 - **Rejection codes:** `NO_RELEVANT_TITLE`, `NEGATIVE_TITLE`, `INSUFFICIENT_GEOSPATIAL_SIGNALS`, `LOW_TECHNICAL_RELEVANCE`, `LOCATION_MISMATCH`, `LOW_SCORE`.
+- **French postings.** Titles such as "Ingénieur SIG", "Géomaticien", "Topographe", "Cartographe" or "Chargé d'études SIG" and French skill and domain wording (télédétection, photogrammétrie, nuages de points, levés topographiques, "maîtrise de QGIS exigée"…) are recognised alongside English, so Tunisian, Maghreb and Québec sources score properly. Accents are folded before title matching.
 - **Customising.** Edit `geojobbot/matching/profile.py` to add roles, skills, domains or negatives.
 
 ### Deduplication and source fusion
@@ -101,7 +104,8 @@ A job is alerted only when **all** of these hold:
 
 Delivery rules:
 
-- `notified=true` is written only after Telegram confirms delivery. A failed send is retried on later runs, up to `MAX_NOTIFY_ATTEMPTS`.
+- **Format.** By default each run sends one numbered digest (`ALERT_FORMAT=digest`): High matches first, then Possible, one entry per job with company, score, location, date, salary, top skills and the apply link. It is split into several messages only when it exceeds Telegram's 4096-character limit. `ALERT_FORMAT=individual` sends one message per job instead.
+- `notified=true` is written only after Telegram confirms delivery (per message, so every job in a delivered digest part is marked). A failed send is retried on later runs, up to `MAX_NOTIFY_ATTEMPTS`.
 - State is checkpointed to R2 *before* alerts are sent, so a crash can't cause a flood of repeats.
 - Alerts per run are capped (`MAX_ALERTS_PER_RUN`, default 25), highest scores first; the rest wait for the next run.
 
@@ -167,14 +171,25 @@ Push this project to a repository. Then **Settings → Secrets and variables →
 | `TELEGRAM_BOT_TOKEN` | BotFather token |
 | `TELEGRAM_CHAT_ID` | chat id |
 
-Optional secrets: `USAJOBS_API_KEY` and `USAJOBS_EMAIL` (free key from developer.usajobs.gov).
+Optional secrets, each enabling one more source:
 
-Optional **variables**:
+| Name | Where to get it |
+|---|---|
+| `USAJOBS_API_KEY`, `USAJOBS_EMAIL` | free key from developer.usajobs.gov |
+| `ADZUNA_APP_ID`, `ADZUNA_APP_KEY` | free at developer.adzuna.com (Canada, UK, US, AU, DE, FR… — not Tunisia) |
+| `JOOBLE_API_KEY` | free at jooble.org/api/about (covers Tunisia, the Maghreb and Canada) |
+
+Optional **variables** (`scraper.yml` applies sensible defaults when unset; Canada and Tunisia are the default locations):
 
 | Name | Purpose |
 |---|---|
-| `PREFERRED_LOCATIONS` | e.g. `Canada,Tunisia` |
-| `ACCEPTED_REMOTE_SCOPES` | e.g. `Worldwide,EMEA,Africa` |
+| `PREFERRED_LOCATIONS` | default `Canada,Tunisia,Tunisie,Tunis` |
+| `ACCEPTED_REMOTE_SCOPES` | default `Worldwide,EMEA,Africa,Americas` |
+| `JOBSPY_SITES` | default `indeed,linkedin`; add `glassdoor`, `bayt`, `google` at your own risk |
+| `JOBSPY_LOCATIONS` | default `Remote@usa,Canada@canada,Tunisia@worldwide` (`@country` picks the Indeed site; `worldwide` skips Indeed/Glassdoor) |
+| `JOOBLE_LOCATIONS`, `ADZUNA_COUNTRIES` | default `Canada,Tunisia` and `ca,gb,us` |
+| `ALERT_FORMAT` | `digest` (default) or `individual` |
+| `DUCKDUCKGO_ENABLED` | default `false` in Actions (DuckDuckGo serves a bot check to runners) |
 | `SEARXNG_URL` | your own SearXNG instance |
 | `BOT_USER_AGENT` | include your contact URL or email |
 
@@ -271,8 +286,8 @@ In a dry run, alerts are printed rather than sent and no state is written, unles
 **Sources:** `config/sources.toml`
 
 - ATS slugs per provider. For Workday, paste the career-site URL.
-- `[[career_sites]]` with an optional `job_url_pattern`, `sitemap` and `max_pages`.
-- `[[rss_feeds]]`
+- `[[career_sites]]` with an optional `job_url_pattern`, `sitemap` and `max_pages`. Add `source_type = "feed"` for a job board's search page (shipped: Keejob keyword searches): its postings then carry feed authority in fusion and the board's name is never used as the employer.
+- `[[rss_feeds]]` (shipped: GoGeomatics, GISjobs.com, Job Bank Canada searches, Tunisie Travail searches). Job Bank's feed matches occupation titles, not free text: "surveyor" and "geomatics" return results, "GIS" does not.
 - extra search queries
 
 > Every ATS slug shipped in `sources.toml` was checked against the live public APIs on 2026-09-16 (the file lists the job count per board). Companies change ATS providers, so run `validate-sources` or check the run summary after editing and fix or remove anything reported `INVALID`. SmartRecruiters and Workable answer with an empty list for unknown accounts, so confirm a non-empty board before adding one there.
@@ -289,6 +304,7 @@ In a dry run, alerts are printed rather than sent and no state is written, unles
 | `MAX_JOB_AGE_HOURS` / `ROTATION_MAX_JOB_AGE_HOURS` | `48` / `336` | freshness limits |
 | `MAX_ALERTS_PER_RUN` / `MAX_NOTIFY_ATTEMPTS` | `25` / `5` | alert flood control and retry budget |
 | `ALERT_ON_CHANGES` | `false` | re-alert when a notified job's title/location/salary/remote status changes |
+| `ALERT_FORMAT` | `digest` | `digest`: one numbered list per run · `individual`: one message per job |
 | `PREFERRED_LOCATIONS`, `ACCEPTED_REMOTE_SCOPES` | empty | location scoring |
 | `STRICT_LOCATION_FILTER` | `false` | reject non-matching locations |
 | `EXTRA_NEGATIVE_TITLES` | empty | comma-separated extra exclusions |
@@ -300,8 +316,11 @@ In a dry run, alerts are printed rather than sent and no state is written, unles
 | `SEARXNG_URL` | empty | enables SearXNG backend |
 | `DUCKDUCKGO_ENABLED` | `true` | DuckDuckGo HTML backend (obeys robots.txt) |
 | `FEEDS_ENABLED` | `remotive,jobicy,himalayas,arbeitnow,remoteok` | which public feeds run |
-| `JOBSPY_ENABLED`, `JOBSPY_SITES`, `JOBSPY_LOCATIONS`, `JOBSPY_TERMS_PER_RUN` | `true`, `indeed`, `Remote`, `3` | JobSpy |
+| `JOBSPY_ENABLED`, `JOBSPY_SITES`, `JOBSPY_LOCATIONS`, `JOBSPY_TERMS_PER_RUN` | `true`, `indeed,linkedin`, `Remote`, `3` | JobSpy; locations accept `Location@indeed_country` |
+| `JOBSPY_RESULTS_WANTED`, `JOBSPY_LINKEDIN_FETCH_DESCRIPTION` | `15`, `true` | results per search; fetch LinkedIn descriptions (one request per job; set `false` if LinkedIn answers 429) |
 | `USAJOBS_API_KEY`, `USAJOBS_EMAIL` | empty | enables USAJOBS |
+| `ADZUNA_APP_ID`, `ADZUNA_APP_KEY`, `ADZUNA_COUNTRIES` | empty, empty, `ca,gb,us` | enables Adzuna |
+| `JOOBLE_API_KEY`, `JOOBLE_LOCATIONS` | empty, `PREFERRED_LOCATIONS` | enables Jooble |
 | `DISABLED_BACKENDS` | empty | e.g. `search_duckduckgo,arbeitnow` |
 | `SOURCE_CONCURRENCY` | `6` | parallel backends |
 | `RUN_TIME_BUDGET_MINUTES` | `40` | soft deadline; backends stop early and report PARTIAL |
@@ -338,7 +357,8 @@ In a dry run, alerts are printed rather than sent and no state is written, unles
 - **Rotation is slow at scale.** With tens of thousands of discovered boards, a full pass takes days to weeks. Boards that produce relevant jobs are promoted to every run.
 - **No JavaScript rendering.** Pages that load jobs only through client-side JavaScript, without JSON-LD or embedded JSON, can't be extracted. Workday is handled through its public JSON endpoints.
 - **Blocked sites stay blocked.** No CAPTCHA solving, login, stealth browsers or proxies are used. Such failures are recorded and skipped.
-- **JobSpy** depends on third-party sites that may rate-limit or block, and each site's terms apply to you. It is off unless the optional package is installed, and limited to `indeed` by default.
+- **JobSpy** depends on third-party sites that may rate-limit or block, and each site's terms apply to you (LinkedIn's robots.txt disallows its guest job search; JobSpy uses it anyway, which is why it is a separate, optional package). Indeed and LinkedIn work from GitHub runners; Glassdoor and Bayt frequently answer 400/403 and are off by default. Indeed has no Tunisian site, so Tunisia is searched on LinkedIn only.
+- **LinkedIn and Glassdoor** have no public job API. There is no legitimate way to read them beyond JobSpy's best-effort scraping above.
 - **Fuzzy deduplication** can very occasionally merge two genuinely different postings with identical company, title and place that don't come from ATS APIs (for example, two identical openings on a generic careers page).
 - **Matching is conservative.** Jobs whose titles aren't recognisably geospatial are rejected even when the description is strongly geospatial (e.g. "Software Engineer, Maps"). Extend `GEO_TITLE_TERMS` or `DIRECT_ROLES` if you want those.
 - **Posting dates** from JSON-LD are only as reliable as the site. Some sites re-stamp `datePosted` on every render, which can make an old job look fresh.

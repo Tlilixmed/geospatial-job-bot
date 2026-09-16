@@ -110,3 +110,36 @@ def test_deterministic():
     a = M.score_job("GIS Analyst", GIS_DESCRIPTION, REMOTE).to_dict()
     b = M.score_job("GIS Analyst", GIS_DESCRIPTION, REMOTE).to_dict()
     assert a == b
+
+
+# ------------------------------------------------------------------ French postings
+FR_DESCRIPTION = (
+    "Nous recrutons un Ingénieur SIG pour la cartographie des réseaux. Missions : analyse spatiale, numérisation, "
+    "géoréférencement de plans, production de cartes thématiques et contrôle qualité des données géographiques. "
+    "Maîtrise de QGIS et ArcGIS Pro exigée. Connaissance de PostGIS et Python souhaitée. Levés topographiques au GPS, "
+    "traitement de nuages de points LiDAR et télédétection. Systèmes de coordonnées et projections cartographiques."
+)
+
+
+def test_french_title_and_description_score_high():
+    r = M.score_job("Ingénieur SIG (H/F)", FR_DESCRIPTION, {"city": "Tunis", "country": "Tunisia", "raw": "Tunis, Tunisie"})
+    assert r.tier == "high" and r.breakdown["title"] == 40
+    qual = {h.canonical: h.qualifier for h in r.skills}
+    assert qual["QGIS"] == "required" and qual["ArcGIS Pro"] == "required" and qual["PostGIS"] == "preferred"
+    for domain in ("Remote sensing", "Point clouds", "LiDAR", "Utility mapping", "Spatial analysis"):
+        assert domain in r.domain_names
+    resp = [h.canonical for h in r.responsibilities]
+    assert "Georeferencing" in resp and "Coordinate systems" in resp and "QA/QC" in resp
+
+
+def test_french_titles_classify_like_english():
+    assert M.classify_title("Géomaticien / Géomaticienne")[0] == "direct"
+    assert M.classify_title("Dessinateur Géomètre Topographe")[0] == "direct"
+    assert M.classify_title("Chargé d'études en géomatique")[0] in ("direct", "geo_title")
+    assert M.classify_title("Technicien en télédétection")[0] == "geo_title"
+    assert M.classify_title("map draftsman/woman")[0] == "geo_title"  # Job Bank occupation title
+    assert M.classify_title("Architecte SIG")[3] is None
+    assert M.classify_title("Directeur Commercial")[3] is not None
+    assert M.title_prefilter("Ingénieur SIG", False)
+    assert not M.title_prefilter("Ingénieur Mécanique", True)
+    assert not M.title_prefilter("Ingénieur", False)  # generic French title needs geospatial context

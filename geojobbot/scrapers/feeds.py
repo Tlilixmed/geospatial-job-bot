@@ -7,7 +7,9 @@
   RemoteOK   https://remoteok.com/api                           (attribution requested)
   RSS/Atom   any feed configured in sources.toml [[rss_feeds]]
   USAJOBS    https://data.usajobs.gov/api/search (free API key + email, optional)
-  JobSpy     python-jobspy library (optional, supplementary)
+  Adzuna     https://api.adzuna.com/v1/api/jobs/{country}/search/1 (free app id + key, optional)
+  Jooble     https://jooble.org/api/{key} (free API key, optional; covers Tunisia and Canada among others)
+  JobSpy     python-jobspy library (optional, supplementary: Indeed, LinkedIn, Glassdoor, Bayt, Google)
 
 Each feed runs at most once per ``min_interval_hours`` (tracked in R2 state) to respect the
 providers' rate expectations. A non-empty response that parses to zero jobs is SCHEMA_MISMATCH,
@@ -15,6 +17,7 @@ never a silent "no jobs".
 """
 from __future__ import annotations
 
+import html.entities as html_entities
 import logging
 import re
 import xml.etree.ElementTree as ET
@@ -25,6 +28,7 @@ from ..models import BackendOutput, RawJob
 from ..utils.dates import parse_datetime
 from ..utils.http import FetchError
 from ..utils.text import html_to_text
+from ..utils.urls import is_aggregator
 from .ats.detect import detect
 from .base import Backend, RunContext
 
@@ -271,12 +275,36 @@ class RemoteOKBackend(JsonFeedBackend):
         )
 
 
+_XML_BUILTIN_ENTITIES = {b"amp", b"lt", b"gt", b"quot", b"apos"}
+_NAMED_ENTITY_RE = re.compile(rb"&([A-Za-z][A-Za-z0-9]*);")
+
+
+def repair_xml_entities(body: bytes) -> bytes:
+    """Replace HTML named entities XML does not define (&raquo;, &nbsp;, &eacute;…) with numeric references.
+
+    WordPress and other CMS feeds emit them in titles; expat rejects the whole document otherwise.
+    Entity names are ASCII, so the byte-level substitution is safe for any ASCII-compatible encoding.
+    """
+    def substitute(match):
+        name = match.group(1)
+        if name in _XML_BUILTIN_ENTITIES:
+            return match.group(0)
+        code = html_entities.name2codepoint.get(name.decode("ascii"))
+        return f"&#{code};".encode("ascii") if code else match.group(0)
+    return _NAMED_ENTITY_RE.sub(substitute, body)
+
+
 class RssFeedBackend(Backend):
-    """Generic RSS/Atom feeds listed in sources.toml [[rss_feeds]] (name, url, source_type, geospatial)."""
+    """Generic RSS/Atom feeds listed in sources.toml [[rss_feeds]] (name, url, source_type, geospatial).
+
+    Runs in the discovery phase: items that carry only an excerpt have their posting page queued, so the
+    generic extractor reads the full text (JSON-LD or HTML) in the same run and fusion merges the two.
+    """
 
     name = "rss_feeds"
-    phase = "extraction"
+    phase = "discovery"
     source_type = "feed"
+    FULL_DESCRIPTION_CHARS = 300  # below this the feed item is treated as an excerpt
 
     def __init__(self, feeds: list[dict]):
         self.feeds = [f for f in feeds if isinstance(f, dict) and f.get("url")]
@@ -289,7 +317,10 @@ class RssFeedBackend(Backend):
 
     @staticmethod
     def parse(body: bytes, feed: dict) -> list[RawJob]:
-        root = ET.fromstring(body)
+        try:
+            root = ET.fromstring(body)
+        except ET.ParseError:
+            root = ET.fromstring(repair_xml_entities(body))
         jobs = []
         entries = root.findall(".//item") or root.findall(".//{http://www.w3.org/2005/Atom}entry")
         for entry in entries:
@@ -301,7 +332,9 @@ class RssFeedBackend(Backend):
                 return ""
             title = html_to_text(find("title", "{http://www.w3.org/2005/Atom}title"))
             link = find("link", "{http://www.w3.org/2005/Atom}link")
-            desc = find("description", "{http://www.w3.org/2005/Atom}summary", "{http://www.w3.org/2005/Atom}content")
+            # WordPress feeds (job boards built on WP Job Manager) carry the full posting in content:encoded
+            desc = find("{http://purl.org/rss/1.0/modules/content/}encoded", "description",
+                        "{http://www.w3.org/2005/Atom}summary", "{http://www.w3.org/2005/Atom}content")
             posted = parse_datetime(find("pubDate", "{http://www.w3.org/2005/Atom}updated",
                                          "{http://www.w3.org/2005/Atom}published"))
             if not title:
@@ -316,12 +349,22 @@ class RssFeedBackend(Backend):
             ))
         return jobs
 
+    @staticmethod
+    def is_html_not_feed(body: bytes, content_type: str) -> bool:
+        """WordPress answers a search feed with no results with an ordinary HTML page: an empty result, not an error."""
+        return "html" in (content_type or "").lower() and not re.search(rb"<(rss|feed|rdf:RDF)\b", body[:4000])
+
     def run(self, ctx: RunContext) -> BackendOutput:
         out = BackendOutput()
-        errors, ok = [], 0
+        errors, ok, queued, empty_html = [], 0, 0, []
         for feed in self.feeds:
             try:
-                body = ctx.client.get(feed["url"], detect_challenge=False).content
+                response = ctx.client.get(feed["url"], detect_challenge=False)
+                body = response.content
+                if self.is_html_not_feed(body, response.headers.get("Content-Type", "")):
+                    empty_html.append(feed.get("name"))
+                    ok += 1
+                    continue
                 jobs = self.parse(body, feed)
                 ok += 1
             except FetchError as exc:
@@ -332,11 +375,16 @@ class RssFeedBackend(Backend):
                 errors.append(f"{feed.get('name')}: XML parse error {exc}")
                 continue
             for job in jobs:
-                if ctx.prefilter(job.title, job.geo_context):
-                    out.jobs.append(job)
-                else:
+                if not ctx.prefilter(job.title, job.geo_context):
                     out.prefiltered_out += 1
-        out.details = {"feeds": len(self.feeds), "ok": ok, "errors": errors}
+                    continue
+                out.jobs.append(job)
+                if job.url and len(job.description) < self.FULL_DESCRIPTION_CHARS and not is_aggregator(job.url):
+                    if ctx.pages.add(job.url, origin="rss", priority=80, source_type=job.source_type,
+                                     geo_context=job.geo_context):
+                        queued += 1
+        out.details = {"feeds": len(self.feeds), "ok": ok, "pages_queued": queued, "empty_html": empty_html,
+                       "errors": errors}
         if ok == 0:
             out.status, out.error = "FAILED", errors[0] if errors else "no feeds parsed"
         elif errors:
@@ -437,24 +485,68 @@ class JobSpyBackend(Backend):
             return False, "python-jobspy not installed (optional)"
         return True, None
 
+    # Sites that only exist per country: skipped for locations whose country is "worldwide".
+    COUNTRY_SITES = {"indeed", "glassdoor"}
+
+    @staticmethod
+    def location_specs(settings) -> list[tuple[str, str]]:
+        """Parse JOBSPY_LOCATIONS entries "Location" / "Location@country" into (location, indeed_country)."""
+        specs = []
+        for item in settings.jobspy_locations:
+            location, _, country = item.partition("@")
+            location = location.strip()
+            if location:
+                specs.append((location, (country.strip() or settings.jobspy_country_indeed).lower()))
+        return specs or [("Remote", settings.jobspy_country_indeed.lower())]
+
+    @staticmethod
+    def patch_country_parsing() -> None:
+        """python-jobspy aborts a whole LinkedIn search when a result's country is missing from its
+        enum (Tunisia, for example). Fall back to WORLDWIDE so the row is kept instead."""
+        try:
+            from jobspy.model import Country
+        except Exception:
+            return
+        original = getattr(Country.from_string, "__func__", None)
+        if original is None or getattr(original, "_geojobbot_tolerant", False):
+            return
+
+        def tolerant(cls, value):
+            try:
+                return original(cls, value)
+            except ValueError:
+                return cls.WORLDWIDE
+
+        tolerant._geojobbot_tolerant = True
+        Country.from_string = classmethod(tolerant)
+
     def run(self, ctx: RunContext) -> BackendOutput:
         from jobspy import scrape_jobs
 
+        self.patch_country_parsing()
         out = BackendOutput()
         cursor = ctx.cursor(self.name)
         start = int(cursor.get("index", 0))
         n = min(ctx.settings.jobspy_terms_per_run, len(self.terms))
+        all_sites = [s.strip().lower() for s in ctx.settings.jobspy_sites if s.strip()]
+        specs = self.location_specs(ctx.settings)
         errors, ok = [], 0
         for offset in range(n):
             term = self.terms[(start + offset) % len(self.terms)]
             cursor["index"] = (start + offset + 1) % len(self.terms)
-            for location in ctx.settings.jobspy_locations:
+            for location, country in specs:
                 if ctx.out_of_time(300):
                     break
+                sites = [s for s in all_sites if not (country == "worldwide" and s in self.COUNTRY_SITES)]
+                if not sites:
+                    continue
+                kwargs = dict(site_name=sites, search_term=term, location=location,
+                              results_wanted=ctx.settings.jobspy_results_wanted, hours_old=72,
+                              country_indeed=country, verbose=0)
+                if "linkedin" in sites and ctx.settings.jobspy_linkedin_fetch_description:
+                    kwargs["linkedin_fetch_description"] = True
                 try:
-                    frame = scrape_jobs(site_name=ctx.settings.jobspy_sites, search_term=term, location=location,
-                                        results_wanted=ctx.settings.jobspy_results_wanted, hours_old=72,
-                                        country_indeed=ctx.settings.jobspy_country_indeed, verbose=0)
+                    frame = scrape_jobs(**kwargs)
                 except Exception as exc:  # the library raises many types; never propagate
                     message = str(exc)[:200]
                     kind = "BLOCKED" if re.search(r"429|403|captcha|blocked", message, re.I) else type(exc).__name__
@@ -467,7 +559,8 @@ class JobSpyBackend(Backend):
                         out.jobs.append(job)
                     elif job:
                         out.prefiltered_out += 1
-        out.details = {"searches_ok": ok, "errors": errors[:10], "sites": ctx.settings.jobspy_sites}
+        out.details = {"searches_ok": ok, "errors": errors[:10], "sites": all_sites,
+                       "locations": [f"{loc}@{country}" for loc, country in specs]}
         if out.jobs:
             ctx.snapshot(self.name, [j.snapshot() for j in out.jobs])
         if ok == 0:
@@ -511,5 +604,174 @@ class JobSpyBackend(Backend):
             employment_type=str(c(row.get("job_type")) or "") or None, salary=salary, posted_at=posted,
             posted_at_reliable=posted is not None, native_id=native,
             source_job_id=f"jobspy:{c(row.get('id'))}" if c(row.get("id")) else None, extraction_method="api",
+            geo_context=True,
+        )
+
+
+class AdzunaBackend(Backend):
+    """Adzuna search API (https://developer.adzuna.com, free app id + key). Aggregator: descriptions are
+    short snippets, so scoring leans on the title, and the link goes through Adzuna to the employer."""
+
+    name = "adzuna"
+    phase = "extraction"
+    source_type = "aggregator"
+    min_interval_hours = 4
+    terms = ["GIS", "geospatial", "geomatics", "LiDAR", "cartographer", "remote sensing", "photogrammetry",
+             "surveying technician"]
+    api = "https://api.adzuna.com/v1/api/jobs/{country}/search/1"
+
+    def enabled(self, ctx):
+        ok, reason = super().enabled(ctx)
+        if ok and not (ctx.settings.adzuna_app_id and ctx.settings.adzuna_app_key):
+            return False, "ADZUNA_APP_ID / ADZUNA_APP_KEY not set"
+        return ok, reason
+
+    def run(self, ctx: RunContext) -> BackendOutput:
+        out = BackendOutput()
+        errors, ok, seen = [], 0, set()
+        stop = False
+        for country in ctx.settings.adzuna_countries:
+            for term in self.terms:
+                if stop or ctx.out_of_time(200):
+                    break
+                url = self.api.format(country=country)
+                params = {"app_id": ctx.settings.adzuna_app_id, "app_key": ctx.settings.adzuna_app_key, "what": term,
+                          "results_per_page": 50, "max_days_old": 3, "sort_by": "date",
+                          "content-type": "application/json"}
+                try:
+                    data = ctx.client.get_json(url, params=params, respect_robots=False)
+                except FetchError as exc:
+                    errors.append(f"{country}/{term}: {exc.kind}")  # never the URL: it carries the key
+                    stop = exc.kind in ("AUTH_REQUIRED", "BLOCKED", "RATE_LIMITED")
+                    continue
+                results = data.get("results") if isinstance(data, dict) else None
+                if not isinstance(results, list):
+                    errors.append(f"{country}/{term}: unexpected structure")
+                    continue
+                ok += 1
+                for item in results:
+                    if not isinstance(item, dict):
+                        continue
+                    try:
+                        job = self.to_raw(item, url)
+                    except Exception:
+                        ctx.record_parser_error(self.name)
+                        continue
+                    key = job.source_job_id or job.url
+                    if not job.title or key in seen:
+                        continue
+                    seen.add(key)
+                    if ctx.prefilter(job.title, True):
+                        out.jobs.append(job)
+                    else:
+                        out.prefiltered_out += 1
+        out.details = {"queries_ok": ok, "errors": errors[:10], "countries": ctx.settings.adzuna_countries}
+        if out.jobs:
+            ctx.snapshot(self.name, [j.snapshot() for j in out.jobs])
+        if ok == 0:
+            out.status, out.error = "FAILED", errors[0] if errors else "no successful requests"
+        elif errors:
+            out.status = "PARTIAL"
+        return out
+
+    @staticmethod
+    def to_raw(item: dict, source_url: str) -> RawJob:
+        posted = parse_datetime(item.get("created"))
+        url = item.get("redirect_url")
+        salary = None
+        if item.get("salary_min") or item.get("salary_max"):
+            salary = f"{item.get('salary_min') or ''}–{item.get('salary_max') or ''}".strip("–")
+        contract = " ".join(x for x in (item.get("contract_time"), item.get("contract_type")) if x)
+        return RawJob(
+            source_type="aggregator", source_name="adzuna", source_url=source_url.split("?")[0],
+            title=html_to_text(item.get("title")), company=(item.get("company") or {}).get("display_name"),
+            url=url, apply_url=url, description=html_to_text(item.get("description")),
+            location_raw=(item.get("location") or {}).get("display_name") or "",
+            employment_type=contract or None, salary=salary, posted_at=posted, posted_at_reliable=posted is not None,
+            native_id=_link_native(url), source_job_id=f"adzuna:{item['id']}" if item.get("id") else None,
+            extraction_method="api", geo_context=True,
+        )
+
+
+class JoobleBackend(Backend):
+    """Jooble job search API (https://jooble.org/api/about, free key). One POST per term and location;
+    useful for countries the other feeds don't cover (Tunisia, Maghreb, Canada in French)."""
+
+    name = "jooble"
+    phase = "extraction"
+    source_type = "aggregator"
+    min_interval_hours = 4
+    terms = ["GIS", "geospatial", "geomatics", "LiDAR", "cartographer", "SIG", "géomatique", "topographe",
+             "télédétection"]
+
+    def enabled(self, ctx):
+        ok, reason = super().enabled(ctx)
+        if ok and not ctx.settings.jooble_api_key:
+            return False, "JOOBLE_API_KEY not set"
+        return ok, reason
+
+    def run(self, ctx: RunContext) -> BackendOutput:
+        out = BackendOutput()
+        api = f"https://jooble.org/api/{ctx.settings.jooble_api_key}"
+        locations = ctx.settings.jooble_locations or ctx.settings.preferred_locations or [""]
+        errors, ok, seen = [], 0, set()
+        stop = False
+        for location in locations:
+            for term in self.terms:
+                if stop or ctx.out_of_time(200):
+                    break
+                try:
+                    response = ctx.client.post(api, json={"keywords": term, "location": location, "page": 1},
+                                               headers={"Accept": "application/json"}, respect_robots=False,
+                                               detect_challenge=False)
+                    data = response.json()
+                except FetchError as exc:
+                    errors.append(f"{location or 'any'}/{term}: {exc.kind}")  # never the URL: it carries the key
+                    stop = exc.kind in ("AUTH_REQUIRED", "BLOCKED", "RATE_LIMITED")
+                    continue
+                except ValueError:
+                    errors.append(f"{location or 'any'}/{term}: non-JSON response")
+                    continue
+                jobs = data.get("jobs") if isinstance(data, dict) else None
+                if not isinstance(jobs, list):
+                    errors.append(f"{location or 'any'}/{term}: unexpected structure")
+                    continue
+                ok += 1
+                for item in jobs:
+                    if not isinstance(item, dict):
+                        continue
+                    try:
+                        job = self.to_raw(item)
+                    except Exception:
+                        ctx.record_parser_error(self.name)
+                        continue
+                    key = job.source_job_id or job.url
+                    if not job.title or key in seen:
+                        continue
+                    seen.add(key)
+                    if ctx.prefilter(job.title, True):
+                        out.jobs.append(job)
+                    else:
+                        out.prefiltered_out += 1
+        out.details = {"queries_ok": ok, "errors": errors[:10], "locations": locations}
+        if out.jobs:
+            ctx.snapshot(self.name, [j.snapshot() for j in out.jobs])
+        if ok == 0:
+            out.status, out.error = "FAILED", errors[0] if errors else "no successful requests"
+        elif errors:
+            out.status = "PARTIAL"
+        return out
+
+    @staticmethod
+    def to_raw(item: dict) -> RawJob:
+        posted = parse_datetime(item.get("updated"))
+        url = item.get("link")
+        return RawJob(
+            source_type="aggregator", source_name="jooble", source_url="https://jooble.org/api",
+            title=html_to_text(item.get("title")), company=item.get("company") or None, url=url, apply_url=url,
+            description=html_to_text(item.get("snippet")), location_raw=item.get("location") or "",
+            employment_type=item.get("type") or None, salary=item.get("salary") or None, posted_at=posted,
+            posted_at_reliable=posted is not None, native_id=_link_native(url),
+            source_job_id=f"jooble:{item['id']}" if item.get("id") else None, extraction_method="api",
             geo_context=True,
         )

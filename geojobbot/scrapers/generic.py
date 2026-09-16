@@ -257,14 +257,11 @@ def _meta(soup: BeautifulSoup, *names: str) -> str | None:
     return None
 
 
-def parse_html_fallback(soup: BeautifulSoup, page_url: str) -> list[RawJob]:
-    h1 = soup.find("h1")
-    title = clean_whitespace(h1.get_text(" ")) if h1 else ""
-    og_title = _meta(soup, "og:title", "twitter:title")
-    if not title and og_title:
-        title = re.split(r"\s+[|–—-]\s+", og_title)[0].strip()
-    if not title or len(title) > 160:
-        return []
+MIN_FULL_DESCRIPTION = 300
+
+
+def page_description_text(soup: BeautifulSoup) -> str:
+    """Plain text of the page's most likely job-description container ("" when nothing substantial)."""
     container = None
     for selector in ('[itemprop="description"]', '[class*="job-description"]', '[class*="jobDescription"]',
                      '[id*="job-description"]', '[class*="posting"]', '[class*="description"]', "article", "main"):
@@ -274,9 +271,20 @@ def parse_html_fallback(soup: BeautifulSoup, page_url: str) -> list[RawJob]:
             continue
         if candidates:
             container = max(candidates, key=lambda c: len(c.get_text(" ")))
-            if len(container.get_text(" ").strip()) >= 300:
+            if len(container.get_text(" ").strip()) >= MIN_FULL_DESCRIPTION:
                 break
-    text = html_to_text(str(container)) if container else ""
+    return html_to_text(str(container)) if container else ""
+
+
+def parse_html_fallback(soup: BeautifulSoup, page_url: str) -> list[RawJob]:
+    h1 = soup.find("h1")
+    title = clean_whitespace(h1.get_text(" ")) if h1 else ""
+    og_title = _meta(soup, "og:title", "twitter:title")
+    if not title and og_title:
+        title = re.split(r"\s+[|–—-]\s+", og_title)[0].strip()
+    if not title or len(title) > 160:
+        return []
+    text = page_description_text(soup)
     body_text = soup.get_text(" ")
     if len(text) < 300 or not JOB_SIGNAL_RE.search(body_text) or not looks_like_job_url(page_url):
         return []
@@ -348,6 +356,12 @@ def extract_jobs(html: str | bytes, page_url: str, now=None) -> ExtractionResult
         result.expired = expired
         result.errors.extend(errors)
         if jobs:
+            if len(jobs) == 1 and len(jobs[0].description) < MIN_FULL_DESCRIPTION:
+                # Some sites (WP Job Manager boards among them) put only the excerpt in JSON-LD while the
+                # page body holds the full posting; a single posting per page makes the attribution safe.
+                full = page_description_text(soup)
+                if len(full) >= MIN_FULL_DESCRIPTION and len(full) > len(jobs[0].description):
+                    jobs[0].description = full
             result.jobs, result.method = jobs, "jsonld"
             return result
     except Exception as exc:

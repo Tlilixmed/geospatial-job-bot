@@ -48,9 +48,19 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           USAJOBS_API_KEY: ${{ secrets.USAJOBS_API_KEY }}
           USAJOBS_EMAIL: ${{ secrets.USAJOBS_EMAIL }}
+          ADZUNA_APP_ID: ${{ secrets.ADZUNA_APP_ID }}
+          ADZUNA_APP_KEY: ${{ secrets.ADZUNA_APP_KEY }}
+          JOOBLE_API_KEY: ${{ secrets.JOOBLE_API_KEY }}
           SEARXNG_URL: ${{ vars.SEARXNG_URL }}
-          PREFERRED_LOCATIONS: ${{ vars.PREFERRED_LOCATIONS }}
-          ACCEPTED_REMOTE_SCOPES: ${{ vars.ACCEPTED_REMOTE_SCOPES }}
+          # Repository variables override these defaults (Settings -> Secrets and variables -> Actions -> Variables)
+          PREFERRED_LOCATIONS: ${{ vars.PREFERRED_LOCATIONS || 'Canada,Tunisia,Tunisie,Tunis' }}
+          ACCEPTED_REMOTE_SCOPES: ${{ vars.ACCEPTED_REMOTE_SCOPES || 'Worldwide,EMEA,Africa,Americas' }}
+          JOBSPY_SITES: ${{ vars.JOBSPY_SITES || 'indeed,linkedin' }}
+          JOBSPY_LOCATIONS: ${{ vars.JOBSPY_LOCATIONS || 'Remote@usa,Canada@canada,Tunisia@worldwide' }}
+          JOOBLE_LOCATIONS: ${{ vars.JOOBLE_LOCATIONS || 'Canada,Tunisia' }}
+          ADZUNA_COUNTRIES: ${{ vars.ADZUNA_COUNTRIES || 'ca,gb,us' }}
+          ALERT_FORMAT: ${{ vars.ALERT_FORMAT || 'digest' }}
+          DUCKDUCKGO_ENABLED: ${{ vars.DUCKDUCKGO_ENABLED || 'false' }}
           BOT_USER_AGENT: ${{ vars.BOT_USER_AGENT }}
           REQUIRE_R2: "true"
           DRY_RUN: ${{ inputs.dry_run && 'true' || 'false' }}

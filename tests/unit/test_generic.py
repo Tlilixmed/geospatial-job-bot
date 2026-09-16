@@ -24,6 +24,18 @@ def test_jsonld_graph_with_trailing_comma():
     assert job.source_job_id == "REQ-77" and job.posted_at.day == 15
 
 
+def test_jsonld_excerpt_is_topped_up_from_page_body():
+    page = ('<html><script type="application/ld+json">{"@type":"JobPosting","title":"Geomatics Technician",'
+            '"description":"Short excerpt only.","hiringOrganization":{"name":"Kodiak"}}</script>'
+            '<h1>Geomatics Technician</h1><div class="job-description"><p>%s</p></div></html>' % GIS_DESCRIPTION)
+    job = extract_jobs(page, "https://gogeomatics.ca/job/geomatics-technician/", NOW).jobs[0]
+    assert job.extraction_method == "jsonld" and job.company == "Kodiak" and "ArcGIS Pro" in job.description
+    # a listing page with several postings is left alone: the body text cannot be attributed to one of them
+    listing = ('<html><script type="application/ld+json">[{"@type":"JobPosting","title":"A","description":"a"},'
+               '{"@type":"JobPosting","title":"B","description":"b"}]</script><main><p>%s</p></main></html>' % GIS_DESCRIPTION)
+    assert [j.description for j in extract_jobs(listing, "https://x.example/jobs/", NOW).jobs] == ["a", "b"]
+
+
 def test_jsonld_remote_telecommute_scope():
     html = """<script type="application/ld+json">{"@type":"JobPosting","title":"GIS Developer",
       "jobLocationType":"TELECOMMUTE","applicantLocationRequirements":{"@type":"Country","name":"Canada"},
@@ -102,3 +114,20 @@ def test_career_site_discovery_then_generic_extraction():
     assert ctx2.pages.add("https://geo.example/jobs/gis-analyst", origin="sitemap")
     again = GenericPagesBackend(all_adapters()).run(ctx2)
     assert again.details.get("cached_skip") == 1
+
+
+def test_job_board_search_page_keeps_feed_authority_and_never_names_board_as_employer():
+    listing = ('<html><a href="/offres-emploi/123/ingenieur-sig/">Ingénieur SIG</a>'
+               '<a href="/offres-emploi/124/comptable/">Comptable</a><a href="/a-propos/">À propos</a></html>')
+    posting = '<script type="application/ld+json">{"@type":"JobPosting","title":"Ingénieur SIG","description":"%s"}</script>' % GIS_DESCRIPTION
+    s = FakeSession({"https://board.example/offres-emploi/?keywords=SIG": FakeResponse(200, listing),
+                     "https://board.example/offres-emploi/123/ingenieur-sig/": FakeResponse(200, posting),
+                     "https://board.example/offres-emploi/124/comptable/": FakeResponse(200, "<h1>Comptable</h1>")})
+    ctx = make_ctx(s)
+    site = {"name": "Board", "url": "https://board.example/offres-emploi/?keywords=SIG", "source_type": "feed",
+            "geospatial": False, "use_robots_sitemaps": False, "job_url_pattern": r"/offres-emploi/\d+/"}
+    assert CareerSitesBackend([site]).run(ctx).details["links_queued"] == 2
+    out = GenericPagesBackend(all_adapters()).run(ctx)
+    assert [j.title for j in out.jobs] == ["Ingénieur SIG"]
+    job = out.jobs[0]
+    assert job.source_type == "feed" and job.company is None and job.geo_context is False

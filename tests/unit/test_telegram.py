@@ -1,7 +1,12 @@
+import re
+from datetime import datetime, timezone
+
 import requests
 from conftest import FakeResponse, FakeSession
 
-from geojobbot.notifications.telegram import TelegramNotifier, format_job_message
+from geojobbot.notifications.telegram import MAX_MESSAGE, TelegramNotifier, format_digest, format_job_message
+
+STAMP = datetime(2026, 9, 16, 18, 0, tzinfo=timezone.utc)
 
 TOKEN = "123456:SECRET-TOKEN-VALUE"
 URL = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
@@ -54,3 +59,35 @@ def test_error_redacts_token_and_network_error():
     s = FakeSession({URL: [requests.exceptions.ConnectionError()]})
     ok, err = TelegramNotifier(TOKEN, "1", session=s, sleep=lambda x: None, max_retries=1).send("hi")
     assert not ok and "network" in err and TOKEN not in err
+
+
+# ------------------------------------------------------------------ digest
+def test_digest_groups_by_tier_and_numbers_in_order():
+    recs = [rec(title="A"), rec(title="B", tier="possible", score=60), rec(title="C", score=80)]
+    parts = format_digest(recs, now=STAMP)
+    assert len(parts) == 1
+    text, covered = parts[0]
+    assert covered == [recs[0], recs[2], recs[1]]  # High matches first, in input order, then Possible
+    assert "3 new matches" in text and "2 high · 1 possible" in text and "16 Sep 2026 18:00 UTC" in text
+    order = [text.index(x) for x in ("🔥 <b>High matches</b>", "1. <b>A</b>", "2. <b>C</b>",
+                                     "🟡 <b>Possible matches</b>", "3. <b>B</b>")]
+    assert order == sorted(order)
+    assert "Acme &amp; Co" in text and 'href="https://acme.com/j?a=1&amp;b=2"' in text
+    assert "📍 Remote" in text and "📅 15 Sep" in text and "ArcGIS Pro, Python" in text
+    assert "(part" not in text
+
+
+def test_digest_splits_within_telegram_limit_and_tracks_records():
+    recs = [rec(title=f"GIS Analyst {i} " + "x" * 160, score=99 - i % 30) for i in range(40)]
+    parts = format_digest(recs, now=STAMP)
+    assert len(parts) > 1 and all(len(text) <= MAX_MESSAGE for text, _ in parts)
+    assert [r for _, batch in parts for r in batch] == recs
+    assert f"(part 1/{len(parts)})" in parts[0][0] and "(cont.)" in parts[1][0]
+    numbers = re.findall(r"^(\d+)\. <b>", "\n".join(text for text, _ in parts), flags=re.M)
+    assert numbers == [str(i) for i in range(1, 41)]
+
+
+def test_digest_update_marker_and_empty_input():
+    assert format_digest([], now=STAMP) == []
+    text, _ = format_digest([rec(notified=True, pending_update_alert=True)], now=STAMP)[0]
+    assert "🔁 1. <b>" in text

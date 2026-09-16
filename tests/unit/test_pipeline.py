@@ -141,3 +141,34 @@ def test_empty_generic_queue_does_not_mask_total_failure():
     code, report = run(FakeS3(), [CrashingBackend(), GenericPagesBackend(all_adapters())], FakeNotifier())
     assert code == 2
     assert {r["name"]: r["status"] for r in report["sources"]}["generic_pages"] == "SKIPPED"
+
+
+def many_jobs(n):
+    return [gis_raw(title=f"GIS Analyst {i}", url=f"https://acme.example/jobs/{i}", apply_url=f"https://acme.example/jobs/{i}",
+                    description=GIS_DESCRIPTION + f" Team {i}.", source_job_id=f"static:{i}") for i in range(n)]
+
+
+def test_digest_sends_one_list_and_marks_every_job_delivered():
+    s3, n = FakeS3(), FakeNotifier()
+    code, report = run(s3, [StaticBackend("feed", many_jobs(5))], n)
+    assert code == 0 and len(n.sent) == 1
+    assert report["counts"]["alerts_sent"] == 5 and report["counts"]["messages_sent"] == 1
+    assert "5 new matches" in n.sent[0] and "5. <b>GIS Analyst" in n.sent[0]
+    jobs = StateManager(R2Store("b", client=s3)).load()["jobs"]
+    assert all(jobs[f"static:{i}"]["notified"] for i in range(5))
+
+
+def test_digest_failure_leaves_every_job_for_retry():
+    s3 = FakeS3()
+    run(s3, [StaticBackend("feed", many_jobs(3))], FakeNotifier(fail=True))
+    jobs = StateManager(R2Store("b", client=s3)).load()["jobs"]
+    assert all(not rec["notified"] and rec["notify_attempts"] == 1 for rec in jobs.values())
+    n = FakeNotifier()
+    _, report = run(s3, [StaticBackend("feed", many_jobs(3))], n, now=NOW + timedelta(hours=1))
+    assert len(n.sent) == 1 and report["counts"]["alerts_sent"] == 3
+
+
+def test_individual_format_sends_one_message_per_job():
+    n = FakeNotifier()
+    run(FakeS3(), [StaticBackend("feed", many_jobs(2))], n, alert_format="individual")
+    assert len(n.sent) == 2 and all("HIGH MATCH" in message for message in n.sent)

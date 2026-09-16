@@ -46,6 +46,26 @@ COUNTRIES = {
     "peru": "Peru", "colombia": "Colombia", "argentina": "Argentina", "ecuador": "Ecuador", "bolivia": "Bolivia",
     "uruguay": "Uruguay", "costa rica": "Costa Rica", "papua new guinea": "Papua New Guinea",
     "mongolia": "Mongolia", "kazakhstan": "Kazakhstan",
+    # French country names (keys are accent-folded)
+    "tunisie": "Tunisia", "maroc": "Morocco", "algerie": "Algeria", "egypte": "Egypt", "libye": "Libya",
+    "belgique": "Belgium", "suisse": "Switzerland", "allemagne": "Germany", "espagne": "Spain", "italie": "Italy",
+    "royaume-uni": "United Kingdom", "etats-unis": "United States", "pays-bas": "Netherlands",
+    "cote d'ivoire": "Ivory Coast", "ivory coast": "Ivory Coast", "cameroun": "Cameroon", "cameroon": "Cameroon",
+    "mali": "Mali", "burkina faso": "Burkina Faso", "niger": "Niger", "benin": "Benin", "togo": "Togo",
+    "gabon": "Gabon", "madagascar": "Madagascar", "mauritanie": "Mauritania", "mauritania": "Mauritania",
+    "liban": "Lebanon", "lebanon": "Lebanon", "arabie saoudite": "Saudi Arabia",
+    "emirats arabes unis": "United Arab Emirates",
+}
+# Cities/governorates that postings often list without a country (accent-folded keys).
+CITY_COUNTRIES = {
+    "tunis": "Tunisia", "ariana": "Tunisia", "ben arous": "Tunisia", "la manouba": "Tunisia", "manouba": "Tunisia",
+    "sfax": "Tunisia", "sousse": "Tunisia", "monastir": "Tunisia", "nabeul": "Tunisia", "bizerte": "Tunisia",
+    "gabes": "Tunisia", "kairouan": "Tunisia", "gafsa": "Tunisia", "medenine": "Tunisia", "tozeur": "Tunisia",
+    "kebili": "Tunisia", "tataouine": "Tunisia", "beja": "Tunisia", "jendouba": "Tunisia", "le kef": "Tunisia",
+    "siliana": "Tunisia", "zaghouan": "Tunisia", "mahdia": "Tunisia", "sidi bouzid": "Tunisia",
+    "kasserine": "Tunisia", "hammamet": "Tunisia", "la marsa": "Tunisia", "lac": "Tunisia",
+    "casablanca": "Morocco", "rabat": "Morocco", "marrakech": "Morocco", "tanger": "Morocco", "alger": "Algeria",
+    "algiers": "Algeria", "oran": "Algeria", "dakar": "Senegal", "abidjan": "Ivory Coast",
 }
 US_STATES = {
     "al": "Alabama", "ak": "Alaska", "az": "Arizona", "ar": "Arkansas", "ca": "California", "co": "Colorado",
@@ -70,11 +90,12 @@ AU_STATES = {"nsw": "New South Wales", "vic": "Victoria", "qld": "Queensland", "
              "act": "Australian Capital Territory"}
 
 REMOTE_RE = re.compile(
-    r"(\bfully\s+remote\b|100%\s*remote\b|\bremote\b|\bwork\s+from\s+home\b|\bwfh\b|\btelecommut\w*|\bhome[- ]based\b|\banywhere\b)",
+    r"(\bfully\s+remote\b|100%\s*remote\b|\bremote\b|\bwork\s+from\s+home\b|\bwfh\b|\btelecommut\w*|\bhome[- ]based\b|\banywhere\b|"
+    r"\bt[ée]l[ée]travail\b|\b[àa]\s+distance\b)",
     re.I,
 )
-HYBRID_RE = re.compile(r"\bhybrid\b", re.I)
-ONSITE_RE = re.compile(r"\b(on[- ]?site|in[- ]office|office[- ]based|in[- ]person)\b", re.I)
+HYBRID_RE = re.compile(r"\bhybrid(?:e|es)?\b", re.I)
+ONSITE_RE = re.compile(r"\b(on[- ]?site|in[- ]office|office[- ]based|in[- ]person|pr[ée]sentiel|sur\s+site)\b", re.I)
 FULLY_REMOTE_TEXT_RE = re.compile(r"\b(fully|100%|100 %|completely)\s+remote\b", re.I)
 
 
@@ -163,6 +184,8 @@ def _parse_place(text: str) -> tuple[str | None, str | None, str | None]:
         candidate = remaining[0]
         if len(fold(candidate)) >= 2 and fold(candidate) not in WORLDWIDE:
             city = candidate
+    if country is None and city and fold(city) in CITY_COUNTRIES:
+        country = CITY_COUNTRIES[fold(city)]
     return city, region, country
 
 

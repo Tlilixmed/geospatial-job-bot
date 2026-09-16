@@ -94,3 +94,14 @@ def test_structured_flags_override():
 def test_empty_location():
     loc = parse_location(None)
     assert loc.remote is None and loc.display() == "Location not specified"
+
+
+def test_french_locations():
+    loc = parse_location("Tunis, Tunisie")
+    assert (loc.city, loc.country) == ("Tunis", "Tunisia")
+    assert parse_location("Sfax").country == "Tunisia"
+    assert parse_location("Tunis, Tunis").country == "Tunisia"  # LinkedIn style "city, governorate"
+    remote = parse_location("Télétravail - Canada")
+    assert remote.remote is True and remote.remote_scope == "Canada"
+    hybrid = parse_location("Montréal, QC (Hybride)")
+    assert hybrid.work_mode == "hybrid" and hybrid.country == "Canada" and hybrid.region == "Quebec"
