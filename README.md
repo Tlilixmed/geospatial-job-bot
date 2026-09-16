@@ -211,6 +211,7 @@ gh variable set BOT_USER_AGENT     --body "GeospatialJobBot/1.0 (+https://github
 **Workflows:**
 
 - `.github/workflows/scraper.yml` runs every 4 hours (`0 */4 * * *`). You can also start it manually, optionally as a dry run. It uses `concurrency: geospatial-job-scraper` without cancel-in-progress, so runs never overlap.
+- **Never use "Re-run jobs"** to run the bot after a push: GitHub replays the commit the original run was created from. The workflow now refuses such runs with an error. Use **Run workflow** instead, or wait for the schedule. Every summary shows the commit it ran (`code abc1234`).
 - `.github/workflows/tests.yml` runs the offline tests on every push. Started manually, it can also run the live integration tests and validate your sources.
 
 ---

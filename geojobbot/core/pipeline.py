@@ -178,6 +178,7 @@ class Pipeline:
         settings = self.settings
         started = time.monotonic()
         report = {"run_id": self.run_id, "started_at": to_iso(self.now), "sources": [], "counts": Counter(),
+                  "code": (os.environ.get("GITHUB_SHA") or "")[:7] or "local",
                   "storage": {"backend": None, "loaded": False, "saved": False, "snapshots": 0},
                   "invalid_configured": {}, "unverified_configured": {}}
         exit_code = 0

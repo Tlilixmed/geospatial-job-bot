@@ -38,7 +38,8 @@ def _status_line(result: dict) -> str:
 
 
 def build_summary(report: dict) -> str:
-    lines = ["=" * 60, "RUN SUMMARY", "=" * 60, "", "Sources:"]
+    lines = ["=" * 60, "RUN SUMMARY", "=" * 60, f"Run {report.get('run_id')} · code {report.get('code') or 'local'}",
+             "", "Sources:"]
     for result in report["sources"]:
         lines.append(_status_line(result))
     invalid = report.get("invalid_configured", {})
@@ -100,7 +101,7 @@ def build_summary(report: dict) -> str:
 
 def build_markdown(report: dict) -> str:
     c = report["counts"]
-    md = [f"## Geospatial job bot — run `{report['run_id']}`", "",
+    md = [f"## Geospatial job bot — run `{report['run_id']}` · code `{report.get('code') or 'local'}`", "",
           f"**High:** {c.get('tier_high', 0)} · **Possible:** {c.get('tier_possible', 0)} · "
           f"**Rejected:** {c.get('tier_rejected', 0)} · **Alerts sent:** {c.get('alerts_sent', 0)} · "
           f"**New jobs:** {c.get('new', 0)}", "", "| Source | Status | Jobs | Note |", "|---|---|---|---|"]

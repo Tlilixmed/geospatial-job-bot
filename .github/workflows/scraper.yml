@@ -24,6 +24,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # "Re-run jobs" replays the commit the original run was created from, not the current main.
+      # Fail fast in that case so a stale run never masquerades as a run of the latest code.
+      - name: Refuse to replay stale code
+        run: |
+          latest=$(git ls-remote --quiet origin refs/heads/main | cut -f1)
+          echo "running commit ${GITHUB_SHA:0:7}; main is at ${latest:0:7}"
+          if [ -n "$latest" ] && [ "$latest" != "$GITHUB_SHA" ]; then
+            echo "::error::This run replays old commit ${GITHUB_SHA:0:7} while main is at ${latest:0:7}. Use Actions -> Run workflow (or wait for the schedule) instead of 'Re-run jobs'."
+            exit 1
+          fi
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
