@@ -113,6 +113,17 @@ class StateManager:
         """Load state. Raises StorageError if storage is unreachable (never silently starts empty)."""
         data = self.store.get_bytes(self.state_key)
         if data is None:
+            # Diagnose before deciding: a HEAD that succeeds where GET reported "missing" is a storage/client
+            # problem, not a first run, and must never be answered by starting empty.
+            head = self.store.head(self.state_key)
+            siblings = self.store.list_keys(self.key("state/"))
+            log.warning("GET %s returned nothing; HEAD=%s; %d objects under %s: %s", self.state_key, head,
+                        len(siblings), self.key("state/"), siblings[:10])
+            if head is not None:
+                raise StateCorruptError(
+                    f"GET {self.state_key} reported the object missing but HEAD finds it ({head}); "
+                    f"store={self.store.name}. This is a storage or client fault, not a first run"
+                )
             backups = self._backup_keys()
             if backups:
                 log.warning("state object missing but %d backups exist; restoring newest valid backup", len(backups))
@@ -125,8 +136,9 @@ class StateManager:
                 # Earlier runs wrote reports here, so starting empty would re-alert every job they saw.
                 raise StateCorruptError(
                     f"{self.state_key} is missing although {len(previous_runs)} objects exist under "
-                    f"{self.key('runs/')} (store={self.store.name}); refusing to start fresh. Check the bucket, "
-                    f"restore a backup, or set ALLOW_STATE_RESET=true to start over deliberately"
+                    f"{self.key('runs/')} (store={self.store.name}, objects under {self.key('state/')}: "
+                    f"{siblings[:10]}); refusing to start fresh. Check the bucket, restore a backup, or set "
+                    f"ALLOW_STATE_RESET=true to start over deliberately"
                 )
             log.info("no existing state found at %s (store=%s): starting fresh (first run)", self.state_key,
                      self.store.name)

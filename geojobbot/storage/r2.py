@@ -47,8 +47,13 @@ class R2Store(ObjectStore):
     name = "r2"
 
     def __init__(self, bucket: str, client=None, *, endpoint_url=None, access_key_id=None, secret_access_key=None):
-        self.bucket = bucket
+        self.bucket = (bucket or "").strip()
+        if self.bucket != (bucket or ""):
+            log.warning("R2_BUCKET_NAME had surrounding whitespace; using %r", self.bucket)
         self.client = client or build_r2_client(endpoint_url, access_key_id, secret_access_key)
+        if endpoint_url:
+            host = endpoint_url.split("//")[-1].split("/")[0]
+            log.info("R2 store: bucket %r via %s", self.bucket, host[:6] + "…" + host[host.find(".") :])
 
     def _wrap(self, action: str, exc: Exception) -> StorageError:
         return StorageError(f"R2 {action} failed: {type(exc).__name__} {_error_code(exc)}".strip())
@@ -59,6 +64,7 @@ class R2Store(ObjectStore):
             return response["Body"].read()
         except Exception as exc:  # botocore ClientError / connection errors
             if _error_code(exc) in MISSING_CODES:
+                log.debug("R2 get %s: %s %s", key, type(exc).__name__, _error_code(exc))
                 return None
             raise self._wrap(f"get {key}", exc) from exc
 
