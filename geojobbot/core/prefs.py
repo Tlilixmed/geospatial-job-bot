@@ -20,6 +20,7 @@ def default_prefs() -> dict:
         "medium_threshold": None,
         "preferred_locations": None,
         "exclude_internships": None,
+        "notify_possible": None,     # None = environment default; True also alerts on Possible matches
     }
 
 
@@ -46,6 +47,8 @@ def apply_prefs(settings, prefs: dict) -> None:
         settings.preferred_locations = list(prefs["preferred_locations"])
     if prefs.get("exclude_internships") is not None:
         settings.exclude_internships = bool(prefs["exclude_internships"])
+    if prefs.get("notify_possible") is not None:
+        settings.notify_possible = bool(prefs["notify_possible"])
     settings.muted_terms = list(prefs.get("muted") or [])
     settings.hidden_ids = list(prefs.get("hidden") or []) + list((prefs.get("applied") or {}).keys())
     settings.alerts_paused = bool(prefs.get("paused"))

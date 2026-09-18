@@ -818,6 +818,7 @@ class JSearchBackend(Backend):
     name = "jsearch"
     phase = "extraction"
     source_type = "aggregator"
+    min_interval_hours = 4  # the free quota is per month: 6 runs a day, however often the workflow fires
     api = "https://jsearch.p.rapidapi.com/search"
     host = "jsearch.p.rapidapi.com"
 

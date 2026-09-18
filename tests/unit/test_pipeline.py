@@ -124,8 +124,8 @@ def test_real_ats_backend_invalid_board_in_report():
     settings = make_settings()
     code, report = Pipeline(settings, store=R2Store("b", client=FakeS3()), notifier=n, now=NOW, http_session=session,
                             backends=[ATSBackend(GreenhouseAdapter(), ["bad", "good"])], sleep=lambda x: None).run()
-    assert report["invalid_configured"] == {"greenhouse": ["bad"]} and len(n.sent) == 1
-    assert "Good Geo" in n.sent[0]
+    assert report["invalid_configured"] == {"greenhouse": ["bad"]} and "Good Geo" in n.sent[0]
+    assert len(n.sent) == 2 and "Bot health" in n.sent[1] and "greenhouse:bad" in n.sent[1]  # told once about the dead slug
 
 
 def test_build_backends_from_config():
@@ -184,3 +184,33 @@ def test_weekly_summary_sent_once_per_week():
     n3 = FakeNotifier()
     _, report = run(s3, [StaticBackend("feed", many_jobs(1))], n3, now=NOW + timedelta(days=8), weekly_summary=True)
     assert report["counts"]["weekly_summary_sent"] == 1
+
+
+def test_health_alerts_fire_once_on_a_failure_streak_and_on_recovery():
+    from geojobbot.core.health import FAIL_STREAK
+    s3 = FakeS3()
+    sent = []
+    for i in range(FAIL_STREAK + 1):
+        n = FakeNotifier()
+        run(s3, [CrashingBackend(), StaticBackend("feed", [])], n, now=NOW + timedelta(hours=2 * i))
+        sent.append([m for m in n.sent if "Bot health" in m])
+    assert [len(x) for x in sent] == [0, 0, 1, 0]  # told once, on the third consecutive failure
+    assert "crasher" in sent[2][0] and "3 runs in a row" in sent[2][0]
+
+    class Recovered(StaticBackend):
+        pass
+    n = FakeNotifier()
+    run(s3, [Recovered("crasher", [])], n, now=NOW + timedelta(hours=10))
+    assert any("working again" in m for m in n.sent)
+
+
+def test_possible_matches_are_alerted_only_when_enabled():
+    weak = "Support the team with data tasks in QGIS. GIS exposure, digitizing and georeferencing of asset drawings. " * 5
+    possible = gis_raw(title="GIS Technician", description=weak, source_job_id="static:9", url="https://acme.example/jobs/9",
+                       apply_url="https://acme.example/jobs/9")
+    n = FakeNotifier()
+    run(FakeS3(), [StaticBackend("feed", [possible])], n, notify_possible=False)
+    assert n.sent == []
+    n = FakeNotifier()
+    run(FakeS3(), [StaticBackend("feed", [possible])], n, notify_possible=True)
+    assert len(n.sent) == 1 and "Possible matches" in n.sent[0]

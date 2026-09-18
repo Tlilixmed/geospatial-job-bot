@@ -40,6 +40,7 @@ from ..utils.http import HttpClient
 from ..utils.robots import RobotsCache
 from .boards import BoardRegistry
 from .fusion import fuse
+from .health import format_health, health_messages
 from .jobs import (AI_VETO_MAX_FIT, apply_ai_veto, mark_failed, mark_notified, process_fused, prune_state,
                    select_alerts)
 from .prefs import apply_prefs, load_prefs
@@ -280,6 +281,9 @@ class Pipeline:
         if notifier is None and selected and not settings.dry_run:
             log.warning("Telegram is not configured: %d alerts left pending", len(selected))
         counts["weekly_summary_sent"] = int(self._weekly_summary(manager, state, notifier))
+        health = format_health(health_messages(state, report))
+        if health and notifier is not None and not settings.dry_run:
+            counts["health_alerts_sent"] = int(notifier.send(health)[0])
 
         counts["jobs_in_state"] = len(state["jobs"])
         counts["boards_known"] = len(state["boards"])

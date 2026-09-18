@@ -86,7 +86,7 @@ class Settings:
     notify_possible: bool = True
     max_job_age_hours: int = 360  # 15 days: postings older than this are never alerted
     rotation_max_job_age_hours: int = 360
-    max_alerts_per_run: int = 50
+    max_alerts_per_run: int = 20  # the rest follow next run, best first: a digest should be readable
     max_notify_attempts: int = 5
     alert_on_changes: bool = False
     preferred_locations: list[str] = field(default_factory=list)

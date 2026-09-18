@@ -129,6 +129,15 @@ def interpret(text: str, is_code: Callable[[str], bool] = lambda token: False) -
     if _has(t, r"\b(weekly|hebdo\w*|summary|recap|bilan|recapitulatif)\b"):
         return "weekly", ""
 
+    # which tiers are alerted: "only alert me on high matches", "also send possible matches"
+    if _has(t, r"\b(alert\w*|notif\w*|send\w*|envoie\w*|envoy\w*|previens)\b") and \
+            _has(t, r"\b(possible|possibles|high|hautes?|strong|best)\b") and _number(fixed, 1, 100) is None:
+        if _has(t, r"\b(only|just|seulement|uniquement|que)\b.*\b(high|hautes?|strong|best)\b") or \
+                _has(t, r"\b(no|not|without|stop|sans|pas)\b.*\bpossibles?\b"):
+            return "possible", "off"
+        if _has(t, r"\bpossibles?\b"):
+            return "possible", "on"
+
     # internships on/off
     if _has(t, r"\b(intern|interns|internships?|stages?|stagiaires?|trainees?|alternances?)\b"):
         if _has(t, r"\b(exclude|excluding|without|no|hide|disable|remove|skip|stop|sans|exclu\w*|enleve\w*|retire\w*|off|non|pas)\b"):

@@ -2,7 +2,7 @@ name: Geospatial job scraper
 
 on:
   schedule:
-    - cron: "0 */4 * * *"
+    - cron: "0 */2 * * *"   # quota-bound sources keep their own 4-12 h minimum interval
   push:
     branches: [main]   # every push runs the bot once on the new code (the concurrency group prevents overlap)
   workflow_dispatch:
@@ -80,9 +80,19 @@ jobs:
           JOOBLE_LOCATIONS: ${{ vars.JOOBLE_LOCATIONS || 'Canada,Tunisia,France,Belgium,Switzerland,United Arab Emirates,Saudi Arabia,Qatar,Morocco' }}
           ADZUNA_COUNTRIES: ${{ vars.ADZUNA_COUNTRIES || 'ca,fr,gb,us,de,be,ch,nl,au,at' }}
           ALERT_FORMAT: ${{ vars.ALERT_FORMAT || 'digest' }}
+          # alerts carry High matches only; Possible ones stay one message away (/jobs, /range, /possible on)
+          NOTIFY_POSSIBLE: ${{ vars.NOTIFY_POSSIBLE || 'false' }}
           DUCKDUCKGO_ENABLED: ${{ vars.DUCKDUCKGO_ENABLED || 'false' }}
           BOT_USER_AGENT: ${{ vars.BOT_USER_AGENT }}
           REQUIRE_R2: "true"
           DRY_RUN: ${{ inputs.dry_run && 'true' || 'false' }}
           RUN_TIME_BUDGET_MINUTES: "45"
         run: python -m geojobbot run
+
+      - name: Tell Telegram the run failed
+        if: failure()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          curl -s -o /dev/null -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage"             -d chat_id="${TELEGRAM_CHAT_ID}"             --data-urlencode text="❌ Geospatial job bot: run #${GITHUB_RUN_NUMBER} failed. ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"

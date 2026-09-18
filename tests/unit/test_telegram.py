@@ -91,3 +91,13 @@ def test_digest_update_marker_and_empty_input():
     assert format_digest([], now=STAMP) == []
     text, _ = format_digest([rec(notified=True, pending_update_alert=True)], now=STAMP)[0]
     assert "🔁 1. <b>" in text
+
+
+def test_digest_collapses_the_same_posting_and_covers_every_record():
+    recs = [rec(title="GIS Data Analyst", company="Pomerleau", canonical_id="p:1", city="Montreal", remote=False, location_raw="Montreal"),
+            rec(title="GIS Data Analyst", company="Pomerleau Inc.", canonical_id="p:2", city="Quebec", remote=False, location_raw="Quebec"),
+            rec(title="LiDAR Technician", company="ScanCo", canonical_id="s:1")]
+    (text, covered), = format_digest(recs, now=STAMP)
+    assert covered == recs and text.count("GIS Data Analyst") == 1 and "×2" in text
+    assert "Montreal | Quebec" in text and "2. <b>LiDAR Technician</b>" in text and "3. <b>" not in text
+    assert "3 new matches" in text  # the header still counts jobs, not lines

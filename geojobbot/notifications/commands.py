@@ -45,6 +45,7 @@ HELP = """🗺️ <b>Geospatial job bot — commands</b>
 /threshold 70 55 — High and Possible cut-offs
 /locations Canada, Tunisia · /locations reset
 /interns on|off — include internships
+/possible on|off — alert on Possible matches too (default: High only)
 /pause · /resume — hold or release alerts
 
 <b>Run</b>
@@ -261,7 +262,7 @@ class CommandProcessor:
             "/muted": self.cmd_muted, "/threshold": self.cmd_threshold, "/locations": self.cmd_locations,
             "/interns": self.cmd_interns, "/pause": self.cmd_pause, "/resume": self.cmd_resume,
             "/status": self.cmd_status, "/run": self.cmd_run, "/weekly": self.cmd_weekly, "/range": self.cmd_range,
-            "/pitch": self.cmd_pitch, "/draft": self.cmd_pitch, "/ai": self.cmd_ai,
+            "/pitch": self.cmd_pitch, "/draft": self.cmd_pitch, "/ai": self.cmd_ai, "/possible": self.cmd_possible,
         }
 
     # ------------------------------------------------------------------ find
@@ -456,6 +457,16 @@ class CommandProcessor:
         self.prefs["exclude_internships"] = arg.lower() == "off"
         self._touch()
         return ["Internships will be " + ("excluded." if arg.lower() == "off" else "included.") + " Applies from the next run."]
+
+    def cmd_possible(self, arg: str) -> list[str]:
+        if arg.lower() not in ("on", "off"):
+            current = self.prefs["notify_possible"] if self.prefs["notify_possible"] is not None else self.settings.notify_possible
+            return [f"Alerts currently include {'High and Possible' if current else 'High'} matches.\n"
+                    "Usage: /possible on (alert on Possible too) · /possible off (High only; /jobs still lists everything)"]
+        self.prefs["notify_possible"] = arg.lower() == "on"
+        self._touch()
+        return ["Alerts will include " + ("High and Possible matches." if arg.lower() == "on" else
+                                          "High matches only. /jobs and /range still show the Possible ones.")]
 
     def cmd_pause(self, arg: str) -> list[str]:
         self.prefs["paused"] = True

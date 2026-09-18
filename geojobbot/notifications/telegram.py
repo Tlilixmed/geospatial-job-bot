@@ -16,7 +16,7 @@ import requests
 from ..models import TIER_HIGH
 from ..utils.dates import parse_datetime
 from ..utils.location import ParsedLocation
-from ..utils.text import job_code
+from ..utils.text import job_code, normalize_company, normalize_title
 
 log = logging.getLogger(__name__)
 MAX_MESSAGE = 4096
@@ -33,19 +33,40 @@ def _location_of(rec: dict) -> ParsedLocation:
                           work_mode=rec.get("work_mode"))
 
 
-def _digest_entry(rec: dict, index: int) -> str:
-    """One numbered, three-line entry of the digest list."""
+def group_same_posting(records: list[dict]) -> list[list[dict]]:
+    """Group records that are the same title at the same company (one posting per city is still one job to read).
+
+    Order is preserved: a group sits where its first member was. Records without a company never group.
+    """
+    groups: dict[tuple, list[dict]] = {}
+    ordered: list[list[dict]] = []
+    for rec in records:
+        company = normalize_company(rec.get("company"))
+        key = (company, normalize_title(rec.get("title"))) if company else ("", id(rec))
+        if key not in groups:
+            groups[key] = []
+            ordered.append(groups[key])
+        groups[key].append(rec)
+    return ordered
+
+
+def _digest_entry(rec: dict, index: int, same: list[dict] | None = None) -> str:
+    """One numbered entry of the digest list; `same` holds the other records of the same posting."""
+    same = same or [rec]
     updated = bool(rec.get("notified") and rec.get("pending_update_alert"))
     head = f"{index}. <b>{_esc(rec.get('title'))}</b>"
     if rec.get("company"):
         head += f" — {_esc(rec['company'])}"
+    if len(same) > 1:
+        head += f" ×{len(same)}"
     head += f" · {int(rec.get('score') or 0)}/100"
-    code = job_code(rec.get("canonical_id"))
-    if code:
-        head += f" · <code>{code}</code>"  # handle for /why, /applied, /hide
+    codes = [job_code(r.get("canonical_id")) for r in same[:3] if r.get("canonical_id")]
+    if codes:
+        head += " · " + " ".join(f"<code>{c}</code>" for c in codes)  # handles for /why, /applied, /hide
     if updated:
         head = "🔁 " + head
-    facts = [f"📍 {_esc(_location_of(rec).display())}"]
+    places = list(dict.fromkeys(_location_of(r).display() for r in same))
+    facts = [f"📍 {_esc(' | '.join(places[:3]))}" + (f" +{len(places) - 3}" if len(places) > 3 else "")]
     posted = parse_datetime(rec.get("posted_at"))
     if posted:
         facts.append(f"📅 {posted.strftime('%d %b')}")
@@ -88,17 +109,17 @@ def format_digest(records: list[dict], *, now=None, part_limit: int = MAX_MESSAG
     header = (f"🗺️ <b>{_esc(heading)}</b>{{part}}\n"
               f"<i>{stamp} · {len(high)} high · {len(possible)} possible</i>")
 
-    entries = []  # (section title on the first entry of a section, entry text, record)
+    entries = []  # (section title on the first entry of a section, entry text, records covered, section)
     index = 0
-    for section, group in (("🔥 <b>High matches</b>", high), ("🟡 <b>Possible matches</b>", possible)):
-        for position, rec in enumerate(group):
+    for section, tier_records in (("🔥 <b>High matches</b>", high), ("🟡 <b>Possible matches</b>", possible)):
+        for position, same in enumerate(group_same_posting(tier_records)):
             index += 1
-            entries.append((section if position == 0 else None, _digest_entry(rec, index), rec, section))
+            entries.append((section if position == 0 else None, _digest_entry(same[0], index, same), same, section))
 
     budget = part_limit - len(header) - 16  # room for " (part 10/10)"
     parts: list[tuple[list[str], list[dict]]] = []
     blocks, recs, size = [], [], 0
-    for section, text, rec, current_section in entries:
+    for section, text, same, current_section in entries:
         block = f"\n\n{section}\n\n{text}" if section else f"\n\n{text}"
         if blocks and size + len(block) > budget:
             parts.append((blocks, recs))
@@ -106,7 +127,7 @@ def format_digest(records: list[dict], *, now=None, part_limit: int = MAX_MESSAG
             if section is None:  # continuation part: repeat the section title
                 block = f"\n\n{current_section} (cont.)\n\n{text}"
         blocks.append(block)
-        recs.append(rec)
+        recs.extend(same)  # every record of a grouped posting is delivered (and marked) with its entry
         size += len(block)
     if blocks:
         parts.append((blocks, recs))
