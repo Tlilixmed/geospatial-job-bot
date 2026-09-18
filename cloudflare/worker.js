@@ -248,7 +248,7 @@ function viewWhy(index, arg) {
   if ((job.why || []).length) lines.push("", "<b>Evidence</b>", ...job.why.map((w) => `• ${esc(w)}`));
   (job.sp || []).forEach((hit, i) => {
     let note = `${hit.icon || "🛂"} ${esc(hit.label)}: ${esc(hit.name)}`;
-    if (hit.positions) note += ` · ${hit.positions} approved positions`;
+    if (hit.positions) note += ` · ${hit.positions} foreign hires approved`;
     if ((hit.occupations || []).length) note += ` · hired ${esc(hit.occupations.join(", "))}`;
     if (hit.match === "variant") note += " (name variant)";
     if (i === 0) lines.push("");
@@ -312,7 +312,7 @@ function viewSponsors(index, prefs, arg) {
     if (offered) lines.push("   ✅ the posting offers visa sponsorship");
     (job.sp || []).slice(0, 3).forEach((hit) => {
       let detail = `   ${hit.icon || "🛂"} ${esc(hit.label)}: ${esc(hit.name)}`;
-      if (hit.positions) detail += ` · ${hit.positions} approved positions`;
+      if (hit.positions) detail += ` · ${hit.positions} foreign hires approved`;
       if ((hit.occupations || []).length) detail += ` · hired ${esc(hit.occupations.join(", "))}`;
       if (hit.match === "variant") detail += " (name variant: check)";
       lines.push(detail);

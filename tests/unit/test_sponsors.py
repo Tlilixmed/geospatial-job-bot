@@ -116,8 +116,27 @@ def test_pipeline_annotates_and_digest_why_and_sponsors_view_show_it():
     view = replies.sent[-1]
     assert "Sponsorship evidence" in view and "2 current matches" in view and "Nobody" not in view
     assert view.index("LiDAR Analyst") < view.index("Pomerleau")  # a posting that says so outranks a register entry
-    assert "42 approved positions" in view and "hired land survey technologists" in view
+    assert "42 foreign hires approved" in view and "hired land survey technologists" in view
     from geojobbot.utils.text import job_code
     proc.run_text(f"/why {job_code('static:1')}")
     assert "🍁 Canada LMIA employer: Pomerleau inc." in replies.sent[-1]
     assert "🛂" not in format_digest([job("z:1", "GIS Analyst")], now=NOW)[0][0]  # no badge without evidence
+
+
+def test_irish_and_danish_registers_parse_and_match():
+    from geojobbot.insights.sponsors import parse_dk_html, parse_ie_rows
+
+    rows = [["Employer Name", "Permits Issued Jan", "Permits Issued Grand Total"], ["Murphy Geospatial Limited", "2", "5"],
+            ["Murphy Geospatial Limited", "", "3"], ["Total", "9", "8"], [""]]
+    ie: dict = {}
+    assert parse_ie_rows(rows, ie) == 2 and ie == {"murphy geospatial": {"n": "Murphy Geospatial Limited", "p": 8}}
+    html_text = ('<table><tr><td class="x"><p class="b">Company</p></td><td><p>CVR no.</p></td></tr>'
+                 '<tr><td class="x">\n<p class="b">NIRAS A/S</p>\n</td>\n<td class="y">\n<p class="b">37295728</p>\n</td></tr>'
+                 '<tr><td><p>&amp;TRADITION A/S</p></td><td><p>18169304</p></td></tr></table>')
+    dk = parse_dk_html(html_text)
+    assert [e["n"] for e in dk.values()] == ["NIRAS A/S", "&TRADITION A/S"]
+    registry = SponsorRegistry({"registers": {"ie": ie, "dk": dk}})
+    hit = registry.lookup("NIRAS")[0]
+    assert (hit["register"], hit["country"], hit["match"]) == ("dk", "Denmark", "variant")
+    assert registry.lookup("Murphy Geospatial")[0]["positions"] == 8
+    assert registry.stale(NOW) is True  # registers added since the last download trigger a refresh

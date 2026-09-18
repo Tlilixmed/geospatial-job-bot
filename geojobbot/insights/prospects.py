@@ -98,10 +98,10 @@ def collect_targets(state: dict, sponsor_data: dict | None, watch: list[dict] | 
     for entry in (registers.get("ca") or {}).values():
         if entry.get("g") and entry.get("n"):
             add(entry["n"], "lmia", "LMIA approved for " + ", ".join((entry.get("o") or ["geomatics occupations"])[:2]), "Canada")
-    for code, country in (("uk", "United Kingdom"), ("nl", "Netherlands")):
+    for code, country in (("uk", "United Kingdom"), ("nl", "Netherlands"), ("ie", "Ireland"), ("dk", "Denmark")):
         for norm, entry in (registers.get(code) or {}).items():
             if GEO_NAME_RE.search(norm) and not NOT_GEO_NAME_RE.search(norm) and entry.get("n"):
-                add(entry["n"], "register", f"licensed sponsor in {country}", country)
+                add(entry["n"], "register", f"on the official sponsor register of {country}", country)
     return sorted(targets.values(), key=lambda t: (PRIORITY[t["kind"]], t["key"]))
 
 

@@ -29,16 +29,16 @@ MARK = {True: "✓", False: "✗", None: "?"}
 
 COUNTRY_CURRENCY = {
     "United Kingdom": "GBP", "Canada": "CAD", "Australia": "AUD", "New Zealand": "NZD", "United States": "USD",
-    "Switzerland": "CHF", "United Arab Emirates": "AED", "Saudi Arabia": "SAR", "Qatar": "QAR", "Tunisia": "TND",
+    "Switzerland": "CHF", "United Arab Emirates": "AED", "Saudi Arabia": "SAR", "Qatar": "QAR", "Tunisia": "TND", "Denmark": "DKK", "Sweden": "SEK", "Norway": "NOK",
     "Germany": "EUR", "France": "EUR", "Netherlands": "EUR", "Ireland": "EUR", "Belgium": "EUR", "Austria": "EUR",
     "Spain": "EUR", "Italy": "EUR", "Luxembourg": "EUR", "Portugal": "EUR", "Finland": "EUR",
 }
-CURRENCY_SYMBOL = {"GBP": "£", "EUR": "€", "USD": "US$", "CAD": "CA$", "AUD": "A$"}
+CURRENCY_SYMBOL = {"GBP": "£", "EUR": "€", "USD": "US$", "CAD": "CA$", "AUD": "A$", "DKK": "DKK "}
 DOLLAR_COUNTRIES = {"CAD", "AUD", "NZD", "USD"}
 PER_YEAR = {"hour": 2080, "day": 260, "week": 52, "month": 12, "year": 1}
 
 NUMBER_RE = re.compile(r"(?<![\w.])(\d{1,3}(?:[ ,.\u00a0\u202f]\d{3})+|\d+(?:[.,]\d+)?)\s*(k\b)?", re.I)
-CODE_RE = re.compile(r"\b(GBP|EUR|USD|CAD|AUD|NZD|CHF|AED|SAR|QAR|TND)\b")
+CODE_RE = re.compile(r"\b(GBP|EUR|USD|CAD|AUD|NZD|CHF|AED|SAR|QAR|TND|DKK|SEK|NOK)\b")
 PERIODS = (
     ("hour", r"\b(hour|hourly|hr|heure|horaire|stunde)\b|/ ?h\b"),
     ("day", r"\b(day|daily|jour|journalier|tag)\b"),
@@ -341,7 +341,7 @@ COUNTRY_ALIASES = {"uk": "United Kingdom", "britain": "United Kingdom", "england
                    "america": "United States", "uae": "United Arab Emirates", "emirates": "United Arab Emirates",
                    "dubai": "United Arab Emirates", "saudi": "Saudi Arabia", "ksa": "Saudi Arabia", "holland": "Netherlands",
                    "pays-bas": "Netherlands", "allemagne": "Germany", "royaume-uni": "United Kingdom", "irlande": "Ireland",
-                   "australie": "Australia", "suisse": "Switzerland", "etats-unis": "United States"}
+                   "australie": "Australia", "danemark": "Denmark", "suisse": "Switzerland", "etats-unis": "United States"}
 
 
 def find_country(text: str, rules: dict | None = None) -> str | None:

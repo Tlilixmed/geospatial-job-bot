@@ -353,7 +353,7 @@ class CommandProcessor:
         for hit in rec.get("sponsor") or []:
             note = f"{hit.get('icon', '🛂')} {_esc(hit['label'])}: {_esc(hit.get('name'))}"
             if hit.get("positions"):
-                note += f" · {hit['positions']} approved positions"
+                note += f" · {hit['positions']} foreign hires approved"
             if hit.get("occupations"):
                 note += " · hired " + _esc(", ".join(hit["occupations"]))
             if hit.get("match") == "variant":
@@ -725,7 +725,7 @@ class CommandProcessor:
             for hit in hits[:3]:
                 detail = f"   {hit.get('icon', '🛂')} {_esc(hit['label'])}: {_esc(hit.get('name'))}"
                 if hit.get("positions"):
-                    detail += f" · {hit['positions']} approved positions"
+                    detail += f" · {hit['positions']} foreign hires approved"
                 if hit.get("occupations"):
                     detail += " · hired " + _esc(", ".join(hit["occupations"]))
                 if hit.get("match") == "variant":

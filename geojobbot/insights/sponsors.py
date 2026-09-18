@@ -5,6 +5,8 @@ Postings rarely say whether an employer sponsors visas; governments publish who 
   UK  Home Office "Register of licensed sponsors: workers"   CSV, republished daily, ~140k organisations
   CA  ESDC "Employers who were issued a positive LMIA"         XLSX per quarter, with the occupation (NOC) hired
   NL  IND "Public register recognised sponsors"                HTML table, ~13k organisations
+  IE  DETE "Employment permits issued to companies"          XLSX per year, ~7k employers with permit counts
+  DK  SIRI "Certified companies" (Fast-track scheme)          HTML table, ~800 companies
 
 The registers are downloaded at most once a week, reduced to normalised names and stored in R2
 (reference/sponsors.json.gz). Every accepted job's employer is looked up by exact normalised name, then by
@@ -14,6 +16,7 @@ adds a small, visible score bonus; any match is shown so the user can judge it.
 from __future__ import annotations
 
 import csv
+import html
 import io
 import logging
 import re
@@ -36,6 +39,8 @@ UK_PAGE = "https://www.gov.uk/government/publications/register-of-licensed-spons
 UK_ROUTES = ("skilled worker", "global business mobility: senior or specialist worker")
 CA_PAGE = "https://open.canada.ca/data/en/dataset/90fed587-1364-4f33-a9ee-208181dc0b97"
 CA_QUARTERS = 4
+IE_FILE = "https://enterprise.gov.ie/en/publications/publication-files/employment-permits-issued-to-companies-{year}.xlsx"
+DK_PAGE = "https://www.nyidanmark.dk/en-GB/Words-and-concepts/SIRI/Certified-companies"
 NL_PAGE = ("https://ind.nl/en/public-register-recognised-sponsors/"
            "public-register-regular-labour-and-highly-skilled-migrants")
 
@@ -49,11 +54,13 @@ REGISTERS = {
     "uk": {"country": "United Kingdom", "label": "UK licensed sponsor", "icon": "🛂"},
     "ca": {"country": "Canada", "label": "Canada LMIA employer", "icon": "🍁"},
     "nl": {"country": "Netherlands", "label": "NL recognised sponsor", "icon": "🛂"},
+    "ie": {"country": "Ireland", "label": "Ireland: employment permits issued", "icon": "🍀"},
+    "dk": {"country": "Denmark", "label": "DK certified for the Fast-track scheme", "icon": "🛂"},
 }
 # tokens that distinguish a national subsidiary or legal form, not the company
-CORE_DROP = {"uk", "gb", "great", "britain", "england", "scotland", "europe", "european", "emea", "international",
+CORE_DROP = {"ireland", "irish", "denmark", "danmark", "uk", "gb", "great", "britain", "england", "scotland", "europe", "european", "emea", "international",
              "intl", "global", "worldwide", "canada", "canadian", "netherlands", "nederland", "holland", "benelux",
-             "the", "of", "and"}
+             "the", "of", "and", "a", "s", "aps"}  # "A/S" and "ApS" are Danish legal forms
 MIN_CORE_CHARS = 4
 
 
@@ -151,6 +158,38 @@ def parse_nl_html(html_text: str) -> dict:
     return out
 
 
+def parse_ie_rows(rows: list[list[str]], into: dict) -> int:
+    """DETE workbook: 'Employer Name', one column per month, 'Permits Issued Grand Total'."""
+    header_i = next((i for i, r in enumerate(rows[:10]) if r and fold(r[0]).strip() == "employer name"), None)
+    if header_i is None:
+        raise ValueError("no 'Employer Name' column in the Irish permits file")
+    added = 0
+    for row in rows[header_i + 1:]:
+        name = (row[0] if row else "").strip()
+        norm = normalize_company(name)
+        if len(norm) < 3 or fold(name) in ("total", "grand total"):
+            continue
+        entry = into.setdefault(norm, {"n": name[:80], "p": 0})
+        try:
+            entry["p"] += int(float(row[-1])) if len(row) > 1 and row[-1] else 0
+        except ValueError:
+            pass
+        added += 1
+    return added
+
+
+def parse_dk_html(html_text: str) -> dict:
+    """SIRI's list of companies certified for the Fast-track scheme: a table of name and 8-digit CVR number."""
+    out = {}
+    pattern = r"<td[^>]*>\s*(?:<p[^>]*>)?\s*([^<]{2,160}?)\s*(?:</p>)?\s*</td>\s*<td[^>]*>\s*(?:<p[^>]*>)?\s*\d{8}\s*(?:</p>)?\s*</td>"
+    for name in re.findall(pattern, html_text):
+        clean = html.unescape(name).strip()
+        norm = normalize_company(clean)
+        if len(norm) >= 3 and norm not in out:
+            out[norm] = {"n": clean[:80]}
+    return out
+
+
 # ---------------------------------------------------------------------------- registry
 class SponsorRegistry:
     def __init__(self, data: dict | None = None):
@@ -172,6 +211,8 @@ class SponsorRegistry:
 
     def stale(self, now) -> bool:
         checked = parse_datetime(self.data.get("checked_at"))
+        if any(code not in self.data["registers"] for code in REGISTERS):  # a register added since the last download
+            return checked is None or now - checked > timedelta(hours=20)
         return checked is None or now - checked > timedelta(days=REFRESH_DAYS)
 
     def counts(self) -> dict:
@@ -181,7 +222,8 @@ class SponsorRegistry:
     def refresh(self, ctx) -> dict:
         """Download every register; a failing one keeps its previous content. Returns per-register status."""
         status = {}
-        for code, fetch in (("uk", self._fetch_uk), ("ca", self._fetch_ca), ("nl", self._fetch_nl)):
+        for code, fetch in (("uk", self._fetch_uk), ("ca", self._fetch_ca), ("nl", self._fetch_nl),
+                            ("ie", self._fetch_ie), ("dk", self._fetch_dk)):
             if ctx.out_of_time(240):
                 status[code] = "skipped (time budget)"
                 continue
@@ -222,6 +264,22 @@ class SponsorRegistry:
     @staticmethod
     def _fetch_nl(ctx) -> dict:
         return parse_nl_html(ctx.client.get(NL_PAGE, max_bytes=MAX_DOWNLOAD).text)
+
+    @staticmethod
+    def _fetch_ie(ctx) -> dict:
+        """Companies issued employment permits this year and last (DETE publishes one workbook per year)."""
+        names: dict = {}
+        for year in (ctx.now.year, ctx.now.year - 1):
+            try:
+                body = ctx.client.get(IE_FILE.format(year=year), max_bytes=MAX_DOWNLOAD, detect_challenge=False).content
+            except FetchError:
+                continue  # in January this year's file may not exist yet
+            parse_ie_rows(read_xlsx_rows(body), names)
+        return names
+
+    @staticmethod
+    def _fetch_dk(ctx) -> dict:
+        return parse_dk_html(ctx.client.get(DK_PAGE, max_bytes=MAX_DOWNLOAD).text)
 
     # -- lookup
     def _core_index(self, code: str) -> dict[str, str]:
