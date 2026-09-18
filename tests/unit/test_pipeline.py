@@ -219,10 +219,10 @@ def test_possible_matches_are_alerted_only_when_enabled():
 
 def test_run_publishes_the_index_the_worker_answers_from():
     s3 = FakeS3()
-    run(s3, [StaticBackend("feed", [gis_raw()])], FakeNotifier())
+    _, report = run(s3, [StaticBackend("feed", [gis_raw()])], FakeNotifier())
     index = StateManager(R2Store("b", client=s3)).read_json("state/index.json")
     assert index["schema"] == 1 and index["generated_at"] and "/jobs" in index["help"]
-    assert index["settings"]["high"] == 70 and index["run"]["jobs_in_state"] == 1 and index["run"]["code"] == "local"
+    assert index["settings"]["high"] == 70 and index["run"]["jobs_in_state"] == 1 and index["run"]["code"] == report["code"]
     (entry,) = index["jobs"]
     assert entry["id"] == "static:1" and entry["code"] == job_code("static:1") and entry["tier"] == "high"
     assert entry["t"] == "GIS Analyst" and entry["c"] == "Acme" and entry["url"] == "https://acme.example/jobs/1"
