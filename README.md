@@ -121,7 +121,8 @@ The bot answers messages from the configured chat only; every other chat is igno
 | Command | Effect |
 |---|---|
 | `/jobs [n]`, `/high [n]` | best current matches that are fresh, not muted, hidden or applied |
-| `/search words` (or plain text) | search stored matches by title, company, place, skill |
+| `/range 60 70` | fresh jobs whose score lies in a range (includes ones just under the Possible cut-off) |
+| `/search words` | search stored matches by title, company, place, skill |
 | `/why code` | score breakdown, evidence, sources and link for one job |
 | `/applied code`, `/applied` | mark as applied (never alerted again) · list applications |
 | `/hide code`, `/unhide code` | dismiss or restore a job |
@@ -134,6 +135,8 @@ The bot answers messages from the configured chat only; every other chat is igno
 | `/status`, `/run`, `/help` | last run and settings · start a scraper run now · this list |
 
 `code` is the 5-character tag printed next to every job in a digest.
+
+**Plain language.** Slash commands are optional. Ordinary sentences in English or French are understood, typos included: "i want the top 5 matching offers", "jobs between 60 and 70", "jobs above 80", "lidar jobs in montreal", "why a3f9c", "i applied to a3f9c", "not interested in a3f9c", "stop showing leidos", "set threshold to 75", "no internships", "pause alerts", "resume", "run now", "what can you do", "montre moi les meilleures offres", "mets le seuil à 75". The reply starts with how the sentence was understood (`↪ /jobs 5`), so a misreading is visible and reversible. Anything that is not an instruction is treated as a search. The rules are deterministic (`geojobbot/notifications/intents.py`): no AI service is involved.
 
 **Instant replies.** `cloudflare/worker.js` is a Telegram webhook that dispatches the commands workflow with your message the moment you send it (reply in about a minute, nothing billed while you are silent). `cloudflare/README.md` has the five setup steps; afterwards set the repository variable `TELEGRAM_WEBHOOK=true` so scheduled polling is skipped.
 

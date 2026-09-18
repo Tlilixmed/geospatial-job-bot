@@ -17,7 +17,8 @@ from ..core.prefs import load_prefs, save_prefs
 from ..models import TIER_HIGH, TIER_POSSIBLE
 from ..utils.dates import parse_datetime, to_iso, utcnow
 from ..utils.text import fold, job_code
-from .telegram import _esc, format_digest
+from .intents import interpret
+from .telegram import MAX_MESSAGE, _esc, format_digest
 from .weekly import format_weekly
 
 log = logging.getLogger(__name__)
@@ -47,7 +48,15 @@ HELP = """🗺️ <b>Geospatial job bot — commands</b>
 /weekly — applications and open matches summary
 /run — start a scraper run now
 
-The <code>code</code> is the 5-character tag shown next to each job."""
+/range 60 70 — jobs whose score is in a range
+
+The <code>code</code> is the 5-character tag shown next to each job.
+
+<b>Or just talk to me</b> (English or French, typos are fine):
+“i want the top 5 matching offers” · “jobs between 60 and 70” · “jobs above 80” · “lidar jobs in montreal”
+“why a3f9c” · “i applied to a3f9c” · “not interested in a3f9c” · “stop showing leidos”
+“set threshold to 75” · “no internships” · “pause alerts” · “resume” · “run now” · “what can you do”
+I reply with how I understood you, e.g. ↪ /jobs 5."""
 
 
 class CommandProcessor:
@@ -164,18 +173,25 @@ class CommandProcessor:
 
     # ------------------------------------------------------------------ dispatch
     def handle(self, text: str) -> list[str]:
-        if not text.startswith("/"):
-            return self.cmd_search(text)
-        command, _, arg = text.partition(" ")
-        command = command.split("@")[0].lower()
-        arg = arg.strip()
+        if text.startswith("/"):
+            command, _, arg = text.partition(" ")
+            return self._dispatch(command.split("@")[0].lower(), arg.strip())
+        # plain language: work out the intent, run it, and say how the sentence was understood
+        command, arg = interpret(text, lambda token: self._by_code(token) is not None)
+        replies = self._dispatch("/" + command, arg)
+        echo = f"↪ <i>/{command}{' ' + _esc(arg) if arg else ''}</i>"
+        if replies and len(replies[0]) + len(echo) + 2 <= MAX_MESSAGE:
+            return ["\n\n".join((echo, replies[0]))] + replies[1:]
+        return [echo] + replies
+
+    def _dispatch(self, command: str, arg: str) -> list[str]:
         handler = {
             "/start": self.cmd_help, "/help": self.cmd_help, "/jobs": self.cmd_jobs, "/top": self.cmd_jobs,
             "/high": self.cmd_high, "/search": self.cmd_search, "/why": self.cmd_why, "/applied": self.cmd_applied,
             "/hide": self.cmd_hide, "/unhide": self.cmd_unhide, "/mute": self.cmd_mute, "/unmute": self.cmd_unmute,
             "/muted": self.cmd_muted, "/threshold": self.cmd_threshold, "/locations": self.cmd_locations,
             "/interns": self.cmd_interns, "/pause": self.cmd_pause, "/resume": self.cmd_resume,
-            "/status": self.cmd_status, "/run": self.cmd_run, "/weekly": self.cmd_weekly,
+            "/status": self.cmd_status, "/run": self.cmd_run, "/weekly": self.cmd_weekly, "/range": self.cmd_range,
         }.get(command)
         if handler is None:
             return [f"I don't know <code>{_esc(command)}</code>. Send /help for the list."]
@@ -196,6 +212,26 @@ class CommandProcessor:
         label = "High matches" if only_high else "current matches"
         return self._listing(rows[:limit], f"Top {min(limit, len(rows))} of {len(rows)} {label}",
                              "Nothing relevant and fresh is stored right now. /status shows the last run.")
+
+    def cmd_range(self, arg: str) -> list[str]:
+        """Fresh jobs whose score lies in [low, high], including ones below the Possible cut-off that were
+        rejected for their score alone."""
+        numbers = [int(x) for x in arg.replace("-", " ").replace(",", " ").split() if x.isdigit()]
+        if not numbers or not all(0 <= n <= 100 for n in numbers):
+            return ["Usage: /range 60 70 — or just say “jobs between 60 and 70”, “jobs above 80”."]
+        low, high = (min(numbers[:2]), max(numbers[:2])) if len(numbers) > 1 else (numbers[0], 100)
+        excluded = self._excluded_ids()
+        rows = []
+        for cid, rec in self.state.get("jobs", {}).items():
+            score = int(rec.get("score") or 0)
+            only_low_score = set(rec.get("rejection_reasons") or []) <= {"LOW_SCORE"}
+            if (low <= score <= high and cid not in excluded and not self._is_muted(rec)
+                    and (rec.get("tier") in (TIER_HIGH, TIER_POSSIBLE) or only_low_score)
+                    and alert_block_reason(rec, self.settings, self.now) is None):
+                rows.append(rec)
+        rows.sort(key=lambda r: -int(r.get("score") or 0))
+        return self._listing(rows[:30], f"{len(rows)} job{'s' if len(rows) != 1 else ''} scoring {low}–{high}",
+                             f"No fresh job scores between {low} and {high}.")
 
     def cmd_high(self, arg: str) -> list[str]:
         return self.cmd_jobs(arg, only_high=True)
