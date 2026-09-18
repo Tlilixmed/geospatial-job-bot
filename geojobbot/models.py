@@ -107,6 +107,8 @@ class JobRecord:
     changes: list = field(default_factory=list)
     sponsor: list = field(default_factory=list)  # official visa-sponsor registers the employer appears on
     ai: dict = field(default_factory=dict)  # Workers AI second opinion: fit, summary, concerns, requirements, veto
+    deadline: str | None = None  # application deadline read from the description (ISO date)
+    deadline_reminded: bool = False
 
     def to_dict(self) -> dict:
         return asdict(self)

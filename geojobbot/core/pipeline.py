@@ -20,7 +20,7 @@ from datetime import timedelta
 
 from ..ai.client import WorkersAI
 from ..ai.review import review_job
-from ..insights import radar, signals, visa, yields
+from ..insights import radar, signals, timing, visa, yields
 from ..insights.learning import apply_learning, build_model
 from ..insights.prospects import ProspectBackend
 from ..insights.sponsors import SponsorRegistry, annotate_record
@@ -42,13 +42,14 @@ from ..storage.state import ConcurrentModificationError, StateCorruptError, Stat
 from ..utils.dates import parse_datetime, to_iso, utcnow
 from ..utils.http import HttpClient
 from ..utils.robots import RobotsCache
+from ..utils.text import fold, job_code
 from .boards import BoardRegistry
 from .descriptions import DescriptionStore
 from .fusion import fuse
 from .health import format_health, health_messages
 from .index import SUFFIX as INDEX_SUFFIX
 from .index import build_index
-from .jobs import (AI_VETO_MAX_FIT, alert_block_reason, apply_ai_veto, due_follow_ups, mark_failed, mark_notified, process_fused, prune_state,
+from .jobs import (AI_VETO_MAX_FIT, alert_block_reason, apply_ai_veto, due_follow_ups, is_listed, mark_failed, mark_notified, process_fused, prune_state,
                    select_alerts)
 from .prefs import apply_prefs, load_prefs
 from .report import build_markdown, build_summary, diagnostics_rows
@@ -255,6 +256,7 @@ class Pipeline:
         counts.update(self._learning(manager, outcome, state))
         counts.update(self._ai_review(outcome, state))
         counts.update(self._visa(state))
+        counts.update(self._timing(outcome, state))
 
         relevant_by_board = Counter()
         for fj, result, _ in outcome.evaluated:
@@ -308,6 +310,7 @@ class Pipeline:
             log.warning("Telegram is not configured: %d alerts left pending", len(selected))
         counts["weekly_summary_sent"] = int(self._weekly_summary(manager, state, notifier))
         counts["follow_ups_sent"] = self._follow_ups(manager, state, notifier)
+        counts["deadline_reminders_sent"] = self._deadline_reminders(manager, state, notifier)
         counts.update(self._insights(manager, ctx, state, notifier))
         health = format_health(health_messages(state, report))
         if health and notifier is not None and not settings.dry_run:
@@ -454,6 +457,44 @@ class Pipeline:
                 counts["tier_possible"] -= 1
                 counts["tier_rejected"] += 1
         return counts
+
+    def _timing(self, outcome, state: dict) -> Counter:
+        """Application deadlines read from descriptions, and postings that keep coming back."""
+        counts = Counter()
+        try:
+            texts = dict(self.descriptions.data) if self.descriptions is not None else {}
+            texts.update({rec.canonical_id: fused.description for fused, _, rec in outcome.evaluated if fused.description})
+            for cid, text in texts.items():
+                stored = state["jobs"].get(cid)
+                if stored and stored.get("tier") in ("high", "possible") and timing.annotate_deadline(stored, text, self.now):
+                    counts["deadlines_found"] += 1
+            counts["reposts_marked"] = timing.mark_reposts(state["jobs"])
+        except Exception as exc:
+            log.warning("timing facts skipped: %s", type(exc).__name__)
+        return counts
+
+    def _deadline_reminders(self, manager: StateManager, state: dict, notifier) -> int:
+        """One reminder for High matches that close within three days and were neither applied to nor hidden."""
+        if notifier is None or self.settings.dry_run:
+            return 0
+        try:
+            prefs = load_prefs(manager)
+            muted = [fold(t) for t in prefs.get("muted") or [] if t.strip()]
+
+            def is_open(rec):
+                label = fold(f"{rec.get('title') or ''} {rec.get('company') or ''}")
+                return (alert_block_reason(rec, self.settings, self.now) is None and is_listed(rec, self.now)
+                        and not any(term in label for term in muted))
+
+            due = timing.due_reminders(state, prefs, self.now, is_open)
+            text = timing.format_reminders(due, self.now, lambda rec: job_code(rec.get("canonical_id")))
+            if text and notifier.send(text)[0]:
+                for rec in due:
+                    rec["deadline_reminded"] = True
+                return len(due)
+        except Exception as exc:
+            log.warning("deadline reminders skipped: %s", type(exc).__name__)
+        return 0
 
     def _visa(self, state: dict) -> Counter:
         """Compare every accepted job with its country's work-visa route (pure computation, never fatal)."""

@@ -16,6 +16,7 @@ import requests
 from ..models import TIER_HIGH
 from ..utils.dates import parse_datetime
 from ..insights.sponsors import sponsor_badge
+from ..insights.timing import deadline_badge, repost_badge
 from ..insights.visa import badge as visa_badge
 from ..utils.location import ParsedLocation
 from ..utils.text import job_code, normalize_company, normalize_title
@@ -72,6 +73,9 @@ def _digest_entry(rec: dict, index: int, same: list[dict] | None = None) -> str:
     posted = parse_datetime(rec.get("posted_at"))
     if posted:
         facts.append(f"📅 {posted.strftime('%d %b')}")
+    closes = deadline_badge(rec)
+    if closes:
+        facts.append(closes)
     if rec.get("salary"):
         facts.append(f"💰 {_esc(rec['salary'])}")
     if "Visa sponsorship offered" in (rec.get("why_matched") or []):
@@ -81,6 +85,9 @@ def _digest_entry(rec: dict, index: int, same: list[dict] | None = None) -> str:
         facts.append(_esc(badge))
     if rec.get("watched"):
         facts.append("👀 watched employer")
+    again = repost_badge(rec)
+    if again:
+        facts.append(again)
     skills = [s.split(" (")[0] for s in rec.get("matched_skills") or []]
     tail = []
     if skills:

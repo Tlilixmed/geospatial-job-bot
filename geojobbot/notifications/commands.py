@@ -17,7 +17,7 @@ from ..ai.review import write_pitch
 from ..core.descriptions import DescriptionStore
 from ..core.jobs import APPLICATION_STATUSES, alert_block_reason, is_listed
 from ..core.prefs import load_prefs, save_prefs
-from ..insights import prospects, radar, signals, visa, yields
+from ..insights import prospects, radar, signals, timing, visa, yields
 from ..insights.learning import MIN_LABELS, build_model, describe_model, snapshot
 from ..matching.profile import TECH_SKILLS
 from ..models import TIER_HIGH, TIER_POSSIBLE
@@ -359,6 +359,11 @@ class CommandProcessor:
             if hit.get("match") == "variant":
                 note += " (name variant)"
             lines += ([""] if hit is (rec.get("sponsor") or [None])[0] else []) + [note]
+        facts = [f for f in (timing.deadline_badge(rec, self.now), timing.repost_badge(rec)) if f]
+        if rec.get("deadline") and timing.deadline_passed(rec, self.now):
+            facts.append(f"⌛ the application deadline passed on {rec['deadline']}")
+        if facts:
+            lines += ["", _esc(" · ".join(facts))]
         route = visa.detail_lines(rec, self.now)
         if route:
             lines += [""] + route

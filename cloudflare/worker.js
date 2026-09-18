@@ -152,6 +152,7 @@ function isCurrent(job, index, prefs, now) {
     if (limit && (now - Date.parse(job.p)) / 36e5 > limit) return false;
   }
   if (job.seen && now - Date.parse(job.seen) > (job.rot ? 21 : 5) * 864e5) return false;
+  if (job.dl && Date.parse(job.dl) + 864e5 < now) return false;  // the application deadline has passed
   if (prefs.hidden.includes(job.id) || job.id in prefs.applied) return false;
   const haystack = fold(`${job.t || ""} ${job.c || ""}`);
   return !prefs.muted.some((term) => term.trim() && haystack.includes(fold(term)));
@@ -192,10 +193,16 @@ function entry(same, number) {
   const places = [...new Set(same.map((j) => j.loc))];
   const facts = [`📍 ${esc(places.slice(0, 3).join(" | "))}`];
   if (job.p) facts.push(`📅 ${new Date(job.p).toUTCString().slice(5, 11)}`);
+  if (job.dl) {
+    const days = Math.floor((Date.parse(job.dl) + 864e5 - Date.now()) / 864e5);
+    if (days >= 0) facts.push(`⏳ closes ${days === 0 ? "today" : days === 1 ? "tomorrow" : days <= 10 ? `in ${days} days` : job.dl}`);
+  }
   if (job.sal) facts.push(`💰 ${esc(job.sal)}`);
   if (job.offered) facts.push("🛂 sponsorship offered");
   const badge = sponsorBadge(job);
   if (badge) facts.push(esc(badge));
+  if (job.w) facts.push("👀 watched employer");
+  if (job.rp) facts.push(esc(job.rp));
   const lines = [head, `   ${facts.join(" · ")}`];
   if (job.ai && job.ai.summary) lines.push(`   💡 ${esc(job.ai.summary)}`);
   if (job.ai && job.ai.concerns) lines.push(`   ⚠️ ${esc(job.ai.concerns)}`);

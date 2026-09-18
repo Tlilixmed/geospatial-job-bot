@@ -14,6 +14,7 @@ from datetime import timedelta
 from ..matching.matcher import MatchResult, score_job
 from ..models import TIER_HIGH, TIER_POSSIBLE, TIER_REJECTED, JobRecord
 from ..utils.dates import age_hours, parse_datetime, to_iso
+from ..insights.timing import deadline_passed
 from ..utils.text import fold, normalize_company, normalize_title
 from .fusion import FusedJob
 
@@ -154,6 +155,8 @@ def alert_block_reason(rec: dict, settings, now) -> str | None:
         hours = age_hours(posted, now)
         if hours is not None and hours > limit:
             return "STALE_POSTING"
+    if deadline_passed(rec, now):
+        return "DEADLINE_PASSED"
     return None
 
 

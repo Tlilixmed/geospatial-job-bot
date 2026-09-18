@@ -7,7 +7,7 @@ codes, scores, tiers, AI notes, sponsor hits, the run status and even the help t
 """
 from __future__ import annotations
 
-from ..insights import visa
+from ..insights import timing, visa
 from ..utils.dates import to_iso
 from ..utils.location import ParsedLocation
 from ..utils.text import job_code
@@ -39,6 +39,12 @@ def _entry(cid: str, rec: dict) -> dict:
     if rec.get("sponsor"):
         entry["sp"] = [{k: h.get(k) for k in ("label", "icon", "country", "name", "match", "positions", "occupations", "geo")}
                        for h in rec["sponsor"][:3]]
+    if rec.get("deadline"):
+        entry["dl"] = rec["deadline"]
+    if timing.repost_badge(rec):
+        entry["rp"] = timing.repost_badge(rec)
+    if rec.get("watched"):
+        entry["w"] = True
     if rec.get("visa"):
         entry["visa"] = {"v": rec["visa"].get("verdict"), "b": visa.badge(rec)}
         if rec.get("tier") in ("high", "possible"):
