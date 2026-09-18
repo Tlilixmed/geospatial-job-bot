@@ -24,7 +24,7 @@ from ..insights import radar, signals
 from ..insights.learning import apply_learning, build_model
 from ..insights.sponsors import SponsorRegistry, annotate_record
 from ..models import SourceResult
-from ..notifications.commands import CommandProcessor
+from ..notifications.commands import HELP, CommandProcessor
 from ..notifications.telegram import TelegramNotifier, format_digest, format_job_message
 from ..notifications.weekly import format_follow_ups, format_weekly
 from ..scrapers.ats.base import ATSBackend
@@ -45,6 +45,8 @@ from .boards import BoardRegistry
 from .descriptions import DescriptionStore
 from .fusion import fuse
 from .health import format_health, health_messages
+from .index import SUFFIX as INDEX_SUFFIX
+from .index import build_index
 from .jobs import (AI_VETO_MAX_FIT, alert_block_reason, apply_ai_veto, due_follow_ups, mark_failed, mark_notified, process_fused, prune_state,
                    select_alerts)
 from .prefs import apply_prefs, load_prefs
@@ -538,6 +540,8 @@ class Pipeline:
             full = dict(report, counts=dict(report["counts"]), diagnostics=diagnostics_rows(outcome.evaluated))
             manager.write_json(f"runs/{day}/{self.run_id}.json.gz", full, compress=True)
             manager.write_json("runs/latest.json", dict(report, counts=dict(report["counts"])), compress=False)
+            # read model for the Cloudflare Worker's instant replies
+            manager.write_json(INDEX_SUFFIX, build_index(state, self.settings, report, self.now, HELP), compress=False)
             maintenance = state.setdefault("maintenance", {})
             last = parse_datetime(maintenance.get("last_cleanup"))
             if last is None or self.now - last > timedelta(hours=24):

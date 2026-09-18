@@ -26,6 +26,8 @@ jobs:
           cache-dependency-path: requirements-dev.txt
       - run: pip install -r requirements-dev.txt
       - run: python -m pytest -q
+      - name: Cloudflare Worker tests
+        run: node --test tests/worker/worker.test.mjs
 
   live:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.live }}

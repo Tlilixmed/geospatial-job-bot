@@ -10,6 +10,7 @@ from geojobbot.scrapers.ats.core_ats import GreenhouseAdapter
 from geojobbot.scrapers.base import Backend
 from geojobbot.storage.r2 import R2Store
 from geojobbot.storage.state import StateManager
+from geojobbot.utils.text import job_code
 
 
 class StaticBackend(Backend):
@@ -214,3 +215,15 @@ def test_possible_matches_are_alerted_only_when_enabled():
     n = FakeNotifier()
     run(FakeS3(), [StaticBackend("feed", [possible])], n, notify_possible=True)
     assert len(n.sent) == 1 and "Possible matches" in n.sent[0]
+
+
+def test_run_publishes_the_index_the_worker_answers_from():
+    s3 = FakeS3()
+    run(s3, [StaticBackend("feed", [gis_raw()])], FakeNotifier())
+    index = StateManager(R2Store("b", client=s3)).read_json("state/index.json")
+    assert index["schema"] == 1 and index["generated_at"] and "/jobs" in index["help"]
+    assert index["settings"]["high"] == 70 and index["run"]["jobs_in_state"] == 1 and index["run"]["code"] == "local"
+    (entry,) = index["jobs"]
+    assert entry["id"] == "static:1" and entry["code"] == job_code("static:1") and entry["tier"] == "high"
+    assert entry["t"] == "GIS Analyst" and entry["c"] == "Acme" and entry["url"] == "https://acme.example/jobs/1"
+    assert entry["rel"] is True and entry["seen"] and entry["bd"]["title"] > 0 and entry["src"] == ["static"]

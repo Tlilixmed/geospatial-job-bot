@@ -1,9 +1,21 @@
 # Instant Telegram replies with a Cloudflare Worker
 
 Without this, the bot answers when something polls Telegram: hourly, plus at each scraper run. With it,
-Telegram pushes every message to a Worker, which starts the `Telegram commands` workflow with your text.
-You get "On it" immediately and the real reply in about a minute. Cost: free (Workers free plan), and
-GitHub minutes are spent only when you actually send a message.
+Telegram pushes every message to a Worker. Cost: free (Workers free plan).
+
+**Two speeds.** With the `INBOX` binding of step 6 the Worker answers most messages itself, in under a second,
+from two files in the bucket: `state/index.json` (published by every scraper run: current matches, codes, scores,
+AI notes, sponsor hits, run status, help text) and `state/prefs.json` (your preferences and applications).
+
+| Answered instantly by the Worker | Handed to the `Telegram commands` workflow ("On it", about a minute) |
+|---|---|
+| `/jobs` `/high` `/range` `/search` `/why` `/ai` `/sponsors` `/status` `/signals` `/muted` `/help` | `/run` `/pitch` `/weekly` `/radar` `/skills` `/learning` |
+| `/applied` `/outcome` `/hide` `/unhide` `/mute` `/unmute` `/threshold` `/locations` `/interns` `/possible` `/pause` `/resume` | free-text sentences that would change a setting or record an application |
+| plain words: `status`, `help`, `top 10`, `high 5`, `ai`, `sponsors`, a bare job code | anything when the index is missing (before the first run with this version) |
+| free text the Worker's AI reads as a **read-only** view (marked `↪ /sponsors · AI`) | |
+
+The Python rules stay the single authority for free text that changes something: the Worker's AI alone can only
+*show* things. `/id` reports whether instant replies are on.
 
 ## 1. GitHub token for the Worker
 GitHub → your avatar → **Settings → Developer settings → Personal access tokens → Fine-grained tokens →
@@ -41,24 +53,26 @@ It should answer `{"ok":true,"result":true,"description":"Webhook was set"}`.
 GitHub repository → **Settings → Secrets and variables → Actions → Variables → New variable**:
 `TELEGRAM_WEBHOOK` = `true`. Scheduled polls are then skipped (skipped jobs bill nothing).
 
-## 6. Private hand-over through R2 (do this if the repository is public)
-On a public repository anyone can read a workflow run's inputs, so the text of your messages would be visible in
-the Actions tab. Bind the bot's bucket to the Worker and messages travel through your private bucket instead.
+## 6. Bind the bucket: instant replies and a private hand-over
+This one binding does two things. It lets the Worker read `state/index.json` and read/write `state/prefs.json`, which
+is what makes replies instant. And on a public repository, where anyone can read a workflow run's inputs, it keeps
+the text of your messages out of the Actions tab: they travel through your private bucket instead.
 
 Worker → **Settings → Bindings → Add → R2 bucket**
 - Variable name: `INBOX`
 - R2 bucket: the bot's bucket (the value of your `R2_BUCKET_NAME` secret)
 - Save, then **Deploy**.
 
-Nothing else changes: the Worker writes `inbox/<id>.json`, starts the workflow with `inbox=true`, and the workflow
-reads and deletes the file.
+For messages it hands over, the Worker writes `inbox/<id>.json`, starts the workflow with `inbox=true`, and the
+workflow reads and deletes the file.
 
 ## 7. Optional: AI understanding of free text (free tier)
 Worker → **Settings → Bindings → Add → Workers AI** → Variable name: `AI` → Save → **Deploy**.
 
-Workers AI includes a free daily allowance that is far more than a personal bot uses. The bot's own rules still
-decide first; the AI reading is used only when the rules see nothing but a search, it must be one of the known
-commands (and refer to a job code that exists), and the reply marks it: `↪ /resume · AI`.
+Workers AI includes a free daily allowance that is far more than a personal bot uses. Its reading must be one of
+the known commands. When that command is a read-only view the Worker answers at once (`↪ /sponsors · AI`);
+otherwise the reading travels with the message as a hint, and the Python rules decide first: the hint is used only
+when the rules see nothing but a search, and must refer to a job code that exists (`↪ /resume · AI`).
 
 After changing `cloudflare/worker.js` in the repository, paste the new version into the Worker (**Edit code → Deploy**).
 
@@ -82,9 +96,13 @@ whether that chat is the configured one. Then:
 - The Worker logs `ignored update {...}` with the reason (Observability tab) whenever it drops something.
 
 ## Test
-Send `/status` to the bot. You should see "On it" at once and the status about a minute later.
-If "On it" never arrives, check the Worker's **Logs**; if it arrives with a GitHub error, the token in
+Send `/id`: the last line says whether instant replies and the AI are on. Send `/status`: with the `INBOX` binding
+and at least one scraper run since this version, the status arrives within a second and ends with *answered
+instantly from the index of …*. Send `/weekly`: you should see "On it" at once and the summary about a minute later.
+If nothing arrives, check the Worker's **Logs**; if "On it" arrives with a GitHub error, the token in
 step 1 lacks *Actions: Read and write* or `GITHUB_REPO` is misspelled.
+
+The Worker has its own tests: `node --test tests/worker/worker.test.mjs` (also run by the Tests workflow).
 
 ## Undo
 `https://api.telegram.org/bot<TOKEN>/deleteWebhook`, then delete the `TELEGRAM_WEBHOOK` variable:

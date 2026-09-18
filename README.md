@@ -93,6 +93,25 @@ With a `CLOUDFLARE_AI_TOKEN` secret the bot asks Cloudflare Workers AI (`@cf/met
 
 The scorer stays the authority. The only decision the model can take is a veto of a *Possible* match it rates clearly irrelevant (fit ≤ 2, `AI_VETO_POSSIBLE=false` disables it); High matches are never vetoed. Every field is validated and clamped, the run never depends on the service (three failures and it stops calling), and an outage changes nothing about alerts. The candidate profile the model sees is the generic one in `geojobbot/ai/review.py`; override it privately with the `CANDIDATE_PROFILE` secret. The account id is taken from the R2 endpoint, so the token is the only thing to add: Cloudflare dashboard → My Profile → API Tokens → Create Token → template **Workers AI** (Read is enough).
 
+### Official visa-sponsor registers
+
+A posting rarely says whether the employer can sponsor a visa, but governments publish who can. Once a week the bot downloads three official registers and keeps the normalised employer names in `reference/sponsors.json.gz` (about 170,000 names, under 3 MB):
+
+- 🇬🇧 the UK Home Office *Register of licensed sponsors* (Worker routes);
+- 🇨🇦 Canada's quarterly *positive LMIA employers* list, including the occupations each employer was approved for, so an employer that already hired surveyors, cartographers or geomatics technicians abroad is marked;
+- 🇳🇱 the Dutch IND *recognised sponsors* register.
+
+Accepted jobs are matched by exact normalised name, then by a conservative "core name" variant (legal suffixes removed, at least four characters; variants are labelled so you can check). A hit adds a small bonus (+4, +6 when the Canadian record shows geomatics occupations) **only when the register is the job's own country**, shows as a badge in the digest and in `/why code`, and `/sponsors` lists all current matches with sponsorship evidence: postings that say so first, then licensed employers. A register that fails to download keeps its previous copy. `SPONSOR_REGISTERS=false` turns it off.
+
+### Learning from what you do
+
+`/applied`, `/outcome` and `/hide` are labels. After at least four of them the bot compares the words in titles, companies, skills and domains of what you pursue with what you dismiss and nudges new scores by at most **+6 / −8** points (interviews and offers weigh more than applications). It never rescues a rejected job, never touches hard filters, is applied once per job, and is fully visible: `/why code` shows the nudge and its reasons, `/learning` shows what was learned, `/learning off|on|reset` controls it. A snapshot of each labelled job is kept in the preferences, so learning survives pruning.
+
+### Skills radar and market signals
+
+- **`/radar`** (also sent once a month, `MONTHLY_RADAR=false` disables): across the matches of the last 45 days, which skills employers ask for, how often as a hard requirement, and which of those you lack — the gaps worth closing, ordered by demand. `/skills`, `/skills add postgis`, `/skills remove fme` maintain your list (`MY_SKILLS` sets it from the environment).
+- **`/signals`** (checked once a day, `MARKET_SIGNALS=false` disables): World Bank-financed procurement notices about geospatial work — *individual consultancies* you could bid for, *contract awards* naming the firm that just won a cadastre, LiDAR or mapping project (firms that win contracts hire), and *tenders* announcing projects. New ones arrive as one short message.
+
 ### Deduplication and source fusion
 
 Each observation yields identity keys, strongest first:
@@ -112,7 +131,7 @@ Observations sharing a key become one job. A fuzzy key (normalised company + tit
 
 A job is alerted only when **all** of these hold:
 
-- it is High (or Possible with `NOTIFY_POSSIBLE=true`);
+- it is High, or Possible with `NOTIFY_POSSIBLE=true` (the shipped workflow sets `false`: alerts are High only, `/possible on` changes it from Telegram, and `/jobs` or `/range` always show the Possible ones);
 - it was seen live this run;
 - it hasn't been notified yet;
 - it has retry budget left;
@@ -123,7 +142,13 @@ Delivery rules:
 - **Format.** By default each run sends one numbered digest (`ALERT_FORMAT=digest`): High matches first, then Possible, one entry per job with company, score, location, date, salary, top skills and the apply link. It is split into several messages only when it exceeds Telegram's 4096-character limit. `ALERT_FORMAT=individual` sends one message per job instead.
 - `notified=true` is written only after Telegram confirms delivery (per message, so every job in a delivered digest part is marked). A failed send is retried on later runs, up to `MAX_NOTIFY_ATTEMPTS`.
 - State is checkpointed to R2 *before* alerts are sent, so a crash can't cause a flood of repeats.
-- Alerts per run are capped (`MAX_ALERTS_PER_RUN`, default 50), highest scores first; the rest wait for the next run.
+- Alerts per run are capped (`MAX_ALERTS_PER_RUN`, default 20), highest scores first; the rest wait for the next run. The same title at the same company in several places is one entry (`×3`, with each code).
+
+Other messages the bot sends by itself:
+
+- **Follow-ups.** 7 and 21 days after `/applied`, if no outcome was recorded, one reminder asks how it went and suggests a follow-up.
+- **Health.** A source failing three runs in a row, its recovery, and newly invalid configured boards are reported once each, not every run. A crashed workflow run sends a Telegram notice too.
+- **Weekly summary, monthly radar, new market signals** (each can be disabled).
 
 ### Talking to the bot (Telegram commands)
 
@@ -137,13 +162,19 @@ The bot answers messages from the configured chat only; every other chat is igno
 | `/why code` | score breakdown, evidence, AI second opinion, sources and link for one job |
 | `/ai [n]` | the AI's view of current matches, best fit first: fit /10, summary, concerns, years, sponsorship, languages |
 | `/pitch code` | Workers AI drafts a short application note for that job, in the posting's language |
-| `/applied code`, `/applied` | mark as applied (never alerted again) · list applications |
+| `/sponsors [n]` | current matches with sponsorship evidence: the posting says so, or the employer is on an official register |
+| `/applied code`, `/applied` | mark as applied (never alerted again) · list applications with their status |
+| `/outcome code interview\|offer\|rejected\|withdrawn\|ghosted` | record what happened to an application (feeds the weekly summary and learning) |
 | `/hide code`, `/unhide code` | dismiss or restore a job |
 | `/mute text`, `/unmute text`, `/muted` | silence a company or title word |
 | `/threshold 70 55` | High and Possible cut-offs (from the next run) |
 | `/locations Canada, Tunisia`, `/locations reset` | preferred locations |
 | `/interns on\|off` | include or exclude internships |
+| `/possible on\|off` | alert on Possible matches too, or on High only |
 | `/pause`, `/resume` | hold alerts (jobs are still collected and released on resume) |
+| `/learning`, `/learning off\|on\|reset` | what the bot learned from your actions · control it |
+| `/radar`, `/skills [add\|remove name]` | skills in demand versus yours · edit your skills list |
+| `/signals` | recent geospatial contract awards, consultancies and tenders |
 | `/weekly` | applications (still listed or gone) and High matches still open; also sent automatically once a week (`WEEKLY_SUMMARY=false` disables) |
 | `/status`, `/run`, `/help` | last run and settings · start a scraper run now · this list |
 
@@ -151,7 +182,7 @@ The bot answers messages from the configured chat only; every other chat is igno
 
 **Plain language.** Slash commands are optional. Ordinary sentences in English or French are understood, typos included: "i want the top 5 matching offers", "jobs between 60 and 70", "jobs above 80", "lidar jobs in montreal", "why a3f9c", "i applied to a3f9c", "not interested in a3f9c", "stop showing leidos", "set threshold to 75", "no internships", "pause alerts", "resume", "run now", "what can you do", "montre moi les meilleures offres", "mets le seuil à 75". The reply starts with how the sentence was understood (`↪ /jobs 5`), so a misreading is visible and reversible. Anything that is not an instruction is treated as a search. The rules are deterministic (`geojobbot/notifications/intents.py`). Optionally, the Cloudflare Worker can add a free Workers AI reading of the sentence as a second opinion: it is used only when the rules fall back to a search, is validated against the command list and existing job codes, and is labelled `· AI` in the reply.
 
-**Instant replies.** `cloudflare/worker.js` is a Telegram webhook that dispatches the commands workflow with your message the moment you send it (reply in about a minute, nothing billed while you are silent). `cloudflare/README.md` has the setup steps; afterwards set the repository variable `TELEGRAM_WEBHOOK=true` so scheduled polling is skipped. **On a public repository also add the Worker's `INBOX` R2 binding** (step 6): workflow inputs are world-readable, and with the binding your messages travel through the private bucket instead.
+**Instant replies.** `cloudflare/worker.js` is a Telegram webhook. With its `INBOX` R2 binding it answers most messages itself in under a second: every scraper run publishes `state/index.json` (current matches, codes, scores, AI notes, sponsor hits, run status, the help text), and the Worker reads it together with `state/prefs.json`, which it also updates for `/applied`, `/outcome`, `/hide`, `/mute`, `/threshold`, `/pause` and the other preference commands, in the same schema the Python side uses. `/run`, `/pitch`, `/weekly`, `/radar`, `/skills`, `/learning` and free-text sentences that would change something start the commands workflow instead (reply in about a minute, nothing billed while you are silent). The Worker's own AI reading of a sentence may open read-only views only; the deterministic rules remain the authority for anything that changes a setting. `cloudflare/README.md` has the setup steps; afterwards set the repository variable `TELEGRAM_WEBHOOK=true` so scheduled polling is skipped. **On a public repository the `INBOX` binding is also what keeps your messages private** (step 6): workflow inputs are world-readable, and with the binding they travel through the bucket instead.
 
 ---
 
@@ -161,7 +192,11 @@ There is no SQLite and no GitHub cache. A single gzipped JSON document is simple
 
 ```
 state/state.json.gz                         authoritative state (jobs, boards, sources, cursors, page cache)
-state/prefs.json                            preferences set from Telegram (mutes, applied, hidden, thresholds, pause)
+state/prefs.json                            preferences set from Telegram (mutes, applications and outcomes, hidden, thresholds, pause, skills)
+state/index.json                            compact read model for the Cloudflare Worker, rewritten by every run
+state/descriptions.json.gz                  descriptions of accepted jobs (6,000 characters each) for /pitch and late AI reviews
+reference/sponsors.json.gz                  official visa-sponsor registers, refreshed weekly
+inbox/<update_id>.json                      a Telegram message handed from the Worker to the commands workflow (deleted once read)
 state/backups/<timestamp>-<run>.json.gz     previous versions (STATE_BACKUPS_KEEP, default 20)
 state/conflicts/<run>.json.gz               state that could not be saved because another writer changed it
 runs/<YYYY-MM-DD>/<run>.json.gz             full run report + per-job match diagnostics (RUN_RETENTION_DAYS=90)
@@ -350,9 +385,9 @@ In a dry run, alerts are printed rather than sent and no state is written, unles
 | `DRY_RUN_WRITE_STATE` | `false` | write state during a dry run |
 | `REQUIRE_R2` | `false` (`true` in Actions) | fail instead of falling back to local state |
 | `HIGH_MATCH_THRESHOLD` / `MEDIUM_MATCH_THRESHOLD` | `70` / `55` | tier thresholds |
-| `NOTIFY_POSSIBLE` | `true` | alert on Possible matches |
+| `NOTIFY_POSSIBLE` | `true` (`false` in the shipped workflow) | alert on Possible matches; `/possible on\|off` overrides it |
 | `MAX_JOB_AGE_HOURS` / `ROTATION_MAX_JOB_AGE_HOURS` | `360` / `360` | freshness limits (15 days) |
-| `MAX_ALERTS_PER_RUN` / `MAX_NOTIFY_ATTEMPTS` | `50` / `5` | alert flood control and retry budget |
+| `MAX_ALERTS_PER_RUN` / `MAX_NOTIFY_ATTEMPTS` | `20` / `5` | alert flood control and retry budget |
 | `ALERT_ON_CHANGES` | `false` | re-alert when a notified job's title/location/salary/remote status changes |
 | `ALERT_FORMAT` | `digest` | `digest`: one numbered list per run · `individual`: one message per job |
 | `PREFERRED_LOCATIONS`, `ACCEPTED_REMOTE_SCOPES` | empty | location scoring |
@@ -375,7 +410,10 @@ In a dry run, alerts are printed rather than sent and no state is written, unles
 | `JOOBLE_API_KEY`, `JOOBLE_LOCATIONS` | empty, `PREFERRED_LOCATIONS` | enables Jooble |
 | `ADZUNA_REQUESTS_PER_RUN`, `JOOBLE_REQUESTS_PER_RUN`, `JOBSPY_LOCATIONS_PER_RUN` | `30`, `12`, `3` | per-run budgets; countries, locations and terms rotate across runs so quotas and runtime stay flat as the lists grow |
 | `RELIEFWEB_APPNAME`, `WEEKLY_SUMMARY` | empty, `true` | enables ReliefWeb · weekly Telegram summary |
-| `CLOUDFLARE_AI_TOKEN`, `AI_REVIEWS_PER_RUN`, `AI_VETO_POSSIBLE`, `AI_MODEL`, `CANDIDATE_PROFILE` | empty, `25`, `true`, llama-3.1-8b-instruct, built-in | Workers AI second opinion, veto of clearly irrelevant Possible matches, `/pitch` |
+| `SPONSOR_REGISTERS` | `true` | UK, Canada and Netherlands sponsor registers: badge, small bonus, `/sponsors` |
+| `MONTHLY_RADAR`, `MY_SKILLS` | `true`, built-in list | monthly skills radar · your skills, comma-separated (`/skills` overrides) |
+| `MARKET_SIGNALS` | `true` | daily check of World Bank procurement notices for geospatial work |
+| `CLOUDFLARE_AI_TOKEN`, `AI_REVIEWS_PER_RUN`, `AI_VETO_POSSIBLE`, `AI_MODEL`, `CANDIDATE_PROFILE` | empty, `40`, `true`, llama-3.1-8b-instruct, built-in | Workers AI second opinion, veto of clearly irrelevant Possible matches, `/pitch` |
 | `JSEARCH_API_KEY`, `JSEARCH_REQUESTS_PER_RUN`, `JSEARCH_QUERIES` | empty, `1`, fifteen `query@country` entries (CA, TN, US, FR, BE, CH, DE, GB, AU, AE, SA, QA) | enables JSearch; queries rotate across runs to stay inside the free quota |
 | `DISABLED_BACKENDS` | empty | e.g. `search_duckduckgo,arbeitnow` |
 | `SOURCE_CONCURRENCY` | `6` | parallel backends |
@@ -434,6 +472,15 @@ geojobbot/
   core/jobs.py           state merge, change detection, alert selection, pruning
   core/boards.py         board registry and rotation scheduler
   core/report.py         run summary, GitHub step summary, diagnostics
+  core/prefs.py          preferences set from Telegram (state/prefs.json)
+  core/health.py         failure-streak, recovery and invalid-board notices
+  core/descriptions.py   stored descriptions of accepted jobs
+  core/index.py          state/index.json, the read model the Worker answers from
+  insights/sponsors.py   official visa-sponsor registers (UK, Canada LMIA, Netherlands)
+  insights/learning.py   score nudges learned from applications and hidden jobs
+  insights/radar.py      skills in demand versus yours
+  insights/signals.py    World Bank procurement: awards, consultancies, tenders
+  ai/                    Workers AI client, job review, /pitch
   matching/profile.py    roles, skills, domains, negatives (edit me)
   matching/matcher.py    deterministic scorer
   scrapers/base.py       Backend interface, RunContext, page queue
@@ -443,11 +490,13 @@ geojobbot/
   scrapers/search.py     SearXNG, DuckDuckGo, Common Crawl
   scrapers/feeds.py      public feeds, RSS, USAJOBS, JobSpy
   storage/               ObjectStore, R2Store, LocalStore, StateManager
-  notifications/telegram.py
+  notifications/         telegram.py (digest), commands.py, intents.py (plain language), weekly.py
   utils/                 http (retries/rate limits), robots, urls, location, dates, text
+cloudflare/worker.js     Telegram webhook: instant replies from R2, hand-over to the commands workflow
 config/sources.toml
 tests/unit/              offline tests (mock HTTP, fake R2, fake Telegram)
+tests/worker/            Worker tests (node --test, fake R2 / Telegram / GitHub / AI)
 tests/integration/       live tests (RUN_LIVE_TESTS=1)
-.github/workflows/       scraper.yml, tests.yml
+.github/workflows/       scraper.yml (every 2 hours), commands.yml, tests.yml
 ```
 # geospatial-job-bot
