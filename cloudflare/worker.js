@@ -114,11 +114,27 @@ export default {
     }
     let update;
     try { update = await request.json(); } catch { return new Response("bad request", { status: 400 }); }
-    const message = update && update.message;
-    const text = message && typeof message.text === "string" ? message.text.trim().slice(0, 500) : "";
-    if (!text || String(message.chat && message.chat.id) !== String(env.TELEGRAM_CHAT_ID)) {
+    // Telegram delivers text in different envelopes depending on the chat: "message" (private chats and groups),
+    // "channel_post" (channels), "business_message", and the edited_* variants. Accept them all.
+    const message = update && (update.message || update.channel_post || update.business_message
+      || update.edited_message || update.edited_channel_post);
+    const raw = message && (typeof message.text === "string" ? message.text : message.caption);
+    const text = typeof raw === "string" ? raw.trim().slice(0, 500) : "";
+    const chatMatches = Boolean(message && message.chat) && String(message.chat.id) === String(env.TELEGRAM_CHAT_ID);
+    if (!text || !chatMatches) {
+      // Visible in the Worker's Observability logs; says why without revealing the message.
+      console.log("ignored update", JSON.stringify({
+        envelope: update ? Object.keys(update).filter((k) => k !== "update_id") : [],
+        chatType: message && message.chat ? message.chat.type : null,
+        chatMatches,
+        hasText: Boolean(text),
+        fields: message ? Object.keys(message) : [],
+      }));
       return new Response("ignored");
     }
+    console.log("accepted update", JSON.stringify({
+      chatType: message.chat.type, command: text.startsWith("/"), ai: Boolean(env.AI), inbox: Boolean(env.INBOX),
+    }));
     // Answer Telegram at once (a slow reply makes it retry the update) and finish the work in the background.
     // Whatever goes wrong is reported to the chat instead of failing silently.
     ctx.waitUntil(

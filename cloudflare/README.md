@@ -62,6 +62,14 @@ commands (and refer to a job code that exists), and the reply marks it: `↪ /re
 
 After changing `cloudflare/worker.js` in the repository, paste the new version into the Worker (**Edit code → Deploy**).
 
+## If the bot is in a group or a channel rather than a private chat
+- **Group:** bots only receive messages starting with `/` while *privacy mode* is on, so plain sentences never reach
+  the Worker. In BotFather: `/setprivacy` → choose the bot → **Disable**, then remove the bot from the group and add
+  it again (the setting applies on joining).
+- **Channel:** the bot must be an administrator; posts arrive as `channel_post`, which the Worker accepts.
+- The `setWebhook` URL should list the update types you need, e.g. `allowed_updates=["message","channel_post"]`.
+- The Worker logs `ignored update {...}` with the reason (Observability tab) whenever it drops something.
+
 ## Test
 Send `/status` to the bot. You should see "On it" at once and the status about a minute later.
 If "On it" never arrives, check the Worker's **Logs**; if it arrives with a GitHub error, the token in
