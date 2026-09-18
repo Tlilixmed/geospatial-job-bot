@@ -86,7 +86,7 @@ class RunContext:
         return self.time_left() < reserve_s
 
     def prefilter(self, title: str, geo_context: bool) -> bool:
-        extra = tuple(self.settings.extra_negative_titles) if self.settings else ()
+        extra = tuple(self.settings.negative_titles()) if self.settings else ()
         return title_prefilter(title, geo_context, extra)
 
     def cursor(self, name: str) -> dict:

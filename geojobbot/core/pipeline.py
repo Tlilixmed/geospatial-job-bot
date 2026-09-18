@@ -19,6 +19,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 
 from ..models import SourceResult
+from ..notifications.commands import CommandProcessor
 from ..notifications.telegram import TelegramNotifier, format_digest, format_job_message
 from ..scrapers.ats.base import ATSBackend
 from ..scrapers.ats.more_ats import all_adapters
@@ -37,6 +38,7 @@ from ..utils.robots import RobotsCache
 from .boards import BoardRegistry
 from .fusion import fuse
 from .jobs import mark_failed, mark_notified, process_fused, prune_state, select_alerts
+from .prefs import apply_prefs, load_prefs
 from .report import build_markdown, build_summary, diagnostics_rows
 
 log = logging.getLogger(__name__)
@@ -195,6 +197,7 @@ class Pipeline:
             return self._fatal(report, f"state load failed: {exc}", started)
         report["storage"].update(loaded=True, first_run=manager.first_run,
                                  restored_from_backup=manager.restored_from_backup)
+        report["commands"] = self._process_commands(manager, state)
         writes_allowed = not settings.dry_run or settings.dry_run_write_state
 
         client = HttpClient(settings.user_agent, default_delay=settings.default_host_delay, host_delays=API_HOST_DELAYS,
@@ -292,6 +295,25 @@ class Pipeline:
         report["duration_s"] = time.monotonic() - started
         self._emit(report)
         return exit_code, report
+
+    def _process_commands(self, manager: StateManager, state: dict) -> dict:
+        """Answer pending Telegram commands, then overlay the stored preferences on this run's settings.
+
+        Never fatal: a Telegram or storage hiccup here must not stop the scrape.
+        """
+        settings = self.settings
+        handled: dict = {}
+        try:
+            if settings.telegram_configured and not settings.dry_run and self.notifier is None:
+                notifier = TelegramNotifier(settings.telegram_bot_token, settings.telegram_chat_id,
+                                            delay_s=settings.telegram_delay_s, sleep=self.sleep)
+                handled = dict(CommandProcessor(settings, manager, notifier, state=state, now=self.now,
+                                                in_scraper_run=True).run())
+            apply_prefs(settings, load_prefs(manager))
+        except Exception as exc:
+            log.warning("telegram commands/preferences skipped: %s", type(exc).__name__)
+            handled["error"] = type(exc).__name__
+        return handled
 
     def _alert_messages(self, selected: list[dict]) -> list[tuple[str, list[dict]]]:
         """Messages to send this run, each with the records it covers (marked notified only on delivery)."""

@@ -73,6 +73,7 @@ Invalid configured slugs are listed prominently in the run summary and GitHub st
 - **Negative titles** (Director, VP, Recruiter, Nurse, Electrical Engineer, …) are rejected. "Architect" is overridden when the title is geospatial ("GIS Architect"). "Engineer" is never excluded globally.
 - **Title-only sources.** A strong geospatial title with no description available is floored at *Possible* and labelled "Title-only evidence".
 - **Evidence-only explanations.** "Why it matched" bullets are generated only from terms actually found in the job text.
+- **Internships.** Intern, co-op, trainee, apprentice, working-student titles and their French, German and Spanish forms (stagiaire, stage, PFE, alternance, Werkstudent, prácticas…) are rejected. `EXCLUDE_INTERNSHIPS=false` or `/interns on` brings them back.
 - **Work authorisation.** Postings that require an existing right to work, citizenship or permanent residency, a security clearance, or that state no visa sponsorship is offered (English and French wording) are rejected with `WORK_AUTHORIZATION_REQUIRED`, unless the job is in one of `HOME_COUNTRIES` (default `Tunisia`) or the posting says sponsorship is available, in which case "Visa sponsorship offered" appears in the evidence and the digest shows 🛂. Disable with `EXCLUDE_WORK_AUTH_REQUIRED=false`.
 - **Rejection codes:** `NO_RELEVANT_TITLE`, `NEGATIVE_TITLE`, `INSUFFICIENT_GEOSPATIAL_SIGNALS`, `LOW_TECHNICAL_RELEVANCE`, `LOCATION_MISMATCH`, `WORK_AUTHORIZATION_REQUIRED`, `LOW_SCORE`.
 - **French postings.** Titles such as "Ingénieur SIG", "Géomaticien", "Topographe", "Cartographe" or "Chargé d'études SIG" and French skill and domain wording (télédétection, photogrammétrie, nuages de points, levés topographiques, "maîtrise de QGIS exigée"…) are recognised alongside English, so Tunisian, Maghreb and Québec sources score properly. Accents are folded before title matching.
@@ -110,6 +111,26 @@ Delivery rules:
 - State is checkpointed to R2 *before* alerts are sent, so a crash can't cause a flood of repeats.
 - Alerts per run are capped (`MAX_ALERTS_PER_RUN`, default 50), highest scores first; the rest wait for the next run.
 
+### Talking to the bot (Telegram commands)
+
+The bot answers messages from the configured chat only; every other chat is ignored. There is no server: pending messages are handled at the start of each scraper run and by `.github/workflows/commands.yml` (hourly by default; each poll bills about one Actions minute, so use `*/10 * * * *` only on a public repository). Preferences are stored in `state/prefs.json`, separate from the state document, so the poller and the scraper never conflict.
+
+| Command | Effect |
+|---|---|
+| `/jobs [n]`, `/high [n]` | best current matches that are fresh, not muted, hidden or applied |
+| `/search words` (or plain text) | search stored matches by title, company, place, skill |
+| `/why code` | score breakdown, evidence, sources and link for one job |
+| `/applied code`, `/applied` | mark as applied (never alerted again) · list applications |
+| `/hide code`, `/unhide code` | dismiss or restore a job |
+| `/mute text`, `/unmute text`, `/muted` | silence a company or title word |
+| `/threshold 70 55` | High and Possible cut-offs (from the next run) |
+| `/locations Canada, Tunisia`, `/locations reset` | preferred locations |
+| `/interns on\|off` | include or exclude internships |
+| `/pause`, `/resume` | hold alerts (jobs are still collected and released on resume) |
+| `/status`, `/run`, `/help` | last run and settings · start a scraper run now · this list |
+
+`code` is the 5-character tag printed next to every job in a digest.
+
 ---
 
 ## 2. Persistent state in R2
@@ -118,6 +139,7 @@ There is no SQLite and no GitHub cache. A single gzipped JSON document is simple
 
 ```
 state/state.json.gz                         authoritative state (jobs, boards, sources, cursors, page cache)
+state/prefs.json                            preferences set from Telegram (mutes, applied, hidden, thresholds, pause)
 state/backups/<timestamp>-<run>.json.gz     previous versions (STATE_BACKUPS_KEEP, default 20)
 state/conflicts/<run>.json.gz               state that could not be saved because another writer changed it
 runs/<YYYY-MM-DD>/<run>.json.gz             full run report + per-job match diagnostics (RUN_RETENTION_DAYS=90)
@@ -312,6 +334,7 @@ In a dry run, alerts are printed rather than sent and no state is written, unles
 | `PREFERRED_LOCATIONS`, `ACCEPTED_REMOTE_SCOPES` | empty | location scoring |
 | `STRICT_LOCATION_FILTER` | `false` | reject non-matching locations |
 | `EXTRA_NEGATIVE_TITLES` | empty | comma-separated extra exclusions |
+| `EXCLUDE_INTERNSHIPS` | `true` | reject internships, co-ops, traineeships and student jobs |
 | `EXCLUDE_WORK_AUTH_REQUIRED`, `HOME_COUNTRIES` | `true`, `Tunisia` | reject postings needing existing work authorisation / no sponsorship, except in home countries |
 | `ROTATION_BOARDS_PER_ATS` | `60` | discovered boards checked per ATS per run |
 | `MAX_DETAIL_FETCHES_PER_BOARD` | `30` | per-job detail requests per board |

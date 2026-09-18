@@ -240,6 +240,30 @@ def cmd_selftest_telegram(settings, args) -> int:
     return 0 if ok else 1
 
 
+def cmd_commands(settings, args) -> int:
+    """Poll Telegram once, execute pending commands and reply (used by .github/workflows/commands.yml)."""
+    if not settings.telegram_configured:
+        print("Telegram is not configured (TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID)")
+        return 1
+    from .core.prefs import apply_prefs, load_prefs
+    from .notifications.commands import CommandProcessor
+    from .notifications.telegram import TelegramNotifier
+    try:
+        manager = StateManager(build_store(settings), settings.state_prefix)
+        apply_prefs(settings, load_prefs(manager))
+        notifier = TelegramNotifier(settings.telegram_bot_token, settings.telegram_chat_id,
+                                    delay_s=settings.telegram_delay_s)
+        counts = CommandProcessor(settings, manager, notifier).run()
+    except ConfigError as exc:
+        print(exc)
+        return 1
+    except Exception as exc:  # never print the exception text: Telegram URLs contain the token
+        print(f"command processing failed: {type(exc).__name__}")
+        return 1
+    print(f"telegram commands: {dict(counts) or 'nothing pending'}")
+    return 0
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog="geojobbot", description="Geospatial job discovery bot")
     sub = parser.add_subparsers(dest="command")
@@ -259,6 +283,7 @@ def main(argv=None) -> int:
     p.add_argument("--grep")
     sub.add_parser("selftest-r2")
     sub.add_parser("selftest-telegram")
+    sub.add_parser("commands")
     args = parser.parse_args(argv)
     try:
         settings = load_settings()
@@ -268,7 +293,7 @@ def main(argv=None) -> int:
     _setup_logging(settings)
     handlers = {"run": cmd_run, None: cmd_run, "validate-sources": cmd_validate, "diagnose": cmd_diagnose,
                 "score": cmd_score, "inspect": cmd_inspect, "selftest-r2": cmd_selftest_r2,
-                "selftest-telegram": cmd_selftest_telegram}
+                "selftest-telegram": cmd_selftest_telegram, "commands": cmd_commands}
     return handlers[args.command](settings, args)
 
 

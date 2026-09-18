@@ -74,6 +74,7 @@ def build_summary(report: dict) -> str:
         f"  Failed: {c.get('alerts_failed', 0)}",
         f"  Blocked (stale posting): {c.get('blocked_stale', 0)}",
         f"  Deferred (per-run cap): {c.get('deferred_by_cap', 0)}",
+        f"  Muted / hidden or applied / held while paused: {c.get('muted', 0)} / {c.get('hidden', 0)} / {c.get('paused', 0)}",
         f"  Pending (Telegram not configured / dry run): {c.get('alerts_pending', 0)}",
         "",
         "Discovery:",

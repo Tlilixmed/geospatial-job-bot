@@ -16,6 +16,7 @@ import requests
 from ..models import TIER_HIGH
 from ..utils.dates import parse_datetime
 from ..utils.location import ParsedLocation
+from ..utils.text import job_code
 
 log = logging.getLogger(__name__)
 MAX_MESSAGE = 4096
@@ -39,6 +40,9 @@ def _digest_entry(rec: dict, index: int) -> str:
     if rec.get("company"):
         head += f" — {_esc(rec['company'])}"
     head += f" · {int(rec.get('score') or 0)}/100"
+    code = job_code(rec.get("canonical_id"))
+    if code:
+        head += f" · <code>{code}</code>"  # handle for /why, /applied, /hide
     if updated:
         head = "🔁 " + head
     facts = [f"📍 {_esc(_location_of(rec).display())}"]
@@ -62,7 +66,8 @@ def _digest_entry(rec: dict, index: int) -> str:
     return "\n".join(lines)
 
 
-def format_digest(records: list[dict], *, now=None, part_limit: int = MAX_MESSAGE) -> list[tuple[str, list[dict]]]:
+def format_digest(records: list[dict], *, now=None, part_limit: int = MAX_MESSAGE,
+                  title: str | None = None) -> list[tuple[str, list[dict]]]:
     """Format records as one numbered list, split into as few Telegram messages as fit.
 
     Returns [(message_text, records_in_that_message)], so delivery can be tracked per message.
@@ -74,7 +79,8 @@ def format_digest(records: list[dict], *, now=None, part_limit: int = MAX_MESSAG
     possible = [r for r in records if r.get("tier") != TIER_HIGH]
     stamp = (now or datetime.now(timezone.utc)).strftime("%d %b %Y %H:%M UTC")
     plural = "es" if len(records) != 1 else ""
-    header = (f"🗺️ <b>Geospatial jobs — {len(records)} new match{plural}</b>{{part}}\n"
+    heading = title or f"Geospatial jobs — {len(records)} new match{plural}"
+    header = (f"🗺️ <b>{_esc(heading)}</b>{{part}}\n"
               f"<i>{stamp} · {len(high)} high · {len(possible)} possible</i>")
 
     entries = []  # (section title on the first entry of a section, entry text, record)

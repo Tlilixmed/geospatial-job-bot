@@ -79,6 +79,11 @@ def sha1(value: str, length: int = 20) -> str:
     return hashlib.sha1(value.encode("utf-8", "replace")).hexdigest()[:length]
 
 
+def job_code(canonical_id: str | None) -> str:
+    """Short, stable handle for a job, shown in alerts and accepted by Telegram commands."""
+    return sha1(canonical_id, 5) if canonical_id else ""
+
+
 def truncate(text: str | None, limit: int) -> str:
     if not text:
         return ""

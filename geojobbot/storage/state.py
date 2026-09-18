@@ -174,6 +174,11 @@ class StateManager:
             return empty_state()
         raise StateCorruptError("state and all backups are unreadable; set ALLOW_STATE_RESET=true to start over")
 
+    def peek(self) -> dict:
+        """Read-only view of the state for commands: no ETag tracking, no backups, empty when absent."""
+        data = self.store.get_bytes(self.state_key)
+        return decode_state(data) if data else empty_state()
+
     # ------------------------------------------------------------------ save
     def save(self, state: dict, run_id: str) -> str | None:
         validate_state(state)

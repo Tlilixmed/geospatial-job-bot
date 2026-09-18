@@ -14,7 +14,7 @@ from datetime import timedelta
 from ..matching.matcher import MatchResult, score_job
 from ..models import TIER_HIGH, TIER_POSSIBLE, TIER_REJECTED, JobRecord
 from ..utils.dates import age_hours, parse_datetime, to_iso
-from ..utils.text import normalize_title
+from ..utils.text import fold, normalize_title
 from .fusion import FusedJob
 
 CHANGE_FIELDS = ("title", "location_raw", "salary", "remote", "employment_type", "description_hash")
@@ -138,9 +138,17 @@ def select_alerts(state: dict, seen_ids: set, settings, now) -> tuple[list[dict]
     counts = Counter()
     candidates = []
     accepted = {TIER_HIGH, TIER_POSSIBLE} if settings.notify_possible else {TIER_HIGH}
+    hidden = set(getattr(settings, "hidden_ids", None) or [])
+    muted = [fold(t) for t in (getattr(settings, "muted_terms", None) or []) if t and t.strip()]
     for cid in seen_ids:
         rec = state["jobs"].get(cid)
         if not rec or rec.get("tier") not in accepted:
+            continue
+        if cid in hidden:
+            counts["hidden"] += 1
+            continue
+        if muted and any(term in fold(f"{rec.get('title') or ''} {rec.get('company') or ''}") for term in muted):
+            counts["muted"] += 1
             continue
         if rec.get("notified") and not rec.get("pending_update_alert"):
             counts["already_notified"] += 1
@@ -156,6 +164,9 @@ def select_alerts(state: dict, seen_ids: set, settings, now) -> tuple[list[dict]
         candidates.append(rec)
     candidates.sort(key=lambda r: (r.get("tier") != TIER_HIGH, -int(r.get("score") or 0),
                                    -(parse_datetime(r.get("posted_at")) or now).timestamp()))
+    if getattr(settings, "alerts_paused", False):  # jobs stay un-notified and go out after /resume
+        counts["paused"] = len(candidates)
+        return [], counts
     selected = candidates[: settings.max_alerts_per_run]
     counts["deferred_by_cap"] = max(0, len(candidates) - len(selected))
     return selected, counts

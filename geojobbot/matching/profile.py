@@ -98,6 +98,13 @@ NEGATIVE_TITLES = [
     "Comptable", "Infirmier", "Infirmière", "Avocat", "Architecte", "Ingénieur Électrique", "Ingénieur Mécanique",
     "Ingénieur Électromécanique", "Chef d'agence",
 ]
+# Internships, co-ops, traineeships and student jobs (EXCLUDE_INTERNSHIPS, default on; /interns on|off in Telegram).
+INTERNSHIP_TITLES = [
+    "Intern", "Interns", "Internship", "Co-op", "Coop", "Trainee", "Traineeship", "Apprentice", "Apprenticeship",
+    "Working Student", "Student", "Summer Student", "Werkstudent", "Praktikum", "Praktikant", "Graduate Program",
+    "Stagiaire", "Stage", "Stage PFE", "PFE", "Alternance", "Alternant", "Alternante", "Apprenti", "Apprentie",
+    "Étudiant", "Étudiante", "Becario", "Prácticas",
+]
 # Negative titles that are overridden when the title itself is clearly geospatial
 # (e.g. "GIS Architect" or "Enterprise Geospatial Architect").
 NEGATIVE_OVERRIDABLE = {"Architect", "Architecte"}

@@ -112,6 +112,19 @@ def test_deterministic():
     assert a == b
 
 
+def test_internships_excluded_by_default_and_switchable():
+    from conftest import make_settings
+    on = make_settings()
+    for title in ("GIS Intern", "Geospatial Analyst Co-op", "Stagiaire SIG", "Stage PFE Géomatique", "GIS Working Student",
+                  "Alternance Cartographe"):
+        assert not M.title_prefilter(title, True, tuple(on.negative_titles())), title
+        assert M.score_job(title, GIS_DESCRIPTION, REMOTE, on.match_config()).tier == "rejected"
+    for title in ("GIS Analyst, International Programs", "Internal GIS Specialist"):
+        assert M.title_prefilter(title, True, tuple(on.negative_titles())), title
+    off = make_settings(exclude_internships=False)
+    assert M.title_prefilter("GIS Intern", True, tuple(off.negative_titles()))
+
+
 def test_work_authorization_exclusion_and_exemptions():
     us = GIS_DESCRIPTION + " Applicants must be authorized to work in the United States; we are unable to sponsor visas."
     r = M.score_job("GIS Analyst", us, {"city": "Denver", "country": "United States", "raw": "Denver, CO"})

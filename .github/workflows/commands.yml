@@ -1,0 +1,43 @@
+name: Telegram commands
+
+# Polls Telegram for messages you sent the bot and executes them (/help lists the commands).
+# Each execution bills about one minute. Private repositories get 2,000 minutes a month, so the
+# default is hourly; on a public repository minutes are unlimited and "*/10 * * * *" gives
+# near-instant replies. The scraper also processes pending commands at the start of every run.
+on:
+  schedule:
+    - cron: "17 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: geospatial-job-commands
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: write   # lets /run start the scraper workflow
+
+jobs:
+  commands:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Process Telegram commands
+        env:
+          R2_ENDPOINT_URL: ${{ secrets.R2_ENDPOINT_URL }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          PREFERRED_LOCATIONS: ${{ vars.PREFERRED_LOCATIONS || 'Canada,Tunisia,Tunisie,Tunis' }}
+          GITHUB_TOKEN: ${{ github.token }}
+          REQUIRE_R2: "true"
+        run: python -m geojobbot commands

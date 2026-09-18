@@ -93,6 +93,11 @@ class Settings:
     accepted_remote_scopes: list[str] = field(default_factory=list)
     strict_location: bool = False
     extra_negative_titles: list[str] = field(default_factory=list)
+    exclude_internships: bool = True
+    # runtime preferences set from Telegram (state/prefs.json), never from the environment
+    muted_terms: list[str] = field(default_factory=list)
+    hidden_ids: list[str] = field(default_factory=list)
+    alerts_paused: bool = False
     exclude_work_auth_required: bool = True  # drop postings needing existing authorisation / no sponsorship
     home_countries: list[str] = field(default_factory=lambda: ["Tunisia"])
 
@@ -154,6 +159,11 @@ class Settings:
     def telegram_configured(self) -> bool:
         return bool(self.telegram_bot_token and self.telegram_chat_id)
 
+    def negative_titles(self) -> list[str]:
+        """User exclusions plus internship titles when they are excluded."""
+        from .matching.profile import INTERNSHIP_TITLES
+        return list(self.extra_negative_titles) + (list(INTERNSHIP_TITLES) if self.exclude_internships else [])
+
     def match_config(self) -> MatchConfig:
         return MatchConfig(
             high_threshold=self.high_threshold,
@@ -161,7 +171,7 @@ class Settings:
             preferred_locations=self.preferred_locations,
             accepted_remote_scopes=self.accepted_remote_scopes,
             strict_location=self.strict_location,
-            extra_negative_titles=self.extra_negative_titles,
+            extra_negative_titles=self.negative_titles(),
             exclude_work_auth_required=self.exclude_work_auth_required,
             home_countries=self.home_countries,
         )
@@ -218,6 +228,7 @@ def load_settings() -> Settings:
     s.accepted_remote_scopes = env_list("ACCEPTED_REMOTE_SCOPES", s.accepted_remote_scopes)
     s.strict_location = env_bool("STRICT_LOCATION_FILTER", s.strict_location)
     s.extra_negative_titles = env_list("EXTRA_NEGATIVE_TITLES", s.extra_negative_titles)
+    s.exclude_internships = env_bool("EXCLUDE_INTERNSHIPS", s.exclude_internships)
     s.exclude_work_auth_required = env_bool("EXCLUDE_WORK_AUTH_REQUIRED", s.exclude_work_auth_required)
     s.home_countries = env_list("HOME_COUNTRIES", s.home_countries)
 

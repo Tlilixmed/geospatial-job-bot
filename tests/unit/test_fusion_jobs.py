@@ -124,6 +124,18 @@ def test_stale_blocking_and_rotation_window_and_missing_date():
     assert ids == {"greenhouse:3", "greenhouse:4"} and counts["blocked_stale"] == 1
 
 
+def test_muted_and_paused_jobs_are_held_back():
+    st = state()
+    out = process_fused(fuse([raw(), raw(native_id="greenhouse:9", url="https://boards.greenhouse.io/other/jobs/9",
+                                       apply_url=None, company="Leidos", title="LiDAR Analyst")], st["jobs"], NOW),
+                        st, make_settings(), NOW)
+    selected, counts = select_alerts(st, out.seen_ids, make_settings(muted_terms=["leidos"]), NOW)
+    assert [r["company"] for r in selected] == ["Acme Mapping"] and counts["muted"] == 1
+    selected, counts = select_alerts(st, out.seen_ids, make_settings(alerts_paused=True), NOW)
+    assert selected == [] and counts["paused"] == 2
+    assert all(not rec["notified"] for rec in st["jobs"].values())  # released after /resume
+
+
 def test_alert_cap_orders_high_first():
     settings = make_settings(max_alerts_per_run=1)
     st = state()
