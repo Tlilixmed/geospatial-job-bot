@@ -17,6 +17,9 @@ from ..ai.review import write_pitch
 from ..core.descriptions import DescriptionStore
 from ..core.jobs import APPLICATION_STATUSES, alert_block_reason, is_listed
 from ..core.prefs import load_prefs, save_prefs
+from ..insights import radar, signals
+from ..insights.learning import MIN_LABELS, build_model, describe_model, snapshot
+from ..matching.profile import TECH_SKILLS
 from ..models import TIER_HIGH, TIER_POSSIBLE
 from ..utils.dates import parse_datetime, to_iso, utcnow
 from ..utils.text import fold, job_code
@@ -53,6 +56,9 @@ HELP = """🗺️ <b>Geospatial job bot — commands</b>
 
 <b>Run</b>
 /status — last run and current settings
+/radar — skills the market asks for vs yours · /skills edits your list
+/signals — firms winning geospatial contracts, consultancies, tenders
+/learning — what I learned from your applications and hidden jobs
 /weekly — applications and open matches summary
 /run — start a scraper run now
 
@@ -267,6 +273,8 @@ class CommandProcessor:
             "/status": self.cmd_status, "/run": self.cmd_run, "/weekly": self.cmd_weekly, "/range": self.cmd_range,
             "/pitch": self.cmd_pitch, "/draft": self.cmd_pitch, "/ai": self.cmd_ai, "/possible": self.cmd_possible,
             "/sponsors": self.cmd_sponsors, "/sponsor": self.cmd_sponsors, "/outcome": self.cmd_outcome,
+            "/learning": self.cmd_learning, "/radar": self.cmd_radar, "/skills": self.cmd_skills,
+            "/signals": self.cmd_signals,
         }
 
     # ------------------------------------------------------------------ find
@@ -363,6 +371,9 @@ class CommandProcessor:
                 lines.append(_esc(" · ".join(facts)))
             if review.get("requirements"):
                 lines += [f"• {_esc(r)}" for r in review["requirements"]]
+        learned = rec.get("learned") or {}
+        if learned.get("adj"):
+            lines += ["", f"🧠 Learned from you: {learned['adj']:+d} points ({_esc(', '.join(learned.get('because') or []))})"]
         if rec.get("rejection_reasons"):
             lines += ["", "Rejected: " + _esc(", ".join(rec["rejection_reasons"]))]
         sources = sorted({s.get("source_name") for s in rec.get("sources") or [] if s.get("source_name")})
@@ -411,7 +422,7 @@ class CommandProcessor:
         if rec is None:
             return ["I can't find that code. /jobs lists current codes."]
         self.prefs["applied"][rec["canonical_id"]] = {
-            "title": rec.get("title"), "company": rec.get("company"), "url": rec.get("apply_url") or rec.get("url"),
+            **snapshot(rec), "url": rec.get("apply_url") or rec.get("url"),
             "at": to_iso(self.now), "status": "applied", "history": [{"at": to_iso(self.now), "status": "applied"}]}
         self._touch()
         return [f"✅ Marked as applied: <b>{_esc(rec.get('title'))}</b>. Good luck! I'll check in with you in a week; "
@@ -451,6 +462,7 @@ class CommandProcessor:
             return ["Usage: /hide code"]
         if rec["canonical_id"] not in self.prefs["hidden"]:
             self.prefs["hidden"].append(rec["canonical_id"])
+            self.prefs["hidden_info"][rec["canonical_id"]] = {**snapshot(rec), "at": to_iso(self.now)}
             self._touch()
         return [f"🙈 Hidden: {_esc(rec.get('title'))}. /unhide {job_code(rec['canonical_id'])} restores it."]
 
@@ -459,6 +471,7 @@ class CommandProcessor:
         if rec is None or rec["canonical_id"] not in self.prefs["hidden"]:
             return ["That job isn't hidden."]
         self.prefs["hidden"].remove(rec["canonical_id"])
+        self.prefs["hidden_info"].pop(rec["canonical_id"], None)
         self._touch()
         return [f"Restored: {_esc(rec.get('title'))}"]
 
@@ -508,6 +521,66 @@ class CommandProcessor:
         self.prefs["exclude_internships"] = arg.lower() == "off"
         self._touch()
         return ["Internships will be " + ("excluded." if arg.lower() == "off" else "included.") + " Applies from the next run."]
+
+    def cmd_learning(self, arg: str) -> list[str]:
+        """/learning — what I learned from your applications and hidden jobs · on | off | reset"""
+        action = arg.strip().lower()
+        if action in ("off", "on"):
+            self.prefs["learning"] = action == "on"
+            self._touch()
+            return ["Learning is " + ("on: your applications and hidden jobs nudge the scores." if action == "on"
+                                      else "off: scores are purely rule-based again from the next run.")]
+        if action in ("reset", "forget"):
+            self.prefs["learning_since"] = to_iso(self.now)
+            self._touch()
+            return ["🧹 Forgotten. I start learning again from your next actions."]
+        if self.prefs.get("learning") is False:
+            return ["Learning is off. /learning on switches it back on."]
+        model = build_model(self.prefs, self.state.get("jobs", {}))
+        labels = len(self.prefs["applied"]) + len(self.prefs["hidden"])
+        if not model:
+            return [f"🧠 Nothing learned yet: I need at least {MIN_LABELS} actions with something in common "
+                    f"(you have {labels}). Every /applied and /hide teaches me."]
+        liked, disliked = describe_model(model)
+        lines = ["🧠 <b>What I learned from you</b>",
+                 f"<i>from {len(self.prefs['applied'])} applications and {len(self.prefs['hidden'])} hidden jobs · "
+                 f"a job moves by at most +6 / −8 points</i>"]
+        if liked:
+            lines += ["", "<b>You go for</b>"] + [f"• {_esc(x)}" for x in liked]
+        if disliked:
+            lines += ["", "<b>You skip</b>"] + [f"• {_esc(x)}" for x in disliked]
+        lines += ["", "/why code shows a job's adjustment · /learning off · /learning reset"]
+        return ["\n".join(lines)]
+
+    def cmd_radar(self, arg: str) -> list[str]:
+        have = radar.my_skills(self.settings, self.prefs)
+        return [radar.format_radar(radar.compute(self.state.get("jobs", {}), have, self.now))]
+
+    def cmd_skills(self, arg: str) -> list[str]:
+        """/skills · /skills add PostGIS · /skills remove FME · /skills reset"""
+        have = radar.my_skills(self.settings, self.prefs)
+        action, _, name = arg.strip().partition(" ")
+        name = name.strip()
+        if action.lower() == "reset":
+            self.prefs["my_skills"] = None
+            self._touch()
+            return ["Skills list reset to the one from your CV."]
+        if action.lower() in ("add", "remove") and name:
+            known = {fold(t.canonical): t.canonical for t in TECH_SKILLS}
+            canonical = known.get(fold(name), name)
+            have = [s for s in have if fold(s) != fold(canonical)]
+            if action.lower() == "add":
+                have.append(canonical)
+            self.prefs["my_skills"] = have
+            self._touch()
+            return [f"{'Added' if action.lower() == 'add' else 'Removed'} {_esc(canonical)}. /radar uses the new list."]
+        return ["<b>Skills I compare the market against</b>\n" + _esc(", ".join(have))
+                + "\n\n/skills add PostGIS · /skills remove FME · /skills reset"]
+
+    def cmd_signals(self, arg: str) -> list[str]:
+        items = (self.state.get("signals") or {}).get("items") or []
+        return [signals.format_signals(items, heading="Recent market signals", limit=self._number(arg, 10, 1, 20))
+                or "No procurement signals stored yet. They are checked once a day during scraper runs."]
 
     def cmd_possible(self, arg: str) -> list[str]:
         if arg.lower() not in ("on", "off"):

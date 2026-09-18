@@ -20,6 +20,8 @@ from datetime import timedelta
 
 from ..ai.client import WorkersAI
 from ..ai.review import review_job
+from ..insights import radar, signals
+from ..insights.learning import apply_learning, build_model
 from ..insights.sponsors import SponsorRegistry, annotate_record
 from ..models import SourceResult
 from ..notifications.commands import CommandProcessor
@@ -240,6 +242,7 @@ class Pipeline:
         counts.update(outcome.counts)
         self.descriptions = self._keep_descriptions(manager, outcome, state)
         counts.update(self._sponsors(manager, ctx, outcome, state, writes_allowed, report))
+        counts.update(self._learning(manager, outcome, state))
         counts.update(self._ai_review(outcome, state))
 
         relevant_by_board = Counter()
@@ -294,6 +297,7 @@ class Pipeline:
             log.warning("Telegram is not configured: %d alerts left pending", len(selected))
         counts["weekly_summary_sent"] = int(self._weekly_summary(manager, state, notifier))
         counts["follow_ups_sent"] = self._follow_ups(manager, state, notifier)
+        counts.update(self._insights(manager, ctx, state, notifier))
         health = format_health(health_messages(state, report))
         if health and notifier is not None and not settings.dry_run:
             counts["health_alerts_sent"] = int(notifier.send(health)[0])
@@ -432,6 +436,51 @@ class Pipeline:
                 counts["ai_vetoed"] += 1
                 counts["tier_possible"] -= 1
                 counts["tier_rejected"] += 1
+        return counts
+
+    def _learning(self, manager: StateManager, outcome, state: dict) -> Counter:
+        """Nudge scores by what the user applied to and hid (transparent, small, optional)."""
+        counts = Counter()
+        try:
+            model = build_model(load_prefs(manager), state["jobs"])
+            if not model:
+                return counts
+            for _, _, rec in outcome.evaluated:
+                stored = state["jobs"][rec.canonical_id]
+                before = stored.get("tier")
+                if apply_learning(stored, model, self.settings):
+                    counts["learned_adjustments"] += 1
+                if stored.get("tier") != before:
+                    counts[f"tier_{before}"] -= 1
+                    counts[f"tier_{stored['tier']}"] += 1
+        except Exception as exc:
+            log.warning("learning skipped: %s", type(exc).__name__)
+        return counts
+
+    def _insights(self, manager: StateManager, ctx: RunContext, state: dict, notifier) -> Counter:
+        """Procurement signals (daily check, sent only when new) and the monthly skills radar."""
+        counts = Counter()
+        if notifier is None or self.settings.dry_run:
+            return counts
+        if self.settings.market_signals:
+            try:
+                text = signals.format_signals(signals.check(ctx, state))
+                if text:
+                    counts["market_signals_sent"] = int(notifier.send(text)[0])
+            except Exception as exc:
+                log.warning("market signals skipped: %s", type(exc).__name__)
+        if self.settings.monthly_radar:
+            try:
+                maintenance = state.setdefault("maintenance", {})
+                last = parse_datetime(maintenance.get("last_radar"))
+                if last is None or self.now - last >= timedelta(days=30):
+                    prefs = load_prefs(manager)
+                    data = radar.compute(state["jobs"], radar.my_skills(self.settings, prefs), self.now)
+                    if data["jobs"] >= radar.MIN_JOBS and notifier.send(radar.format_radar(data))[0]:
+                        maintenance["last_radar"] = to_iso(self.now)
+                        counts["radar_sent"] = 1
+            except Exception as exc:
+                log.warning("skills radar skipped: %s", type(exc).__name__)
         return counts
 
     def _follow_ups(self, manager: StateManager, state: dict, notifier) -> int:

@@ -144,6 +144,8 @@ def make_settings(**overrides) -> Settings:
     s.store_raw_snapshots = True
     s.weekly_summary = False  # enabled explicitly by the tests that cover it
     s.sponsor_registers = False
+    s.monthly_radar = False
+    s.market_signals = False
     for key, value in overrides.items():
         setattr(s, key, value)
     return s

@@ -20,7 +20,12 @@ def default_prefs() -> dict:
         "medium_threshold": None,
         "preferred_locations": None,
         "exclude_internships": None,
-        "notify_possible": None,     # None = environment default; True also alerts on Possible matches
+        "notify_possible": None,
+        "hidden_info": {},           # canonical id -> snapshot of a hidden job (what learning needs once the job is pruned)
+        "learning": None,            # False switches learning off
+        "learning_since": None,      # actions before this moment are ignored (/learning reset)
+        "my_skills": None,           # None = MY_SKILLS / the built-in list from the CV
+     # None = environment default; True also alerts on Possible matches
     }
 
 

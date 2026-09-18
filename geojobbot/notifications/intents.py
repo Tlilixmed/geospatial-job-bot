@@ -129,6 +129,22 @@ def interpret(text: str, is_code: Callable[[str], bool] = lambda token: False) -
     if _has(t, r"\b(weekly|hebdo\w*|summary|recap|bilan|recapitulatif)\b"):
         return "weekly", ""
 
+    # insights: skills radar, procurement signals, what the bot learned
+    if not code:
+        if _has(t, r"\b(radar|skills? gap|gaps?|what (?:should|to) (?:i )?learn|in demand|demandees?|competences? (?:demandees|recherchees|manquantes))\b"):
+            return "radar", ""
+        if _has(t, r"\b(my skills|mes competences|skills list)\b"):
+            return "skills", ""
+        if _has(t, r"\b(signals?|tenders?|procurement|contracts? (?:awards?|won)|appels? d offres?|marches publics?|"
+                   r"consultanc(?:y|ies)|who (?:is|s) winning)\b"):
+            return "signals", str(_number(fixed, 1, 20) or "")
+        if _has(t, r"\b(learn(?:ed|ing|t)?|appris|apprentissage)\b"):
+            if _has(t, r"\b(forget|reset|wipe|clear|oublie\w*|efface\w*)\b"):
+                return "learning", "reset"
+            if _has(t, r"\b(stop|off|disable|arrete\w*|desactive\w*)\b"):
+                return "learning", "off"
+            return "learning", ""
+
     # "jobs from licensed sponsors", "who sponsors visas", "offres avec parrainage"
     if not code and _has(t, r"\b(sponsor\w*|visa|visas|lmia|parrain\w*|work permit|permis de travail)\b"):
         return "sponsors", str(_number(fixed, 1, 30) or "")
