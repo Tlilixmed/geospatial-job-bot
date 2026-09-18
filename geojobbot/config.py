@@ -152,6 +152,8 @@ class Settings:
     monthly_radar: bool = True
     market_signals: bool = True  # World Bank procurement: geospatial awards, consultancies, tenders
     sponsor_registers: bool = True  # UK / Canada / Netherlands official sponsor registers, refreshed weekly
+    visa_paths: bool = True  # per-job check against config/visa_paths.toml (licence, salary minimum, occupation)
+    my_languages: list[str] = field(default_factory=lambda: ["English", "French", "Arabic"])  # opens language-based routes
     # JSearch (RapidAPI): "query@country" entries rotated across runs, JSEARCH_REQUESTS_PER_RUN per run.
     # The free tier allows 200 requests/month: one per 4-hourly run stays inside it.
     jsearch_api_key: str | None = None
@@ -292,6 +294,8 @@ def load_settings() -> Settings:
     s.candidate_profile = env_str("CANDIDATE_PROFILE", s.candidate_profile) or ""
     s.weekly_summary = env_bool("WEEKLY_SUMMARY", s.weekly_summary)
     s.sponsor_registers = env_bool("SPONSOR_REGISTERS", s.sponsor_registers)
+    s.visa_paths = env_bool("VISA_PATHS", s.visa_paths)
+    s.my_languages = env_list("MY_LANGUAGES", s.my_languages)
     s.my_skills = env_list("MY_SKILLS", s.my_skills)
     s.monthly_radar = env_bool("MONTHLY_RADAR", s.monthly_radar)
     s.market_signals = env_bool("MARKET_SIGNALS", s.market_signals)

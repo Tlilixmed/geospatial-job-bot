@@ -150,8 +150,16 @@ def interpret(text: str, is_code: Callable[[str], bool] = lambda token: False) -
             return "learning", ""
 
     # "jobs from licensed sponsors", "who sponsors visas", "offres avec parrainage"
-    if not code and _has(t, r"\b(sponsor\w*|visa|visas|lmia|parrain\w*|work permit|permis de travail)\b"):
+    if not code and _has(t, r"\b(sponsor\w*|lmia|parrain\w*)\b"):
         return "sponsors", str(_number(fixed, 1, 30) or "")
+    # "can i get a visa for these jobs", "visa rules for france", "blue card germany", "visa a3f9c"
+    if _has(t, r"\b(visas?|work permits?|permis de travail|titre de sejour|blue card|carte bleue|immigration|relocat\w*)\b"):
+        if code:
+            return "visa", code
+        from ..insights.visa import find_country  # local import: intents stays importable on its own
+        phrases = [" ".join(original[i:i + 2]) for i in range(len(original) - 1)] + [tok for tok in original if len(tok) > 1]
+        country = next((c for c in (find_country(p) for p in phrases) if c), None)
+        return "visa", country or ""
 
     # which tiers are alerted: "only alert me on high matches", "also send possible matches"
     if _has(t, r"\b(alert\w*|notif\w*|send\w*|envoie\w*|envoy\w*|previens)\b") and \

@@ -1,0 +1,181 @@
+# Work-visa routes the bot checks a job against (geojobbot/insights/visa.py). Indicative, not legal advice.
+# Every figure below was read from the linked official or professional source on the `as_of` date. Thresholds are
+# revised every year: update the numbers and `as_of` together. The bot warns when `as_of` is older than a year.
+#
+# Fields
+#   country            canonical country name of the job (geojobbot/utils/location.py)
+#   name               what the route is called
+#   sponsor            "register:<key>"  the employer must hold a licence: checked against the official register
+#                      "employer"        any employer may sponsor: evidence = the posting says so, or a register hit
+#                      "default"         the work visa is employer-sponsored as a matter of course
+#   currency, salary_min, period        legal minimum pay for the route (omit when there is none)
+#   salary_low, salary_low_label        a reduced minimum that may apply (shown, and used as the "maybe" band)
+#   occupation         "any" | "graduate" (technician-level titles are flagged) | "spatial" (surveying / spatial
+#                      science occupations are listed) | "bilateral" (occupation list of a bilateral agreement)
+#   requires_language  the candidate must speak it (MY_LANGUAGES)
+#   requires_home      applies only to nationals of this country (HOME_COUNTRIES)
+#   exclude_regions    the route does not apply to jobs in these regions
+#   hard               true: realistically out of reach from abroad; shown as a warning
+as_of = "2026-09-18"
+
+[[path]]
+country = "United Kingdom"
+name = "Skilled Worker visa"
+sponsor = "register:uk"
+currency = "GBP"
+salary_min = 41700
+salary_low = 33400
+salary_low_label = "new entrants (under 26, recent graduates)"
+period = "year"
+occupation = "graduate"
+note = "The job must also pay the going rate of its occupation code. Since 22 Jul 2025 only graduate-level occupations qualify, technician roles only while on the Temporary Shortage List."
+url = "https://www.gov.uk/skilled-worker-visa/your-job"
+
+[[path]]
+country = "Netherlands"
+name = "Highly skilled migrant (kennismigrant)"
+sponsor = "register:nl"
+currency = "EUR"
+salary_min = 5942
+salary_low = 4357
+salary_low_label = "under 30"
+period = "month"
+occupation = "any"
+note = "Gross per month excluding the 8% holiday allowance, amounts for 2026. No occupation list and no labour-market test."
+url = "https://ind.nl/en/required-amounts-income-requirements"
+
+[[path]]
+country = "Germany"
+name = "EU Blue Card"
+sponsor = "employer"
+currency = "EUR"
+salary_min = 50700
+salary_low = 45934
+salary_low_label = "shortage occupations (engineers, surveyors and cartographers, IT, natural scientists) and recent graduates"
+period = "year"
+occupation = "graduate"
+note = "Needs a recognised degree (check anabin). No employer licence exists in Germany: any employer can hire. Amounts for 2026."
+url = "https://www.make-it-in-germany.com/en/visa-residence/types/eu-blue-card"
+
+[[path]]
+country = "France"
+name = "Titre de séjour salarié (accord franco-tunisien)"
+sponsor = "employer"
+occupation = "bilateral"
+requires_home = "Tunisia"
+note = "Annexe I of the 2008 France–Tunisia protocol lists métiers for which Tunisians get the permit without the labour-market test: Géomètre, Dessinateur du BTP, Chargé d'études techniques du BTP, Informaticien d'étude, Informaticien expert. The employer files the work authorisation; normal pay rules apply."
+url = "https://www.legifrance.gouv.fr/jorf/id/JORFTEXT000020900798"
+
+[[path]]
+country = "France"
+name = "Talent – carte bleue européenne"
+sponsor = "employer"
+currency = "EUR"
+salary_min = 59373
+period = "year"
+occupation = "graduate"
+note = "Three-year degree or five years of experience, contract of at least six months. The cheaper 'talent – salarié qualifié' (39,582 €) needs a master's degree obtained in France."
+url = "https://www.legifrance.gouv.fr/jorf/id/JORFTEXT000052158119"
+
+[[path]]
+country = "Ireland"
+name = "Critical Skills Employment Permit"
+sponsor = "employer"
+currency = "EUR"
+salary_min = 68911
+salary_low = 40904
+salary_low_label = "occupations on the Critical Skills list, with a relevant degree"
+period = "year"
+occupation = "any"
+note = "Amounts from March 2026. Check whether the occupation is on the Critical Skills Occupations List: that decides which minimum applies."
+url = "https://enterprise.gov.ie/en/what-we-do/workplace-and-skills/employment-permits/permit-types/critical-skills-employment-permit/"
+
+[[path]]
+country = "Australia"
+name = "Skills in Demand visa (Core Skills)"
+sponsor = "employer"
+currency = "AUD"
+salary_min = 79499
+period = "year"
+occupation = "spatial"
+note = "Surveyor, Cartographer and Other Spatial Scientist are on the Core Skills Occupation List. Threshold from 1 Jul 2026 (sources differ by A$76; the higher figure is used). The employer must be an approved sponsor."
+url = "https://immi.homeaffairs.gov.au/visas/getting-a-visa/visa-listing/skills-in-demand-visa-subclass-482"
+
+[[path]]
+country = "Canada"
+name = "Francophone Mobility (C16)"
+sponsor = "employer"
+occupation = "any"
+requires_language = "French"
+exclude_regions = ["Quebec", "Québec", "QC"]
+no_lmia = true
+note = "For French speakers (NCLC 5 speaking and listening) the employer needs NO LMIA for a job outside Québec: an offer through the Employer Portal and a CA$230 fee. Tell employers: most do not know it."
+url = "https://www.canada.ca/en/immigration-refugees-citizenship/corporate/publications-manuals/operational-bulletins-manuals/temporary-residents/foreign-workers/exemption-codes/canadian-interests-significant-benefit-mobilite-francophone-r205-exemption-code-c16.html"
+
+[[path]]
+country = "Canada"
+name = "LMIA work permit"
+sponsor = "register:ca"
+occupation = "any"
+note = "The employer must obtain a positive LMIA. Employers that already have one for surveying or geomatics occupations know the process. In Québec a CAQ is needed as well."
+url = "https://www.canada.ca/en/employment-social-development/services/foreign-workers.html"
+
+[[path]]
+country = "United Arab Emirates"
+name = "Employer-sponsored work permit"
+sponsor = "default"
+occupation = "any"
+note = "Work and residence permits are arranged by the employer as a matter of course."
+
+[[path]]
+country = "Saudi Arabia"
+name = "Employer-sponsored work visa"
+sponsor = "default"
+occupation = "any"
+note = "Work visas are arranged by the employer as a matter of course (degree attestation is usually required)."
+
+[[path]]
+country = "Qatar"
+name = "Employer-sponsored work permit"
+sponsor = "default"
+occupation = "any"
+note = "Work and residence permits are arranged by the employer as a matter of course."
+
+[[path]]
+country = "Kuwait"
+name = "Employer-sponsored work permit"
+sponsor = "default"
+occupation = "any"
+note = "Work permits are arranged by the employer as a matter of course."
+
+[[path]]
+country = "Oman"
+name = "Employer-sponsored work permit"
+sponsor = "default"
+occupation = "any"
+note = "Work permits are arranged by the employer as a matter of course."
+
+[[path]]
+country = "Bahrain"
+name = "Employer-sponsored work permit"
+sponsor = "default"
+occupation = "any"
+note = "Work permits are arranged by the employer as a matter of course."
+
+[[path]]
+country = "United States"
+name = "H-1B"
+sponsor = "employer"
+occupation = "graduate"
+hard = true
+note = "Annual lottery with registration in March and a start in October; a US$100,000 fee on new petitions for workers abroad was introduced in September 2025. Realistic mainly through an employer's foreign office or a transfer."
+url = "https://www.uscis.gov/working-in-the-united-states/h-1b-specialty-occupations"
+
+[[path]]
+country = "Switzerland"
+name = "Non-EU work permit (quota)"
+sponsor = "employer"
+occupation = "graduate"
+hard = true
+note = "Non-EU hires fall under small annual quotas and the employer must show that no Swiss or EU candidate was found."
+url = "https://www.sem.admin.ch/sem/en/home/themen/arbeit/nicht-eu_efta-angehoerige.html"

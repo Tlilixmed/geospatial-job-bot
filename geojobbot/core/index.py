@@ -7,6 +7,7 @@ codes, scores, tiers, AI notes, sponsor hits, the run status and even the help t
 """
 from __future__ import annotations
 
+from ..insights import visa
 from ..utils.dates import to_iso
 from ..utils.location import ParsedLocation
 from ..utils.text import job_code
@@ -38,6 +39,10 @@ def _entry(cid: str, rec: dict) -> dict:
     if rec.get("sponsor"):
         entry["sp"] = [{k: h.get(k) for k in ("label", "icon", "country", "name", "match", "positions", "occupations", "geo")}
                        for h in rec["sponsor"][:3]]
+    if rec.get("visa"):
+        entry["visa"] = {"v": rec["visa"].get("verdict"), "b": visa.badge(rec)}
+        if rec.get("tier") in ("high", "possible"):
+            entry["visa"]["d"] = visa.detail_lines(rec)
     if (rec.get("learned") or {}).get("adj"):
         entry["learned"] = rec["learned"]
     return entry
@@ -65,5 +70,6 @@ def build_index(state: dict, settings, report: dict, now, help_text: str, views:
                 "failed": [s["name"] for s in report.get("sources") or [] if s.get("status") == "FAILED"],
                 "jobs_in_state": len(state.get("jobs", {}))},
         "signals": ((state.get("signals") or {}).get("items") or [])[:20],
+        "visa_cards": visa.cards() if getattr(settings, "visa_paths", False) else {},
         "jobs": rows[:MAX_JOBS],
     }

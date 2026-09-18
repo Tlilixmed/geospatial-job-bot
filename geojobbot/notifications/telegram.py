@@ -16,6 +16,7 @@ import requests
 from ..models import TIER_HIGH
 from ..utils.dates import parse_datetime
 from ..insights.sponsors import sponsor_badge
+from ..insights.visa import badge as visa_badge
 from ..utils.location import ParsedLocation
 from ..utils.text import job_code, normalize_company, normalize_title
 
@@ -91,6 +92,9 @@ def _digest_entry(rec: dict, index: int, same: list[dict] | None = None) -> str:
         lines.append(f"   💡 {_esc(review['summary'])}")
     if review.get("concerns"):
         lines.append(f"   ⚠️ {_esc(review['concerns'])}")
+    route = visa_badge(rec)
+    if route:
+        lines.append(f"   {_esc(route)}")
     if tail:
         lines.append("   " + " · ".join(tail))
     return "\n".join(lines)

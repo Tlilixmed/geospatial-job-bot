@@ -205,6 +205,27 @@ test("views formatted by Python are sent as they are; a missing view goes to Pyt
   assert.equal(older.dispatched.length, 1);
 });
 
+test("visa routes: badge on the job, details in /why, list, country card", async () => {
+  const index = makeIndex([job("gh:acme:1", { visa: { v: "strong", b: "🟢 Visa route looks open — Skilled Worker visa",
+    d: ["🟢 <b>Visa route: Skilled Worker visa</b> — looks open", "   ✓ salary £45,000 ≥ £41,700/year"] } })]);
+  index.views = { visa: "🛂 <b>Visa routes of current matches</b>" };
+  index.visa_cards = { uk: "🛂 <b>Work-visa routes: United Kingdom</b>" };
+  const h = harness({ index });
+  await h.say("/jobs");
+  assert.match(h.sent[0].text, /🟢 Visa route looks open — Skilled Worker visa/);
+  await h.say("/why 419b7");
+  assert.match(h.sent[1].text, /✓ salary £45,000 ≥ £41,700\/year/);
+  await h.say("visa");
+  assert.match(h.sent[2].text, /Visa routes of current matches/);
+  await h.say("/visa UK");
+  assert.match(h.sent[3].text, /Work-visa routes: United Kingdom/);
+  await h.say("/visa 419b7");
+  assert.match(h.sent[4].text, /^🟢 <b>Visa route: Skilled Worker visa/);
+  assert.equal(h.dispatched.length, 0);
+  await h.say("/visa atlantis");
+  assert.equal(h.dispatched.length, 1);
+});
+
 test("strangers and wrong secrets are refused", async () => {
   const h = harness({ index: makeIndex([job("gh:acme:1")]) });
   assert.equal((await h.say("/jobs", { secret: "nope" })).status, 403);

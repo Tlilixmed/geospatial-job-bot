@@ -27,10 +27,10 @@
  */
 const COMMANDS = ["jobs", "high", "range", "search", "why", "applied", "hide", "unhide", "mute", "unmute", "muted",
   "threshold", "locations", "interns", "pause", "resume", "status", "weekly", "run", "help", "pitch", "ai", "sponsors",
-  "outcome", "possible", "radar", "skills", "signals", "learning", "sources"];
+  "outcome", "possible", "radar", "skills", "signals", "learning", "sources", "visa"];
 const HINT_RE = new RegExp(`^/(${COMMANDS.join("|")})(\\s[^\\n]{0,100})?$`);
 const FAST_READ = new Set(["jobs", "top", "high", "range", "search", "why", "ai", "sponsors", "sponsor", "status", "help",
-  "start", "muted", "signals", "sources", "yield"]);
+  "start", "muted", "signals", "sources", "yield", "visa"]);
 const VIEW_ALIASES = { yield: "sources" };  // replies Python formatted in advance: index.views[command]
 const FAST_WRITE = new Set(["applied", "outcome", "hide", "unhide", "mute", "unmute", "threshold", "locations", "interns",
   "possible", "pause", "resume"]);
@@ -51,6 +51,7 @@ Commands:
 /pitch CODE          write a cover letter / application note for that job
 /ai [n]              show the AI's opinion (fit, summary, concerns) of the current matches
 /sponsors [n]        jobs from employers on official visa-sponsor registers, or that offer sponsorship
+/visa [CODE|COUNTRY] is a work visa realistic: salary minimum, licence, occupation; or a country's visa rules
 /applied CODE        the user applied to that job        /applied   list applications
 /outcome CODE STATUS what happened to an application: interview, offer, rejected, withdrawn or ghosted
 /hide CODE           the user is not interested          /unhide CODE   bring it back
@@ -193,6 +194,7 @@ function entry(same, number) {
   const lines = [head, `   ${facts.join(" · ")}`];
   if (job.ai && job.ai.summary) lines.push(`   💡 ${esc(job.ai.summary)}`);
   if (job.ai && job.ai.concerns) lines.push(`   ⚠️ ${esc(job.ai.concerns)}`);
+  if (job.visa && job.visa.b) lines.push(`   ${esc(job.visa.b)}`);
   const tail = [];
   const skills = [...new Set((job.sk || []).map((s) => s.split(" (")[0]))].slice(0, 4);
   if (skills.length) tail.push(esc(skills.join(", ")));
@@ -247,6 +249,7 @@ function viewWhy(index, arg) {
     if (i === 0) lines.push("");
     lines.push(note);
   });
+  if (job.visa && (job.visa.d || []).length) lines.push("", ...job.visa.d);  // formatted by Python (HTML)
   if (job.ai) {
     lines.push("", `<b>AI second opinion</b> · fit ${job.ai.fit}/10`);
     if (job.ai.summary) lines.push(`💡 ${esc(job.ai.summary)}`);
@@ -476,6 +479,13 @@ async function answerFast(env, command, arg, echo) {
   else if (command === "status") messages = viewStatus(index, prefs);
   else if (command === "muted") messages = [`Muted: ${esc(prefs.muted.join(", ")) || "nothing"}`];
   else if (command === "signals") messages = viewSignals(index, arg);
+  else if (command === "visa" && arg.trim() && !/^\d+$/.test(arg.trim())) {
+    const job = findByCode(index, arg);
+    const card = (index.visa_cards || {})[fold(arg)];
+    if (job && job.visa && (job.visa.d || []).length) messages = [job.visa.d.join("\n")];
+    else if (card) messages = [card];
+    else return false;  // Python knows more spellings and explains the usage
+  }
   else if ((index.views || {})[VIEW_ALIASES[command] || command]) messages = [index.views[VIEW_ALIASES[command] || command]];
   else if (command === "applied" && !arg.trim()) messages = await viewApplied(prefs);
   else messages = await mutate(env, index, prefs, command, arg.trim());
@@ -494,9 +504,10 @@ function shortcut(text, index) {
   if ((m = t.match(/^(?:top|best|jobs?|offers?|offres?|latest|show jobs|top jobs|best jobs)\s*(\d{1,2})?$/))) return ["jobs", m[1] || ""];
   if ((m = t.match(/^(?:high|hautes?|high matches)\s*(\d{1,2})?$/))) return ["high", m[1] || ""];
   if (/^(ai|ia|ai summary|second opinion)$/.test(t)) return ["ai", ""];
-  if (/^(sponsors?|visa|visas)$/.test(t)) return ["sponsors", ""];
+  if (/^sponsors?$/.test(t)) return ["sponsors", ""];
   if (/^(signals?|tenders?)$/.test(t)) return ["signals", ""];
   if (/^(sources?|yield)$/.test(t)) return ["sources", ""];
+  if (/^visas?$/.test(t)) return ["visa", ""];
   if (/^[0-9a-f]{5}$/.test(t) && index && index.jobs.some((j) => j.code === t)) return ["why", t];
   return null;
 }

@@ -17,7 +17,7 @@ from ..ai.review import write_pitch
 from ..core.descriptions import DescriptionStore
 from ..core.jobs import APPLICATION_STATUSES, alert_block_reason, is_listed
 from ..core.prefs import load_prefs, save_prefs
-from ..insights import radar, signals, yields
+from ..insights import radar, signals, visa, yields
 from ..insights.learning import MIN_LABELS, build_model, describe_model, snapshot
 from ..matching.profile import TECH_SKILLS
 from ..models import TIER_HIGH, TIER_POSSIBLE
@@ -37,6 +37,7 @@ HELP = """🗺️ <b>Geospatial job bot — commands</b>
 /search words — search stored jobs (plain text works too)
 /why code — why a job matched, score breakdown and the AI second opinion
 /sponsors [n] — matches from employers on official visa-sponsor registers (UK, Canada, NL)
+/visa — is a work visa realistic? licence, legal salary minimum, occupation · /visa code · /visa france
 /ai [n] — what the AI thinks of current matches: fit /10, summary, concerns
 /pitch code — AI drafts a short application note for that job
 
@@ -76,7 +77,7 @@ I reply with how I understood you, e.g. ↪ /jobs 5."""
 
 class CommandProcessor:
     def __init__(self, settings, manager, notifier, *, state: dict | None = None, session=None, now=None,
-                 in_scraper_run: bool = False, ai=None):
+                 in_scraper_run: bool = False, ai=None, prefs: dict | None = None):
         self.settings = settings
         self.manager = manager
         self.notifier = notifier
@@ -85,7 +86,7 @@ class CommandProcessor:
         self.in_scraper_run = in_scraper_run
         self.ai = ai
         self._state = state
-        self.prefs = load_prefs(manager)
+        self.prefs = prefs if prefs is not None else load_prefs(manager)
         self._dirty = False
 
     # ------------------------------------------------------------------ telegram plumbing
@@ -276,6 +277,7 @@ class CommandProcessor:
             "/sponsors": self.cmd_sponsors, "/sponsor": self.cmd_sponsors, "/outcome": self.cmd_outcome,
             "/learning": self.cmd_learning, "/radar": self.cmd_radar, "/skills": self.cmd_skills,
             "/signals": self.cmd_signals, "/sources": self.cmd_sources, "/yield": self.cmd_sources,
+            "/visa": self.cmd_visa,
         }
 
     # ------------------------------------------------------------------ find
@@ -354,6 +356,9 @@ class CommandProcessor:
             if hit.get("match") == "variant":
                 note += " (name variant)"
             lines += ([""] if hit is (rec.get("sponsor") or [None])[0] else []) + [note]
+        route = visa.detail_lines(rec, self.now)
+        if route:
+            lines += [""] + route
         review = rec.get("ai") or {}
         if review:
             lines += ["", f"<b>AI second opinion</b> · fit {review.get('fit', '?')}/10"]
@@ -582,6 +587,23 @@ class CommandProcessor:
         items = (self.state.get("signals") or {}).get("items") or []
         return [signals.format_signals(items, heading="Recent market signals", limit=self._number(arg, 10, 1, 20))
                 or "No procurement signals stored yet. They are checked once a day during scraper runs."]
+
+    def cmd_visa(self, arg: str) -> list[str]:
+        """/visa: current matches by how open the visa route looks · /visa code · /visa country"""
+        arg = arg.strip()
+        if arg:
+            rec = self._by_code(arg)
+            if rec is not None:
+                return ["\n".join(visa.detail_lines(rec, self.now))
+                        or "No visa question for that job: it is in your home country, or I have no rules for its country."]
+            country = visa.find_country(arg)
+            if country:
+                return [visa.country_card(country)]
+            if not arg.isdigit():
+                return ["Usage: /visa · /visa code · /visa country (uk, canada, france, germany, netherlands, ireland, australia, uae…)"]
+        text = visa.format_list(self._current_matches(), lambda rec: job_code(rec.get("canonical_id")),
+                                limit=self._number(arg, 12, 1, 25))
+        return [text]
 
     def cmd_sources(self, arg: str) -> list[str]:
         return [yields.format_yield(yields.compute(self.state, self.prefs, self.now))]

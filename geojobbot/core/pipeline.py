@@ -20,7 +20,7 @@ from datetime import timedelta
 
 from ..ai.client import WorkersAI
 from ..ai.review import review_job
-from ..insights import radar, signals, yields
+from ..insights import radar, signals, visa, yields
 from ..insights.learning import apply_learning, build_model
 from ..insights.sponsors import SponsorRegistry, annotate_record
 from ..models import SourceResult
@@ -247,6 +247,7 @@ class Pipeline:
         counts.update(self._sponsors(manager, ctx, outcome, state, writes_allowed, report))
         counts.update(self._learning(manager, outcome, state))
         counts.update(self._ai_review(outcome, state))
+        counts.update(self._visa(state))
 
         relevant_by_board = Counter()
         for fj, result, _ in outcome.evaluated:
@@ -441,6 +442,20 @@ class Pipeline:
                 counts["tier_rejected"] += 1
         return counts
 
+    def _visa(self, state: dict) -> Counter:
+        """Compare every accepted job with its country's work-visa route (pure computation, never fatal)."""
+        counts = Counter()
+        if not self.settings.visa_paths:
+            return counts
+        try:
+            rules = visa.load_rules()
+            for rec in state["jobs"].values():
+                if rec.get("tier") in ("high", "possible") and visa.annotate(rec, self.settings, rules):
+                    counts[f"visa_{rec['visa']['verdict']}"] += 1
+        except Exception as exc:
+            log.warning("visa routes skipped: %s", type(exc).__name__)
+        return counts
+
     def _learning(self, manager: StateManager, outcome, state: dict) -> Counter:
         """Nudge scores by what the user applied to and hid (transparent, small, optional)."""
         counts = Counter()
@@ -561,7 +576,10 @@ class Pipeline:
         """Replies formatted here so the Worker can send them instantly ({command: html})."""
         views = {}
         try:
-            views["sources"] = yields.format_yield(yields.compute(state, load_prefs(manager), self.now))
+            prefs = load_prefs(manager)
+            views["sources"] = yields.format_yield(yields.compute(state, prefs, self.now))
+            processor = CommandProcessor(self.settings, manager, None, state=state, now=self.now, prefs=prefs)
+            views["visa"] = processor.cmd_visa("")[0]
         except Exception as exc:
             log.warning("views not built: %s", type(exc).__name__)
         return views
