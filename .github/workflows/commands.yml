@@ -13,8 +13,16 @@ on:
     - cron: "17 * * * *"
   workflow_dispatch:
     inputs:
+      inbox:
+        description: "true = read the message(s) the Cloudflare Worker left in R2 under inbox/ (private hand-over)"
+        required: false
+        default: ""
       text:
-        description: "Message to execute (sent by the Cloudflare Worker); empty = poll Telegram"
+        description: "Message to execute when the Worker has no R2 binding (visible in the run on a public repo)"
+        required: false
+        default: ""
+      hint:
+        description: "Optional AI reading of the message, supplied by the Worker"
         required: false
         default: ""
 
@@ -48,7 +56,10 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           PREFERRED_LOCATIONS: ${{ vars.PREFERRED_LOCATIONS }}
-          COMMAND_TEXT: ${{ inputs.text }}   # passed through the environment, never interpolated into the shell
+          # passed through the environment, never interpolated into the shell
+          COMMAND_INBOX: ${{ inputs.inbox }}
+          COMMAND_TEXT: ${{ inputs.text }}
+          COMMAND_HINT: ${{ inputs.hint }}
           GITHUB_TOKEN: ${{ github.token }}
           REQUIRE_R2: "true"
         run: python -m geojobbot commands

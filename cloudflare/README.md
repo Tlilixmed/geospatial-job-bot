@@ -41,6 +41,27 @@ It should answer `{"ok":true,"result":true,"description":"Webhook was set"}`.
 GitHub repository → **Settings → Secrets and variables → Actions → Variables → New variable**:
 `TELEGRAM_WEBHOOK` = `true`. Scheduled polls are then skipped (skipped jobs bill nothing).
 
+## 6. Private hand-over through R2 (do this if the repository is public)
+On a public repository anyone can read a workflow run's inputs, so the text of your messages would be visible in
+the Actions tab. Bind the bot's bucket to the Worker and messages travel through your private bucket instead.
+
+Worker → **Settings → Bindings → Add → R2 bucket**
+- Variable name: `INBOX`
+- R2 bucket: the bot's bucket (the value of your `R2_BUCKET_NAME` secret)
+- Save, then **Deploy**.
+
+Nothing else changes: the Worker writes `inbox/<id>.json`, starts the workflow with `inbox=true`, and the workflow
+reads and deletes the file.
+
+## 7. Optional: AI understanding of free text (free tier)
+Worker → **Settings → Bindings → Add → Workers AI** → Variable name: `AI` → Save → **Deploy**.
+
+Workers AI includes a free daily allowance that is far more than a personal bot uses. The bot's own rules still
+decide first; the AI reading is used only when the rules see nothing but a search, it must be one of the known
+commands (and refer to a job code that exists), and the reply marks it: `↪ /resume · AI`.
+
+After changing `cloudflare/worker.js` in the repository, paste the new version into the Worker (**Edit code → Deploy**).
+
 ## Test
 Send `/status` to the bot. You should see "On it" at once and the status about a minute later.
 If "On it" never arrives, check the Worker's **Logs**; if it arrives with a GitHub error, the token in

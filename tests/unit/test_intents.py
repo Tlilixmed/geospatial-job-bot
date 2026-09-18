@@ -109,3 +109,34 @@ def test_plain_language_runs_the_command_and_echoes_the_interpretation():
     assert not slash.startswith("↪")  # explicit commands are not echoed
     prefs = load_prefs(manager)
     assert "a:1" in prefs["applied"] and prefs["muted"] == ["acme"] and prefs["high_threshold"] == 75
+
+
+def test_ai_hint_only_fills_in_when_rules_fall_back_and_is_validated():
+    jobs = [job("a:1", "GIS Analyst")]
+    code = job_code("a:1")
+    proc, replies, _, manager = setup([], jobs)
+    # rules understand this one: the (wrong) hint is ignored
+    proc.run_text("pause alerts", "/run")
+    assert replies.sent[-1].startswith("↪ <i>/pause</i>") and load_prefs(manager)["paused"] is True
+    # rules fall back to a search: a valid hint takes over and is labelled
+    proc.run_text("alright let the offers flow to me once more", "/resume")
+    assert replies.sent[-1].startswith("↪ <i>/resume · AI</i>") and load_prefs(manager)["paused"] is False
+    proc.run_text("that first one looks perfect, I sent my CV", f"/applied {code}")
+    assert "· AI" in replies.sent[-1] and "a:1" in load_prefs(manager)["applied"]
+    # invalid hints are discarded: unknown command, unknown job code, multi-line or oversized output
+    for bad in ("/delete everything", "/hide zzzzz", "/why 00000", "/mute x\n/pause", "rm -rf", "/search " + "x" * 200):
+        proc.run_text("something unusual entirely", bad)
+        assert "· AI" not in replies.sent[-1] and replies.sent[-1].startswith("↪ <i>/search")
+
+
+def test_inbox_messages_are_processed_in_order_and_deleted():
+    import json
+    proc, replies, session, manager = setup([], [job("a:1", "GIS Analyst")])
+    store = manager.store
+    store.put_bytes("inbox/000000000002.json", json.dumps({"text": "resume", "hint": ""}).encode())
+    store.put_bytes("inbox/000000000001.json", json.dumps({"text": "/pause"}).encode())
+    store.put_bytes("inbox/000000000003.json", b"not json")
+    counts = proc.run_inbox()
+    assert counts["commands"] == 2 and counts["unreadable"] == 1 and session.calls == []
+    assert "paused" in replies.sent[0] and "resumed" in replies.sent[1]   # oldest first: pause, then resume
+    assert load_prefs(manager)["paused"] is False and store.list_keys("inbox/") == []

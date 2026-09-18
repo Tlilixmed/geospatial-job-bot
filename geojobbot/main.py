@@ -256,8 +256,11 @@ def cmd_commands(settings, args) -> int:
                                     delay_s=settings.telegram_delay_s)
         processor = CommandProcessor(settings, manager, notifier)
         text = (getattr(args, "text", None) or os.environ.get("COMMAND_TEXT") or "").strip()
-        if text:  # handed over by the Cloudflare Worker webhook, which has already checked the chat id
-            counts = processor.run_text(text)
+        inbox = (os.environ.get("COMMAND_INBOX") or "").strip().lower() in ("1", "true", "yes")
+        if inbox:  # the Worker left the message(s) in the private bucket (nothing sensitive in workflow inputs)
+            counts = processor.run_inbox()
+        elif text:  # handed over by the Cloudflare Worker webhook, which has already checked the chat id
+            counts = processor.run_text(text, (os.environ.get("COMMAND_HINT") or "").strip())
         else:
             try:
                 counts = processor.run()

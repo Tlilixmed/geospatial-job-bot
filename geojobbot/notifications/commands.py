@@ -114,11 +114,37 @@ class CommandProcessor:
             self._api("getUpdates", offset=int(last) + 1, limit=1, timeout=0)
         return counts
 
-    def run_text(self, text: str) -> Counter:
+    INBOX_SUFFIX = "inbox/"
+
+    def run_inbox(self) -> Counter:
+        """Execute the messages the Cloudflare Worker left in R2 (inbox/<update id>.json), oldest first.
+
+        On a public repository workflow inputs are world-readable, so the Worker hands messages over
+        through the private bucket instead. Each object is deleted once handled.
+        """
+        import json
+
+        counts = Counter()
+        store = self.manager.store
+        for key in sorted(store.list_keys(self.manager.key(self.INBOX_SUFFIX))):
+            data = store.get_bytes(key)
+            store.delete_keys([key])
+            try:
+                item = json.loads(data.decode("utf-8")) if data else {}
+            except (ValueError, UnicodeDecodeError):
+                counts["unreadable"] += 1
+                continue
+            text = str(item.get("text") or "").strip()
+            if text:
+                counts += self.run_text(text, str(item.get("hint") or ""))
+        return counts
+
+    def run_text(self, text: str, hint: str = "") -> Counter:
         """Execute one message handed over directly (the Cloudflare Worker webhook path, where Telegram
-        no longer serves getUpdates). The caller has already verified the chat."""
+        no longer serves getUpdates). The caller has already verified the chat. `hint` is the Worker's
+        optional AI reading of a free-text message."""
         try:
-            replies = self.handle(text.strip())
+            replies = self.handle(text.strip(), hint)
         except Exception as exc:
             log.exception("command failed")
             replies = [f"⚠️ That command failed ({type(exc).__name__}). /help lists what I understand."]
@@ -172,30 +198,56 @@ class CommandProcessor:
             return default
 
     # ------------------------------------------------------------------ dispatch
-    def handle(self, text: str) -> list[str]:
+    NEEDS_CODE = {"why", "hide", "unhide"}
+    FALLBACK_INTENTS = {"search", "help"}  # what the rules answer when they did not recognise an instruction
+
+    def _accept_hint(self, hint: str) -> tuple[str, str] | None:
+        """Validate the Worker's AI reading: a known command, a sane argument, an existing job code."""
+        hint = (hint or "").strip()
+        if not hint.startswith("/") or len(hint) > 120 or "\n" in hint:
+            return None
+        command, _, arg = hint.partition(" ")
+        command, arg = command[1:].split("@")[0].lower(), arg.strip()
+        if "/" + command not in self._handlers() or command in ("start", "top"):
+            return None
+        if command in self.NEEDS_CODE or (command == "applied" and arg):
+            if self._by_code(arg) is None:
+                return None
+        return command, arg
+
+    def handle(self, text: str, hint: str = "") -> list[str]:
         if text.startswith("/"):
             command, _, arg = text.partition(" ")
             return self._dispatch(command.split("@")[0].lower(), arg.strip())
-        # plain language: work out the intent, run it, and say how the sentence was understood
+        # plain language: the deterministic rules decide; when they only fall back to a search, a validated
+        # AI reading (if the Worker supplied one) may replace it. Either way the reply says what was understood.
         command, arg = interpret(text, lambda token: self._by_code(token) is not None)
+        source = ""
+        if command in self.FALLBACK_INTENTS:
+            accepted = self._accept_hint(hint)
+            if accepted and accepted != (command, arg):
+                (command, arg), source = accepted, " · AI"
         replies = self._dispatch("/" + command, arg)
-        echo = f"↪ <i>/{command}{' ' + _esc(arg) if arg else ''}</i>"
+        echo = f"↪ <i>/{command}{' ' + _esc(arg) if arg else ''}{source}</i>"
         if replies and len(replies[0]) + len(echo) + 2 <= MAX_MESSAGE:
             return ["\n\n".join((echo, replies[0]))] + replies[1:]
         return [echo] + replies
 
     def _dispatch(self, command: str, arg: str) -> list[str]:
-        handler = {
+        handler = self._handlers().get(command)
+        if handler is None:
+            return [f"I don't know <code>{_esc(command)}</code>. Send /help for the list."]
+        return handler(arg)
+
+    def _handlers(self) -> dict:
+        return {
             "/start": self.cmd_help, "/help": self.cmd_help, "/jobs": self.cmd_jobs, "/top": self.cmd_jobs,
             "/high": self.cmd_high, "/search": self.cmd_search, "/why": self.cmd_why, "/applied": self.cmd_applied,
             "/hide": self.cmd_hide, "/unhide": self.cmd_unhide, "/mute": self.cmd_mute, "/unmute": self.cmd_unmute,
             "/muted": self.cmd_muted, "/threshold": self.cmd_threshold, "/locations": self.cmd_locations,
             "/interns": self.cmd_interns, "/pause": self.cmd_pause, "/resume": self.cmd_resume,
             "/status": self.cmd_status, "/run": self.cmd_run, "/weekly": self.cmd_weekly, "/range": self.cmd_range,
-        }.get(command)
-        if handler is None:
-            return [f"I don't know <code>{_esc(command)}</code>. Send /help for the list."]
-        return handler(arg)
+        }
 
     # ------------------------------------------------------------------ find
     def cmd_help(self, arg: str) -> list[str]:
