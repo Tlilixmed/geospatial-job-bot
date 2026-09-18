@@ -470,6 +470,7 @@ In a dry run, alerts are printed rather than sent and no state is written, unles
 
 ## 7. Operations guide
 
+- **Staying alive without commits.** GitHub disables scheduled workflows after 60 days without repository activity, without telling anyone. Every scraper run re-enables its own schedules through the API, and the Cloudflare Worker's hourly watchdog (`cloudflare/README.md`, step 9) restarts the scraper and tells you when no run has happened for 6 hours. Pushes that only touch documentation, tests or the Worker do not start a scraper run.
 - **Read the run summary** at the end of the job log or on the run's summary page. It shows per-source status, invalid configured sources, raw/unique/new/seen/updated counts, match tiers, alert results, R2 load/save status, HTTP retry/error counts and parser errors.
 - **Exit codes.**
   - `0` — normal. Individual source failures are reported, not fatal.
