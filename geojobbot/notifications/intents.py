@@ -229,6 +229,19 @@ def interpret(text: str, is_code: Callable[[str], bool] = lambda token: False) -
             _has(t, r"\b(stop|arrete\w*|suspend\w*|halt|hold)\b.*\b(alerts?|alertes?|notifications?|notifs?|messages?|sending|"
                     r"bot|envoi\w*|everything|tout)\b"):
         return "pause", ""
+    # watch list: "watch fugro", "follow esri closely", "surveille hexagon", "stop watching fugro", "who am i watching"
+    watch_words = {"watch", "watching", "follow", "following", "track", "surveille", "surveiller", "suis", "suivre"}
+    if not code and any(f in watch_words for f in fixed) and not _has(t, r"\b(jobs?|offers?|offres?|applications?)\b"):
+        target = _after(original, fixed, watch_words | {"unwatch", "stop"},
+                        {"the", "company", "employer", "entreprise", "closely", "on", "de", "la", "le", "am", "i", "who", "list"})
+        target = re.sub(r"\s+(closely|please|pls|svp|stp)$", "", target, flags=re.I)
+        if _has(t, r"\b(stop|unwatch|unfollow|no longer|ne plus|arrete\w*)\b"):
+            return "unwatch", target
+        return "watch", target
+    if _has(t, r"\b(unwatch|unfollow)\b"):
+        return "unwatch", _after(original, fixed, {"unwatch", "unfollow"}, {"the", "company"})
+    if _has(t, r"\b(prospects?|employers? (?:you )?(?:found|looked|went)|sponsoring employers?)\b"):
+        return "prospects", ""
     if _has(t, r"\b(unmuted?|reactive\w*)\b") or _has(t, r"\bshow\b.*\bagain\b"):
         return "unmute", _after(original, fixed, {"unmute", "unmuted", "show", "reactive", "reactiver"}, {"again"}).replace(" again", "")
     if _has(t, r"\b(muted|mutes)\b") or _has(t, r"\bwhat\b.*\bmute"):

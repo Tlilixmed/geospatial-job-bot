@@ -226,6 +226,17 @@ test("visa routes: badge on the job, details in /why, list, country card", async
   assert.equal(h.dispatched.length, 1);
 });
 
+test("saving preferences keeps keys the Worker does not know", async () => {
+  const h = harness({ index: makeIndex([job("gh:acme:1")]), prefs: { watch: [{ name: "Fugro" }], future_key: 7 } });
+  await h.say("/pause");
+  const prefs = h.stored("state/prefs.json");
+  assert.deepEqual(prefs.watch, [{ name: "Fugro" }]);
+  assert.equal(prefs.future_key, 7);
+  assert.equal(prefs.paused, true);
+  await h.say("/watch Hexagon");  // decided by Python
+  assert.equal(h.dispatched.length, 1);
+});
+
 test("strangers and wrong secrets are refused", async () => {
   const h = harness({ index: makeIndex([job("gh:acme:1")]) });
   assert.equal((await h.say("/jobs", { secret: "nope" })).status, 403);

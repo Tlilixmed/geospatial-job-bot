@@ -14,7 +14,7 @@ from datetime import timedelta
 from ..matching.matcher import MatchResult, score_job
 from ..models import TIER_HIGH, TIER_POSSIBLE, TIER_REJECTED, JobRecord
 from ..utils.dates import age_hours, parse_datetime, to_iso
-from ..utils.text import fold, normalize_title
+from ..utils.text import fold, normalize_company, normalize_title
 from .fusion import FusedJob
 
 CHANGE_FIELDS = ("title", "location_raw", "salary", "remote", "employment_type", "description_hash")
@@ -195,6 +195,15 @@ def due_follow_ups(prefs: dict, reminded: dict, now) -> list[tuple[str, dict, in
     return due
 
 
+def is_watched(rec: dict, settings) -> bool:
+    """Is the job's employer on the user's watch list (whole-word match on normalised names)?"""
+    company = f" {normalize_company(rec.get('company'))} "
+    if not company.strip():
+        return False
+    names = (normalize_company(w.get("name")) for w in getattr(settings, "watch_list", None) or [])
+    return any(name and f" {name} " in company for name in names)
+
+
 def select_alerts(state: dict, seen_ids: set, settings, now) -> tuple[list[dict], Counter]:
     counts = Counter()
     candidates = []
@@ -203,7 +212,10 @@ def select_alerts(state: dict, seen_ids: set, settings, now) -> tuple[list[dict]
     muted = [fold(t) for t in (getattr(settings, "muted_terms", None) or []) if t and t.strip()]
     for cid in seen_ids:
         rec = state["jobs"].get(cid)
-        if not rec or rec.get("tier") not in accepted:
+        if not rec:
+            continue
+        rec["watched"] = is_watched(rec, settings)
+        if rec.get("tier") not in accepted and not (rec["watched"] and rec.get("tier") == TIER_POSSIBLE):
             continue
         if cid in hidden:
             counts["hidden"] += 1

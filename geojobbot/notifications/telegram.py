@@ -79,6 +79,8 @@ def _digest_entry(rec: dict, index: int, same: list[dict] | None = None) -> str:
     badge = sponsor_badge(rec)
     if badge:
         facts.append(_esc(badge))
+    if rec.get("watched"):
+        facts.append("👀 watched employer")
     skills = [s.split(" (")[0] for s in rec.get("matched_skills") or []]
     tail = []
     if skills:

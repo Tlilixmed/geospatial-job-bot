@@ -22,6 +22,7 @@ from ..ai.client import WorkersAI
 from ..ai.review import review_job
 from ..insights import radar, signals, visa, yields
 from ..insights.learning import apply_learning, build_model
+from ..insights.prospects import ProspectBackend
 from ..insights.sponsors import SponsorRegistry, annotate_record
 from ..models import SourceResult
 from ..notifications.commands import HELP, CommandProcessor
@@ -74,7 +75,8 @@ def build_store(settings) -> ObjectStore:
     return LocalStore(settings.local_state_dir)
 
 
-def build_backends(settings) -> list[Backend]:
+def build_backends(settings, sponsor_data=None) -> list[Backend]:
+    """`sponsor_data`: callable returning the sponsor registers' data, for the employer prospector."""
     sources = settings.sources or {}
     ats_cfg = sources.get("ats", {}) or {}
     adapters = all_adapters()
@@ -85,8 +87,11 @@ def build_backends(settings) -> list[Backend]:
             from ..scrapers.ats.detect import parse_workday_url
             slugs = [ref.slug for ref in (parse_workday_url(u) for u in slugs) if ref]
         backends.append(ATSBackend(adapter, slugs))
+    watched_pages = [{"name": w["name"], "url": w["url"], "geospatial": True}
+                     for w in getattr(settings, "watch_list", None) or [] if w.get("url")]
     backends += [
-        CareerSitesBackend(sources.get("career_sites", []) or []),
+        ProspectBackend(adapters, sponsor_data, lambda: settings.watch_list),
+        CareerSitesBackend((sources.get("career_sites", []) or []) + watched_pages),
         SearxngBackend((sources.get("search", {}) or {}).get("extra_queries", [])),
         DuckDuckGoBackend((sources.get("search", {}) or {}).get("extra_queries", [])),
         CommonCrawlBackend(),
@@ -128,6 +133,7 @@ class Pipeline:
         self.ai = ai
         self.sponsors = sponsors
         self.descriptions: DescriptionStore | None = None
+        self._registry_cache: SponsorRegistry | None = None
         self.now = now or utcnow()
         self.sleep = sleep
         suffix = os.environ.get("GITHUB_RUN_ID") or secrets.token_hex(3)
@@ -221,7 +227,8 @@ class Pipeline:
         registry = BoardRegistry(state, self.now, hot_days=settings.hot_board_days)
         ctx = RunContext(settings, client, state, run_id=self.run_id, now=self.now, registry=registry,
                          match_config=settings.match_config())
-        backends = self.backends if self.backends is not None else build_backends(settings)
+        backends = self.backends if self.backends is not None else build_backends(
+            settings, sponsor_data=lambda: self._sponsor_registry(manager).data if settings.sponsor_registers else None)
 
         raws = []
         for phase in ("discovery", "extraction"):
@@ -364,6 +371,12 @@ class Pipeline:
             log.warning("descriptions not kept: %s", type(exc).__name__)
             return None
 
+    def _sponsor_registry(self, manager: StateManager) -> SponsorRegistry:
+        """Loaded once per run: the prospector reads it during discovery, the sponsor lookup after scoring."""
+        if self._registry_cache is None:
+            self._registry_cache = SponsorRegistry.load(manager)
+        return self._registry_cache
+
     def _sponsors(self, manager: StateManager, ctx: RunContext, outcome, state: dict, writes_allowed: bool,
                   report: dict) -> Counter:
         """Look every accepted employer up in the official sponsor registers (refreshed weekly, never fatal)."""
@@ -371,7 +384,7 @@ class Pipeline:
         if not self.settings.sponsor_registers and self.sponsors is None:
             return counts
         try:
-            registry = self.sponsors if self.sponsors is not None else SponsorRegistry.load(manager)
+            registry = self.sponsors if self.sponsors is not None else self._sponsor_registry(manager)
             if self.sponsors is None and registry.stale(self.now) and writes_allowed and not ctx.out_of_time(420):
                 report["sponsor_registers"] = registry.refresh(ctx)
                 registry.save(manager)
@@ -580,6 +593,7 @@ class Pipeline:
             views["sources"] = yields.format_yield(yields.compute(state, prefs, self.now))
             processor = CommandProcessor(self.settings, manager, None, state=state, now=self.now, prefs=prefs)
             views["visa"] = processor.cmd_visa("")[0]
+            views["prospects"] = processor.cmd_prospects("")[0]
         except Exception as exc:
             log.warning("views not built: %s", type(exc).__name__)
         return views

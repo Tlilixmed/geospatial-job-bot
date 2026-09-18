@@ -98,6 +98,7 @@ class Settings:
     muted_terms: list[str] = field(default_factory=list)
     hidden_ids: list[str] = field(default_factory=list)
     alerts_paused: bool = False
+    watch_list: list[dict] = field(default_factory=list)  # /watch: [{"name", "url", "at"}] from the stored preferences
     exclude_work_auth_required: bool = True  # drop postings needing existing authorisation / no sponsorship
     home_countries: list[str] = field(default_factory=lambda: ["Tunisia"])
 
@@ -152,6 +153,7 @@ class Settings:
     monthly_radar: bool = True
     market_signals: bool = True  # World Bank procurement: geospatial awards, consultancies, tenders
     sponsor_registers: bool = True  # UK / Canada / Netherlands official sponsor registers, refreshed weekly
+    prospects_per_run: int = 10  # employers looked up per run on the public ATS APIs (insights/prospects.py); 0 = off
     visa_paths: bool = True  # per-job check against config/visa_paths.toml (licence, salary minimum, occupation)
     my_languages: list[str] = field(default_factory=lambda: ["English", "French", "Arabic"])  # opens language-based routes
     # JSearch (RapidAPI): "query@country" entries rotated across runs, JSEARCH_REQUESTS_PER_RUN per run.
@@ -295,6 +297,7 @@ def load_settings() -> Settings:
     s.weekly_summary = env_bool("WEEKLY_SUMMARY", s.weekly_summary)
     s.sponsor_registers = env_bool("SPONSOR_REGISTERS", s.sponsor_registers)
     s.visa_paths = env_bool("VISA_PATHS", s.visa_paths)
+    s.prospects_per_run = max(0, env_int("PROSPECTS_PER_RUN", s.prospects_per_run))
     s.my_languages = env_list("MY_LANGUAGES", s.my_languages)
     s.my_skills = env_list("MY_SKILLS", s.my_skills)
     s.monthly_radar = env_bool("MONTHLY_RADAR", s.monthly_radar)

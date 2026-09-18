@@ -25,7 +25,7 @@ def default_prefs() -> dict:
         "learning": None,            # False switches learning off
         "learning_since": None,      # actions before this moment are ignored (/learning reset)
         "my_skills": None,           # None = MY_SKILLS / the built-in list from the CV
-     # None = environment default; True also alerts on Possible matches
+        "watch": [],                 # employers to follow closely: [{"name", "url", "at"}]
     }
 
 
@@ -57,3 +57,4 @@ def apply_prefs(settings, prefs: dict) -> None:
     settings.muted_terms = list(prefs.get("muted") or [])
     settings.hidden_ids = list(prefs.get("hidden") or []) + list((prefs.get("applied") or {}).keys())
     settings.alerts_paused = bool(prefs.get("paused"))
+    settings.watch_list = [w for w in prefs.get("watch") or [] if isinstance(w, dict) and w.get("name")]

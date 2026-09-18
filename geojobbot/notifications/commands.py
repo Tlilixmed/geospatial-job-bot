@@ -17,7 +17,7 @@ from ..ai.review import write_pitch
 from ..core.descriptions import DescriptionStore
 from ..core.jobs import APPLICATION_STATUSES, alert_block_reason, is_listed
 from ..core.prefs import load_prefs, save_prefs
-from ..insights import radar, signals, visa, yields
+from ..insights import prospects, radar, signals, visa, yields
 from ..insights.learning import MIN_LABELS, build_model, describe_model, snapshot
 from ..matching.profile import TECH_SKILLS
 from ..models import TIER_HIGH, TIER_POSSIBLE
@@ -46,6 +46,7 @@ HELP = """🗺️ <b>Geospatial job bot — commands</b>
 /applied — your applications and their status
 /outcome code interview|offer|rejected|withdrawn|ghosted — record what happened
 /hide code · /unhide code — dismiss or restore a job
+/watch company (or a careers-page URL) · /unwatch name · /watch — employers to follow closely
 
 <b>Tune</b>
 /mute text · /unmute text · /muted — silence a company or title word
@@ -60,6 +61,7 @@ HELP = """🗺️ <b>Geospatial job bot — commands</b>
 /radar — skills the market asks for vs yours · /skills edits your list
 /signals — firms winning geospatial contracts, consultancies, tenders
 /sources — which sources actually deliver, and which only make noise
+/prospects — employers proven to sponsor geomatics staff whose job boards I found
 /learning — what I learned from your applications and hidden jobs
 /weekly — applications and open matches summary
 /run — start a scraper run now
@@ -277,7 +279,8 @@ class CommandProcessor:
             "/sponsors": self.cmd_sponsors, "/sponsor": self.cmd_sponsors, "/outcome": self.cmd_outcome,
             "/learning": self.cmd_learning, "/radar": self.cmd_radar, "/skills": self.cmd_skills,
             "/signals": self.cmd_signals, "/sources": self.cmd_sources, "/yield": self.cmd_sources,
-            "/visa": self.cmd_visa,
+            "/visa": self.cmd_visa, "/watch": self.cmd_watch, "/unwatch": self.cmd_unwatch,
+            "/prospects": self.cmd_prospects,
         }
 
     # ------------------------------------------------------------------ find
@@ -604,6 +607,49 @@ class CommandProcessor:
         text = visa.format_list(self._current_matches(), lambda rec: job_code(rec.get("canonical_id")),
                                 limit=self._number(arg, 12, 1, 25))
         return [text]
+
+    def cmd_watch(self, arg: str) -> list[str]:
+        """/watch · /watch Fugro · /watch https://firm.example/careers [Firm name]"""
+        arg = arg.strip()
+        watch = self.prefs["watch"]
+        if not arg:
+            if not watch:
+                return ["You are not watching any employer. /watch Fugro — or a careers page: /watch https://firm.example/careers\n"
+                        "I look for the employer's job board, read it every day, and alert you on Possible matches from it too."]
+            lines = ["👀 <b>Employers you watch</b>"]
+            book = self.state.get("prospects") or {}
+            for item in watch:
+                found = (book.get(prospects.normalize_company(item["name"])) or {}).get("boards") or []
+                where = ", ".join(found) if found else (item.get("url") or "no readable job board found yet")
+                lines.append(f"• <b>{_esc(item['name'])}</b> — {_esc(where)}")
+            lines += ["", "/unwatch name removes one · /prospects shows every employer I went looking for"]
+            return ["\n".join(lines)]
+        url = next((w for w in arg.split() if w.lower().startswith(("http://", "https://"))), None)
+        name = " ".join(w for w in arg.split() if w != url).strip()
+        if url and not name:
+            host = url.split("//", 1)[1].split("/", 1)[0].lower().removeprefix("www.").removeprefix("careers.").removeprefix("jobs.")
+            name = host.split(".")[0].replace("-", " ").title()
+        if len(prospects.normalize_company(name)) < 2 or len(name) > 80:
+            return ["Usage: /watch company name — or /watch https://firm.example/careers Firm name"]
+        if len(watch) >= 40 and not any(fold(w["name"]) == fold(name) for w in watch):
+            return ["The watch list is full (40). /unwatch name frees a place."]
+        watch[:] = [w for w in watch if fold(w["name"]) != fold(name)]
+        watch.append({"name": name, "url": url, "at": to_iso(self.now)})
+        self._touch()
+        return [f"👀 Watching <b>{_esc(name)}</b>. " + ("I will read that careers page every run. " if url else
+                "At the next run I look for its job board on the platforms I can read. ")
+                + "Possible matches from a watched employer are alerted too. /watch lists them."]
+
+    def cmd_unwatch(self, arg: str) -> list[str]:
+        before = len(self.prefs["watch"])
+        self.prefs["watch"][:] = [w for w in self.prefs["watch"] if fold(w["name"]) != fold(arg)]
+        if not arg.strip() or len(self.prefs["watch"]) == before:
+            return [f"“{_esc(arg)}” isn't on the watch list. /watch shows it."]
+        self._touch()
+        return [f"No longer watching {_esc(arg.strip())}."]
+
+    def cmd_prospects(self, arg: str) -> list[str]:
+        return [prospects.format_prospects(self.state, limit=self._number(arg, 15, 1, 30))]
 
     def cmd_sources(self, arg: str) -> list[str]:
         return [yields.format_yield(yields.compute(self.state, self.prefs, self.now))]

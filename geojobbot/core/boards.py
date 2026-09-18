@@ -16,7 +16,8 @@ from ..scrapers.ats.detect import BoardRef
 from ..utils.dates import parse_datetime, to_iso
 
 HIGH_SIGNAL_ORIGINS = {"search", "career_page", "generic_page", "config"}
-ORIGIN_RANK = {"config": 0, "career_page": 1, "search": 2, "generic_page": 3, "commoncrawl": 4}
+ORIGIN_RANK = {"config": 0, "career_page": 1, "prospect": 1, "search": 2, "generic_page": 3, "commoncrawl": 4}
+PROSPECT_RECHECK_HOURS = 20  # boards of employers proven to sponsor (insights/prospects.py): daily, not on the slow rotation
 INVALID_RECHECK_DAYS = 60
 MAX_BOARDS_PER_ATS = 30000
 
@@ -60,7 +61,7 @@ class BoardRegistry:
 
     def is_geo_board(self, key: str) -> bool:
         entry = self.boards.get(key) or {}
-        return entry.get("origin") in {"config", "career_page"} or bool(entry.get("relevant_total"))
+        return entry.get("origin") in {"config", "career_page", "prospect"} or bool(entry.get("relevant_total"))
 
     def _due(self, entry: dict) -> bool:
         last = parse_datetime(entry.get("last_checked"))
@@ -93,6 +94,11 @@ class BoardRegistry:
                     selected[key] = (ref, "hot")
                 continue
             if not self._due(entry):
+                continue
+            if entry.get("origin") == "prospect" and entry.get("status") != "INVALID":
+                checked = parse_datetime(entry.get("last_checked"))
+                if checked is None or self.now - checked >= timedelta(hours=PROSPECT_RECHECK_HOURS):
+                    selected[key] = (ref, "hot")
                 continue
             last = entry.get("last_checked") or ""
             rank = ORIGIN_RANK.get(entry.get("origin"), 9)

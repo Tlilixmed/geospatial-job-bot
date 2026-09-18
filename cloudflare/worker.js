@@ -27,10 +27,10 @@
  */
 const COMMANDS = ["jobs", "high", "range", "search", "why", "applied", "hide", "unhide", "mute", "unmute", "muted",
   "threshold", "locations", "interns", "pause", "resume", "status", "weekly", "run", "help", "pitch", "ai", "sponsors",
-  "outcome", "possible", "radar", "skills", "signals", "learning", "sources", "visa"];
+  "outcome", "possible", "radar", "skills", "signals", "learning", "sources", "visa", "watch", "unwatch", "prospects"];
 const HINT_RE = new RegExp(`^/(${COMMANDS.join("|")})(\\s[^\\n]{0,100})?$`);
 const FAST_READ = new Set(["jobs", "top", "high", "range", "search", "why", "ai", "sponsors", "sponsor", "status", "help",
-  "start", "muted", "signals", "sources", "yield", "visa"]);
+  "start", "muted", "signals", "sources", "yield", "visa", "prospects"]);
 const VIEW_ALIASES = { yield: "sources" };  // replies Python formatted in advance: index.views[command]
 const FAST_WRITE = new Set(["applied", "outcome", "hide", "unhide", "mute", "unmute", "threshold", "locations", "interns",
   "possible", "pause", "resume"]);
@@ -66,6 +66,8 @@ Commands:
 /radar               which skills the market asks for and which the user lacks
 /signals             firms that won geospatial contracts, consultancies, tenders
 /sources             which job sources deliver results and which are noise
+/watch COMPANY       follow an employer closely          /unwatch COMPANY   /watch  list them
+/prospects           employers proven to sponsor whose job boards the bot found
 /learning            what the bot learned from the user's applications and hidden jobs
 /run                 search for new jobs right now
 /help                what the bot can do
@@ -123,7 +125,10 @@ function defaultPrefs() {
 async function loadPrefs(env) {
   const stored = await readJson(env, PREFS_KEY);
   const prefs = defaultPrefs();
-  if (stored && typeof stored === "object") for (const key of Object.keys(prefs)) if (key in stored) prefs[key] = stored[key];
+  // keep keys this Worker does not know (newer Python versions add some): saving must never drop them
+  if (stored && typeof stored === "object") for (const key of Object.keys(stored)) if (stored[key] !== undefined) prefs[key] = stored[key];
+  for (const key of ["muted", "hidden"]) if (!Array.isArray(prefs[key])) prefs[key] = [];
+  for (const key of ["applied", "hidden_info"]) if (!prefs[key] || typeof prefs[key] !== "object") prefs[key] = {};
   return prefs;
 }
 const savePrefs = (env, prefs) => env.INBOX.put(keyOf(env, PREFS_KEY),

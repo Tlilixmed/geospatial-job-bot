@@ -181,3 +181,84 @@ def test_source_yield_counts_what_each_source_alone_delivered():
     # old buckets are dropped
     yields.record_run(state, [], NOW + timedelta(days=40))
     assert NOW.strftime("%Y-%m-%d") not in state["yield"]["days"]
+
+
+def test_prospector_finds_the_board_of_an_employer_proven_to_sponsor():
+    from geojobbot.core.boards import BoardRegistry
+    from geojobbot.insights import prospects
+    from geojobbot.models import RawJob
+    from geojobbot.scrapers.ats.base import BoardResult
+    from geojobbot.utils.http import FetchError
+
+    assert prospects.slug_candidates("Fugro Canada Corp.") == ["fugro"]
+    assert prospects.slug_candidates("Summit Geomatics Ltd") == ["summitgeomatics", "summit-geomatics", "summit"]
+    assert prospects.slug_candidates("Land Survey Group Inc")[-1] != "land"  # generic first words are never tried alone
+    assert prospects.company_matches("Fugro Canada Corp.", "Fugro", "fugro")
+    assert not prospects.company_matches("Summit Geomatics Ltd", "Summit", "summit")
+    assert prospects.company_matches("Summit Geomatics Ltd", None, "summit-geomatics")
+    assert not prospects.company_matches("Summit Geomatics Ltd", None, "summit")
+
+    data = {"registers": {"ca": {"summit geomatics": {"n": "Summit Geomatics Ltd", "g": True, "o": ["Land surveyors"]},
+                                 "joes pizza": {"n": "Joe's Pizza"}},
+                          "uk": {"acme surveys": {"n": "ACME SURVEYS LIMITED"}, "smith chartered surveyors": {"n": "SMITH CHARTERED SURVEYORS"},
+                                 "big bank": {"n": "BIG BANK PLC"}}}}
+    state = {"boards": {}, "signals": {"items": [{"kind": "award", "winner": "GEOFIT EXPERT", "title": "LiDAR survey", "winner_country": "France"}]}}
+    targets = prospects.collect_targets(state, data, [{"name": "Hexagon"}])
+    assert [(t["name"], t["kind"]) for t in targets] == [("Hexagon", "watch"), ("GEOFIT EXPERT", "award"),
+                                                         ("Summit Geomatics Ltd", "lmia"), ("ACME SURVEYS LIMITED", "register")]
+
+    class FakeAdapter:
+        def __init__(self, ats, boards):
+            self.ats, self.boards, self.calls = ats, boards, []
+
+        def fetch_board(self, ctx, ref, **kw):
+            self.calls.append(ref.slug)
+            if ref.slug not in self.boards:
+                raise FetchError("NOT_FOUND", "404", status=404)
+            company, n = self.boards[ref.slug]
+            jobs = [RawJob(source_type="ats", source_name=self.ats, source_url="https://x.example", title="Land Surveyor")] * n
+            return BoardResult("VALID", jobs=jobs, listed=n, company=company)
+
+    adapters = {"greenhouse": FakeAdapter("greenhouse", {"hexagon": ("Hexagon", 3), "summit": ("Summit Bank", 9)}),
+                "workable": FakeAdapter("workable", {"summit-geomatics": ("Summit Geomatics", 2), "geofitexpert": ("Geofit Expert", 0)})}
+    ctx = make_ctx(FakeSession(), state=state)
+    ctx.registry = BoardRegistry(state, NOW)
+    out = prospects.ProspectBackend(adapters, data, [{"name": "Hexagon"}]).run(ctx)
+    assert out.details["probed"] == 4 and out.details["boards_found"] == 2 and len(out.jobs) == 5
+    assert all(j.geo_context and j.board_key for j in out.jobs)
+    assert state["prospects"]["summit geomatics"]["boards"] == ["workable:summit-geomatics"]  # not the bank called Summit
+    assert state["prospects"]["geofit expert"]["boards"] == []  # an empty board proves nothing
+    assert state["boards"]["greenhouse:hexagon"]["origin"] == "prospect" and ctx.registry.is_geo_board("greenhouse:hexagon")
+    # found boards are read daily, outside the slow rotation
+    later = BoardRegistry(state, NOW + timedelta(hours=30))
+    assert ("hexagon", "hot") in [(ref.slug, reason) for ref, reason in later.select("greenhouse", [], 0)]
+    assert BoardRegistry(state, NOW + timedelta(hours=2)).select("greenhouse", [], 0) == []
+    # nothing is probed twice within the recheck period
+    again = prospects.ProspectBackend(adapters, data, [{"name": "Hexagon"}]).run(make_ctx(FakeSession(), state=state))
+    assert again.details["probed"] == 0
+    text = prospects.format_prospects(state)
+    assert "Summit Geomatics Ltd" in text and "LMIA approved for Land surveyors" in text and "4 checked so far · 2 have a job board" in text
+
+
+def test_watch_list_commands_and_alerts_on_possible_matches():
+    from geojobbot.core.jobs import select_alerts
+    from geojobbot.core.prefs import apply_prefs
+
+    proc, replies, _, manager = setup([], [])
+    proc.run_text("/watch Fugro")
+    proc.run_text("/watch https://careers.geo-firm.example/jobs")
+    proc.run_text("please watch Hexagon closely")
+    watch = load_prefs(manager)["watch"]
+    assert [(w["name"], w["url"]) for w in watch] == [("Fugro", None), ("Geo Firm", "https://careers.geo-firm.example/jobs"), ("Hexagon", None)]
+    proc.run_text("/watch")
+    assert "Employers you watch" in replies.sent[-1] and "Geo Firm" in replies.sent[-1]
+    proc.run_text("stop watching hexagon")
+    assert [w["name"] for w in load_prefs(manager)["watch"]] == ["Fugro", "Geo Firm"]
+    assert interpret("who am i watching") == ("watch", "") and interpret("watch jobs in canada")[0] != "watch"
+
+    settings = make_settings(notify_possible=False)
+    apply_prefs(settings, load_prefs(manager))
+    jobs = {"w": job("w", "GIS Technician", company="Fugro Canada Corp.", tier="possible", score=60),
+            "o": job("o", "GIS Technician", company="Other Ltd", tier="possible", score=60)}
+    selected, _ = select_alerts({"jobs": jobs}, {"w", "o"}, settings, NOW)
+    assert [r["canonical_id"] for r in selected] == ["w"] and jobs["w"]["watched"] and not jobs["o"]["watched"]
