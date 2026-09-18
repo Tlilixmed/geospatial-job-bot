@@ -157,6 +157,44 @@ def alert_block_reason(rec: dict, settings, now) -> str | None:
     return None
 
 
+LISTED_DAYS = 5            # sources polled every run
+LISTED_DAYS_ROTATION = 21  # boards checked on a slow rotation
+
+
+def is_listed(rec: dict, now) -> bool:
+    """Was the posting still seen recently? Used for lists and summaries shown after the alert went out."""
+    seen = parse_datetime(rec.get("last_seen"))
+    if seen is None:
+        return True
+    days = LISTED_DAYS_ROTATION if rec.get("from_rotation") else LISTED_DAYS
+    return now - seen <= timedelta(days=days)
+
+
+# ---------------------------------------------------------------------------- applications (stored in prefs)
+APPLICATION_STATUSES = {"applied": "📨", "interview": "🎤", "offer": "🎉", "rejected": "❌", "withdrawn": "↩️",
+                        "ghosted": "👻"}
+FOLLOW_UP_DAYS = (7, 21)
+
+
+def due_follow_ups(prefs: dict, reminded: dict, now) -> list[tuple[str, dict, int]]:
+    """Applications still at 'applied' that reached a follow-up age and were not yet reminded at that stage.
+
+    `reminded` maps canonical id -> highest stage (in days) already sent; the scraper owns it (state.maintenance).
+    """
+    due = []
+    for cid, info in (prefs.get("applied") or {}).items():
+        if (info.get("status") or "applied") != "applied":
+            continue
+        when = parse_datetime(info.get("at"))
+        if when is None:
+            continue
+        age = (now - when).days
+        stage = max((d for d in FOLLOW_UP_DAYS if age >= d), default=None)
+        if stage is not None and int(reminded.get(cid) or 0) < stage:
+            due.append((cid, info, stage))
+    return due
+
+
 def select_alerts(state: dict, seen_ids: set, settings, now) -> tuple[list[dict], Counter]:
     counts = Counter()
     candidates = []

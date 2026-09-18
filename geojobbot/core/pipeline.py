@@ -24,7 +24,7 @@ from ..insights.sponsors import SponsorRegistry, annotate_record
 from ..models import SourceResult
 from ..notifications.commands import CommandProcessor
 from ..notifications.telegram import TelegramNotifier, format_digest, format_job_message
-from ..notifications.weekly import format_weekly
+from ..notifications.weekly import format_follow_ups, format_weekly
 from ..scrapers.ats.base import ATSBackend
 from ..scrapers.ats.more_ats import all_adapters
 from ..scrapers.base import Backend, RunContext
@@ -40,9 +40,10 @@ from ..utils.dates import parse_datetime, to_iso, utcnow
 from ..utils.http import HttpClient
 from ..utils.robots import RobotsCache
 from .boards import BoardRegistry
+from .descriptions import DescriptionStore
 from .fusion import fuse
 from .health import format_health, health_messages
-from .jobs import (AI_VETO_MAX_FIT, apply_ai_veto, mark_failed, mark_notified, process_fused, prune_state,
+from .jobs import (AI_VETO_MAX_FIT, alert_block_reason, apply_ai_veto, due_follow_ups, mark_failed, mark_notified, process_fused, prune_state,
                    select_alerts)
 from .prefs import apply_prefs, load_prefs
 from .report import build_markdown, build_summary, diagnostics_rows
@@ -122,6 +123,7 @@ class Pipeline:
         self.backends = backends
         self.ai = ai
         self.sponsors = sponsors
+        self.descriptions: DescriptionStore | None = None
         self.now = now or utcnow()
         self.sleep = sleep
         suffix = os.environ.get("GITHUB_RUN_ID") or secrets.token_hex(3)
@@ -236,6 +238,7 @@ class Pipeline:
         counts["unique"] = len(fused)
         outcome = process_fused(fused, state, settings, self.now)
         counts.update(outcome.counts)
+        self.descriptions = self._keep_descriptions(manager, outcome, state)
         counts.update(self._sponsors(manager, ctx, outcome, state, writes_allowed, report))
         counts.update(self._ai_review(outcome, state))
 
@@ -255,6 +258,12 @@ class Pipeline:
                 manager.save(state, self.run_id)
             except (StorageError, ConcurrentModificationError, StateCorruptError) as exc:
                 return self._fatal(report, f"checkpoint save failed, alerts not sent: {exc}", started, ctx)
+            if self.descriptions is not None:
+                try:
+                    self.descriptions.prune(state["jobs"])
+                    self.descriptions.save(manager)
+                except StorageError as exc:
+                    log.warning("descriptions not saved: %s", exc)
 
         selected, alert_counts = select_alerts(state, outcome.seen_ids, settings, self.now)
         counts.update(alert_counts)
@@ -284,6 +293,7 @@ class Pipeline:
         if notifier is None and selected and not settings.dry_run:
             log.warning("Telegram is not configured: %d alerts left pending", len(selected))
         counts["weekly_summary_sent"] = int(self._weekly_summary(manager, state, notifier))
+        counts["follow_ups_sent"] = self._follow_ups(manager, state, notifier)
         health = format_health(health_messages(state, report))
         if health and notifier is not None and not settings.dry_run:
             counts["health_alerts_sent"] = int(notifier.send(health)[0])
@@ -334,6 +344,18 @@ class Pipeline:
             handled["prefs"] = f"not applied ({type(exc).__name__})"
         return handled
 
+    def _keep_descriptions(self, manager: StateManager, outcome, state: dict) -> DescriptionStore | None:
+        """Remember the text of accepted jobs (for the AI backlog and /pitch); optional, never fatal."""
+        try:
+            store = DescriptionStore.load(manager)
+            for fused, result, rec in outcome.evaluated:
+                if result.tier in ("high", "possible"):
+                    store.put(rec.canonical_id, fused.description)
+            return store
+        except Exception as exc:
+            log.warning("descriptions not kept: %s", type(exc).__name__)
+            return None
+
     def _sponsors(self, manager: StateManager, ctx: RunContext, outcome, state: dict, writes_allowed: bool,
                   report: dict) -> Counter:
         """Look every accepted employer up in the official sponsor registers (refreshed weekly, never fatal)."""
@@ -373,24 +395,35 @@ class Pipeline:
         ai = self.ai if self.ai is not None else WorkersAI.from_settings(settings)
         if ai is None:
             return counts
-        pending = [(fused, rec) for fused, result, rec in outcome.evaluated
-                   if result.tier in ("high", "possible") and len(fused.description or "") >= 300
-                   and not (state["jobs"].get(rec.canonical_id) or {}).get("ai")]
-        pending.sort(key=lambda pair: -pair[1].score)
-        for fused, rec in pending:
+        # this run's jobs first, then the backlog of stored matches whose text we kept (descriptions store)
+        work = {}
+        for fused, result, rec in outcome.evaluated:
+            if len(fused.description or "") >= 300:
+                work[rec.canonical_id] = fused.description
+        if self.descriptions is not None:
+            for cid, text in self.descriptions.data.items():
+                work.setdefault(cid, text)
+        pending = []
+        for cid, text in work.items():
+            stored = state["jobs"].get(cid)
+            if (stored and stored.get("tier") in ("high", "possible") and not stored.get("ai")
+                    and alert_block_reason(stored, settings, self.now) is None):
+                pending.append((stored, text))
+        pending.sort(key=lambda pair: -int(pair[0].get("score") or 0))
+        for stored, text in pending:
             if ai.budget <= 0 or ai.failures >= 3:
                 counts["ai_deferred"] += 1
                 continue
             try:
-                review = review_job(ai, settings.candidate_profile, title=fused.title, company=fused.company,
-                                    location=fused.location.display(), description=fused.description)
+                place = ", ".join(p for p in (stored.get("city"), stored.get("country")) if p) or stored.get("location_raw")
+                review = review_job(ai, settings.candidate_profile, title=stored.get("title") or "",
+                                    company=stored.get("company"), location=place or "", description=text)
             except Exception as exc:  # a model hiccup must never cost us the run
-                log.warning("ai review skipped for %s: %s", rec.canonical_id, type(exc).__name__)
+                log.warning("ai review skipped for %s: %s", stored.get("canonical_id"), type(exc).__name__)
                 review = None
             if review is None:
                 counts["ai_failed"] += 1
                 continue
-            stored = state["jobs"][rec.canonical_id]
             review["veto"] = bool(settings.ai_veto_possible and review["fit"] <= AI_VETO_MAX_FIT)
             review["at"] = to_iso(self.now)
             stored["ai"] = review
@@ -400,6 +433,22 @@ class Pipeline:
                 counts["tier_possible"] -= 1
                 counts["tier_rejected"] += 1
         return counts
+
+    def _follow_ups(self, manager: StateManager, state: dict, notifier) -> int:
+        """Remind about applications with no recorded outcome after 7 and 21 days (once per stage)."""
+        if notifier is None or self.settings.dry_run:
+            return 0
+        try:
+            reminded = state.setdefault("maintenance", {}).setdefault("follow_ups", {})
+            due = due_follow_ups(load_prefs(manager), reminded, self.now)
+            text = format_follow_ups(due, state["jobs"], self.now)
+            if text and notifier.send(text)[0]:
+                for cid, _, stage in due:
+                    reminded[cid] = stage
+                return len(due)
+        except Exception as exc:
+            log.warning("follow-up reminders skipped: %s", type(exc).__name__)
+        return 0
 
     def _weekly_summary(self, manager: StateManager, state: dict, notifier) -> bool:
         """Send the weekly summary once every 7 days (tracked in state.maintenance)."""

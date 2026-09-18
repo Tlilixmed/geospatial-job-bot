@@ -14,7 +14,8 @@ import requests
 
 from ..ai.client import WorkersAI
 from ..ai.review import write_pitch
-from ..core.jobs import alert_block_reason
+from ..core.descriptions import DescriptionStore
+from ..core.jobs import APPLICATION_STATUSES, alert_block_reason, is_listed
 from ..core.prefs import load_prefs, save_prefs
 from ..models import TIER_HIGH, TIER_POSSIBLE
 from ..utils.dates import parse_datetime, to_iso, utcnow
@@ -38,7 +39,8 @@ HELP = """🗺️ <b>Geospatial job bot — commands</b>
 
 <b>Track</b>
 /applied code — mark as applied (no more alerts for it)
-/applied — list what you applied to
+/applied — your applications and their status
+/outcome code interview|offer|rejected|withdrawn|ghosted — record what happened
 /hide code · /unhide code — dismiss or restore a job
 
 <b>Tune</b>
@@ -192,7 +194,7 @@ class CommandProcessor:
         excluded = self._excluded_ids()
         rows = [rec for cid, rec in self.state.get("jobs", {}).items()
                 if rec.get("tier") in tiers and cid not in excluded and not self._is_muted(rec)
-                and alert_block_reason(rec, self.settings, self.now) is None]
+                and alert_block_reason(rec, self.settings, self.now) is None and is_listed(rec, self.now)]
         rows.sort(key=lambda r: (r.get("tier") != TIER_HIGH, -int(r.get("score") or 0),
                                  -(parse_datetime(r.get("posted_at")) or self.now).timestamp()))
         return rows
@@ -214,7 +216,7 @@ class CommandProcessor:
             return default
 
     # ------------------------------------------------------------------ dispatch
-    NEEDS_CODE = {"why", "hide", "unhide", "pitch"}
+    NEEDS_CODE = {"why", "hide", "unhide", "pitch"}  # /outcome validates its own code
     FALLBACK_INTENTS = {"search", "help"}  # what the rules answer when they did not recognise an instruction
 
     def _accept_hint(self, hint: str) -> tuple[str, str] | None:
@@ -264,7 +266,7 @@ class CommandProcessor:
             "/interns": self.cmd_interns, "/pause": self.cmd_pause, "/resume": self.cmd_resume,
             "/status": self.cmd_status, "/run": self.cmd_run, "/weekly": self.cmd_weekly, "/range": self.cmd_range,
             "/pitch": self.cmd_pitch, "/draft": self.cmd_pitch, "/ai": self.cmd_ai, "/possible": self.cmd_possible,
-            "/sponsors": self.cmd_sponsors, "/sponsor": self.cmd_sponsors,
+            "/sponsors": self.cmd_sponsors, "/sponsor": self.cmd_sponsors, "/outcome": self.cmd_outcome,
         }
 
     # ------------------------------------------------------------------ find
@@ -379,7 +381,8 @@ class CommandProcessor:
         ai = self.ai if self.ai is not None else WorkersAI.from_settings(self.settings, budget=2)
         if ai is None:
             return ["Drafting needs Workers AI: add the CLOUDFLARE_AI_TOKEN secret (see README)."]
-        note = write_pitch(ai, self.settings.candidate_profile, rec)
+        description = DescriptionStore.load(self.manager).get(rec["canonical_id"])
+        note = write_pitch(ai, self.settings.candidate_profile, rec, description)
         if not note:
             return ["The AI service did not answer just now. Try again in a minute."]
         link = rec.get("apply_url") or rec.get("url")
@@ -393,17 +396,54 @@ class CommandProcessor:
             applied = self.prefs["applied"]
             if not applied:
                 return ["No applications recorded yet. /applied code marks one."]
-            rows = sorted(applied.values(), key=lambda a: a.get("at") or "", reverse=True)[:40]
-            return ["<b>Applied</b>\n" + "\n".join(
-                f"• {_esc(a.get('title'))}" + (f" — {_esc(a['company'])}" if a.get("company") else "")
-                + f" ({(a.get('at') or '')[:10]})" for a in rows)]
+            rows = sorted(applied.items(), key=lambda kv: kv[1].get("at") or "", reverse=True)[:40]
+            tally = Counter((a.get("status") or "applied") for a in applied.values())
+            lines = ["<b>Your applications</b>",
+                     "<i>" + " · ".join(f"{APPLICATION_STATUSES.get(s, '•')} {n} {s}" for s, n in tally.most_common()) + "</i>", ""]
+            for cid, a in rows:
+                status = a.get("status") or "applied"
+                lines.append(f"{APPLICATION_STATUSES.get(status, '•')} {_esc(a.get('title'))}"
+                             + (f" — {_esc(a['company'])}" if a.get("company") else "")
+                             + f" · {status} · {(a.get('at') or '')[:10]} · <code>{job_code(cid)}</code>")
+            lines += ["", "/outcome code interview|offer|rejected|withdrawn|ghosted updates one"]
+            return ["\n".join(lines)]
         rec = self._by_code(arg)
         if rec is None:
             return ["I can't find that code. /jobs lists current codes."]
-        self.prefs["applied"][rec["canonical_id"]] = {"title": rec.get("title"), "company": rec.get("company"),
-                                                      "at": to_iso(self.now)}
+        self.prefs["applied"][rec["canonical_id"]] = {
+            "title": rec.get("title"), "company": rec.get("company"), "url": rec.get("apply_url") or rec.get("url"),
+            "at": to_iso(self.now), "status": "applied", "history": [{"at": to_iso(self.now), "status": "applied"}]}
         self._touch()
-        return [f"✅ Marked as applied: <b>{_esc(rec.get('title'))}</b>. Good luck!"]
+        return [f"✅ Marked as applied: <b>{_esc(rec.get('title'))}</b>. Good luck! I'll check in with you in a week; "
+                f"tell me how it goes with /outcome {job_code(rec['canonical_id'])} interview|rejected|offer."]
+
+    def _applied_by_code(self, code: str) -> tuple[str, dict] | tuple[None, None]:
+        code = code.strip().lower()
+        for cid, info in self.prefs["applied"].items():
+            if job_code(cid) == code or cid.lower() == code:
+                return cid, info
+        return None, None
+
+    def cmd_outcome(self, arg: str) -> list[str]:
+        """/outcome code interview|offer|rejected|withdrawn|ghosted|applied"""
+        words = arg.split()
+        status = next((w.lower() for w in words if w.lower() in APPLICATION_STATUSES), None)
+        code = next((w for w in words if w.lower() not in APPLICATION_STATUSES), "")
+        cid, info = self._applied_by_code(code)
+        if cid is None:  # an outcome for a job never marked as applied: record the application too
+            rec = self._by_code(code)
+            if rec is not None and status:
+                self.cmd_applied(code)
+                cid, info = rec["canonical_id"], self.prefs["applied"][rec["canonical_id"]]
+        if cid is None or status is None:
+            return ["Usage: /outcome code interview|offer|rejected|withdrawn|ghosted — /applied lists your codes."]
+        info["status"] = status
+        info.setdefault("history", []).append({"at": to_iso(self.now), "status": status})
+        self._touch()
+        cheer = {"interview": "🎤 An interview! Well done.", "offer": "🎉 An offer! Congratulations.",
+                 "rejected": "❌ Noted. Their loss; on to the next.", "withdrawn": "↩️ Noted as withdrawn.",
+                 "ghosted": "👻 Noted as no reply.", "applied": "📨 Back to 'applied'."}[status]
+        return [f"{cheer}\n<b>{_esc(info.get('title'))}</b>" + (f" — {_esc(info['company'])}" if info.get("company") else "")]
 
     def cmd_hide(self, arg: str) -> list[str]:
         rec = self._by_code(arg)

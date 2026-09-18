@@ -147,3 +147,19 @@ def test_ai_view_weekly_lines_status_coverage_and_intent():
     proc2.settings.cloudflare_ai_token = "t"
     proc2.run_text("/ai")
     assert "No current match has an AI review yet (1 waiting)" in replies2.sent[-1]
+
+
+def test_descriptions_are_kept_and_the_backlog_gets_reviewed_later():
+    from geojobbot.core.descriptions import DescriptionStore
+    s3 = FakeS3()
+    _run(s3, [gis_raw()], None)  # no AI yet: the accepted job's text is remembered anyway
+    manager = StateManager(R2Store("b", client=s3))
+    assert GIS_DESCRIPTION[:40] in DescriptionStore.load(manager).get("static:1")
+    ai, session = ai_with([json.dumps({"fit": 8, "summary": "Backlog review worked."})])
+    # a later run that does not see the job at all still reviews it from the stored text
+    report, _ = _run(s3, [], ai, now=NOW + timedelta(hours=2))
+    rec = StateManager(R2Store("b", client=s3)).load()["jobs"]["static:1"]
+    assert report["counts"]["ai_reviewed"] == 1 and rec["ai"]["summary"] == "Backlog review worked."
+    # descriptions of jobs that are no longer accepted are pruned
+    store = DescriptionStore({"static:1": "x" * 400, "gone:1": "y" * 400})
+    assert store.prune({"static:1": {"tier": "high"}}) == 1 and list(store.data) == ["static:1"]

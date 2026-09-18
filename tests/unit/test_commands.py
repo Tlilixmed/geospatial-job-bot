@@ -158,3 +158,48 @@ def test_owner_is_obeyed_from_another_chat_but_strangers_there_are_not():
     counts = proc.run()
     assert counts["commands"] == 1 and counts["ignored_other_chat"] == 2
     assert load_prefs(manager)["paused"] is True  # the owner's /pause counted, the others' /resume did not
+
+
+def test_outcomes_follow_ups_and_status_in_weekly():
+    from geojobbot.core.jobs import due_follow_ups
+    from geojobbot.notifications.intents import interpret
+    from geojobbot.notifications.weekly import format_follow_ups
+    codes = {job_code("a:1"), job_code("a:2")}
+    is_code = lambda t: t in codes  # noqa: E731
+    assert interpret(f"got an interview for {job_code('a:1')}", is_code) == ("outcome", f"{job_code('a:1')} interview")
+    assert interpret(f"they rejected me {job_code('a:2')}", is_code) == ("outcome", f"{job_code('a:2')} rejected")
+    assert interpret(f"pas de réponse {job_code('a:1')}", is_code) == ("outcome", f"{job_code('a:1')} ghosted")
+
+    jobs = [job("a:1", "GIS Analyst", last_seen=NOW.isoformat()), job("a:2", "LiDAR Technician", last_seen=NOW.isoformat())]
+    proc, replies, _, manager = setup([], jobs)
+    proc.run_text(f"/applied {job_code('a:1')}")
+    proc.run_text(f"got an interview for {job_code('a:1')}")
+    proc.run_text(f"/outcome {job_code('a:2')} rejected")  # never marked as applied: recorded in one step
+    assert "An interview" in replies.sent[1] and "on to the next" in replies.sent[-1]
+    prefs = load_prefs(manager)
+    assert prefs["applied"]["a:1"]["status"] == "interview" and [h["status"] for h in prefs["applied"]["a:1"]["history"]] == ["applied", "interview"]
+    assert prefs["applied"]["a:2"]["status"] == "rejected"
+    proc.run_text("/applied")
+    listing = replies.sent[-1]
+    assert "🎤 GIS Analyst" in listing and "❌ LiDAR Technician" in listing and "1 interview" in listing
+    weekly = format_weekly(proc.state, prefs, make_settings(), NOW)
+    assert "🎤 GIS Analyst" in weekly and "· interview" in weekly
+
+    # follow-ups: only applications still at "applied", once per stage
+    waiting = {"applied": {"w:1": {"title": "Cartographer", "company": "MapCo", "at": (NOW - timedelta(days=8)).isoformat(), "status": "applied"},
+                           "w:2": {"title": "Fresh", "at": (NOW - timedelta(days=2)).isoformat(), "status": "applied"},
+                           "a:1": prefs["applied"]["a:1"]}}
+    due = due_follow_ups(waiting, {}, NOW)
+    assert [(cid, stage) for cid, _, stage in due] == [("w:1", 7)]
+    assert "Time to follow up" in format_follow_ups(due, {}, NOW) and "Cartographer" in format_follow_ups(due, {}, NOW)
+    assert due_follow_ups(waiting, {"w:1": 7}, NOW) == []
+    later = due_follow_ups(waiting, {"w:1": 7}, NOW + timedelta(days=14))
+    assert sorted((cid, stage) for cid, _, stage in later) == [("w:1", 21), ("w:2", 7)]  # second stage, and w:2's first
+
+
+def test_listings_drop_postings_no_source_has_seen_lately():
+    gone = job("a:1", "GIS Analyst", last_seen=(NOW - timedelta(days=9)).isoformat())
+    rotated = job("a:2", "LiDAR Technician", last_seen=(NOW - timedelta(days=9)).isoformat(), from_rotation=True)
+    proc, replies, _, _ = setup([], [gone, rotated])
+    proc.run_text("/jobs")
+    assert "LiDAR Technician" in replies.sent[-1] and "GIS Analyst" not in replies.sent[-1]

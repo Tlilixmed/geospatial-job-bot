@@ -155,6 +155,15 @@ def interpret(text: str, is_code: Callable[[str], bool] = lambda token: False) -
             return "unhide", code
         if _has(t, r"\b(pitch|draft|cover ?letter|letter|motivation|lettre|write|redige\w*|ecris)\b"):
             return "pitch", code
+        # what happened to an application: "got an interview for a3f9c", "they rejected me a3f9c", "offer a3f9c"
+        for status, pattern in (("interview", r"\b(interview\w*|entretien\w*|call back|screening|phone screen)\b"),
+                                ("offer", r"\b(offer|offered|offre d emploi|proposition|hired|embauche\w*|got the job)\b"),
+                                ("rejected", r"\b(reject\w*|declined|turned down|refus\w*|not selected|no luck|unsuccessful)\b"),
+                                ("ghosted", r"\b(ghost\w*|no (?:reply|answer|response|news)|never (?:replied|answered)|"
+                                            r"pas de (?:reponse|nouvelles?)|sans reponse)\b"),
+                                ("withdrawn", r"\b(withdr[ae]w\w*|pulled out|retire ma candidature|changed my mind)\b")):
+            if _has(t, pattern):
+                return "outcome", f"{code} {status}"
         if _has(t, r"\b(appl(?:y|ied|ying|ication)|postule\w*|candidat\w*|sent my cv|envoye\w*)\b"):
             return "applied", code
         if _has(t, r"\b(hide|remove|dismiss|discard|drop|delete|skip|not interested|pas interesse\w*|cache\w*|supprime\w*|"

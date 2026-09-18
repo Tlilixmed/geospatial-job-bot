@@ -72,7 +72,7 @@ def review_job(ai, profile: str, *, title: str, company: str | None, location: s
     return clean_review(ai.chat_json(REVIEW_SYSTEM.format(profile=profile or DEFAULT_PROFILE), posting))
 
 
-def write_pitch(ai, profile: str, rec: dict) -> str | None:
+def write_pitch(ai, profile: str, rec: dict, description: str = "") -> str | None:
     review = rec.get("ai") or {}
     facts = [f"Job title: {rec.get('title')}", f"Company: {rec.get('company') or 'unknown'}",
              f"Location: {rec.get('location_raw') or 'unknown'}",
@@ -81,5 +81,7 @@ def write_pitch(ai, profile: str, rec: dict) -> str | None:
              "Domains: " + ", ".join(rec.get("matched_domains") or [])]
     if review.get("summary"):
         facts.append("About the job: " + review["summary"])
+    if description:
+        facts.append("Posting text (excerpt): " + description[:2500])
     text = ai.chat(PITCH_SYSTEM.format(profile=profile or DEFAULT_PROFILE), "\n".join(facts), max_tokens=420)
     return html.escape(text.strip()) if text else None

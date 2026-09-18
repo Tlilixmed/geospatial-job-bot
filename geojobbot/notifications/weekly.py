@@ -3,14 +3,31 @@ from __future__ import annotations
 
 from datetime import timedelta
 
-from ..core.jobs import alert_block_reason
+from ..core.jobs import APPLICATION_STATUSES, alert_block_reason, is_listed
 from ..models import TIER_HIGH
 from ..utils.dates import parse_datetime
 from ..utils.text import fold, job_code, normalize_company, normalize_title
 from .telegram import _esc
 
-STILL_LISTED_DAYS = 4   # a posting not seen by any source for this long is treated as gone
 OPEN_SHOWN = 7
+
+
+def format_follow_ups(due: list[tuple[str, dict, int]], jobs: dict, now) -> str | None:
+    """Reminder for applications that have had no recorded outcome for a week (and again after three)."""
+    if not due:
+        return None
+    lines = ["📬 <b>Time to follow up?</b>"]
+    for cid, info, stage in due[:8]:
+        rec = jobs.get(cid)
+        listed = bool(rec) and is_listed(rec, now)
+        link = info.get("url") or (rec or {}).get("apply_url")
+        title = f'<a href="{_esc(link)}">{_esc(info.get("title"))}</a>' if link else _esc(info.get("title"))
+        lines += ["", f"• {title}" + (f" — {_esc(info['company'])}" if info.get("company") else ""),
+                  f"   applied {stage}+ days ago · posting {'still listed' if listed else 'no longer listed'} · "
+                  f"<code>{job_code(cid)}</code>"]
+    lines += ["", "A short, polite follow-up after a week is normal. Tell me what happened:",
+              "/outcome code interview · rejected · offer · ghosted"]
+    return "\n".join(lines)
 
 
 def format_weekly(state: dict, prefs: dict, settings, now) -> str | None:
@@ -24,8 +41,7 @@ def format_weekly(state: dict, prefs: dict, settings, now) -> str | None:
     still_open = [r for cid, r in jobs.items()
                   if r.get("tier") == TIER_HIGH and cid not in excluded
                   and not any(t in fold(f"{r.get('title') or ''} {r.get('company') or ''}") for t in muted)
-                  and alert_block_reason(r, settings, now) is None
-                  and (parse_datetime(r.get("last_seen")) or now) > now - timedelta(days=STILL_LISTED_DAYS)]
+                  and alert_block_reason(r, settings, now) is None and is_listed(r, now)]
     still_open.sort(key=lambda r: -int(r.get("score") or 0))
     if not (alerted or applied or still_open):
         return None
@@ -38,13 +54,16 @@ def format_weekly(state: dict, prefs: dict, settings, now) -> str | None:
         rows = sorted(applied.items(), key=lambda kv: kv[1].get("at") or "", reverse=True)[:15]
         for cid, info in rows:
             rec = jobs.get(cid)
-            seen = parse_datetime(rec.get("last_seen")) if rec else None
-            listed = bool(seen and seen > now - timedelta(days=STILL_LISTED_DAYS))
+            listed = bool(rec) and is_listed(rec, now)
             when = parse_datetime(info.get("at"))
             age = f"{(now - when).days}d ago" if when else "?"
-            lines.append(f"{'🟢' if listed else '⚪'} {_esc(info.get('title'))}"
-                         + (f" — {_esc(info['company'])}" if info.get("company") else "")
-                         + f" · applied {age} · {'still listed' if listed else 'no longer listed'}")
+            status = info.get("status") or "applied"
+            if status == "applied":  # nothing heard yet: whether the posting is still up is the useful fact
+                mark, tail = ("🟢" if listed else "⚪"), ("still listed" if listed else "no longer listed")
+            else:
+                mark, tail = APPLICATION_STATUSES.get(status, "•"), status
+            lines.append(f"{mark} {_esc(info.get('title'))}" + (f" — {_esc(info['company'])}" if info.get("company") else "")
+                         + f" · applied {age} · {tail}")
     if still_open:
         # the same title at the same company posted for several locations is one line, not several
         groups: dict[tuple, list[dict]] = {}
