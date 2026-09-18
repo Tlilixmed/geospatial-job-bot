@@ -62,6 +62,17 @@ commands (and refer to a job code that exists), and the reply marks it: `↪ /re
 
 After changing `cloudflare/worker.js` in the repository, paste the new version into the Worker (**Edit code → Deploy**).
 
+## Which chat? Getting TELEGRAM_CHAT_ID right
+Send `/id` in the chat you want to use. The bot answers there with the chat id, the chat type, your user id, and
+whether that chat is the configured one. Then:
+
+- Put the **chat id** in `TELEGRAM_CHAT_ID` in **both** places: the GitHub secret (alerts and replies are sent
+  there) and the Worker secret (messages from there are obeyed). They must be identical.
+- A private chat with the bot is the simplest choice: its id is also your user id, so you are obeyed everywhere.
+- If you choose a group or channel (ids start with `-100`), also add the Worker secret `TELEGRAM_OWNER_ID` with
+  **your user id**, so you are still obeyed when you write to the bot privately.
+- Replies always go to `TELEGRAM_CHAT_ID`, wherever you wrote from.
+
 ## If the bot is in a group or a channel rather than a private chat
 - **Group:** bots only receive messages starting with `/` while *privacy mode* is on, so plain sentences never reach
   the Worker. In BotFather: `/setprivacy` → choose the bot → **Disable**, then remove the bot from the group and add

@@ -125,6 +125,23 @@ export default {
       || update.edited_message || update.edited_channel_post);
     const raw = message && (typeof message.text === "string" ? message.text : message.caption);
     const text = typeof raw === "string" ? raw.trim().slice(0, 500) : "";
+    // Setup helper, answered in the chat it was asked in and before any authorisation: "/id" tells you the values to
+    // use for TELEGRAM_CHAT_ID (this chat) and TELEGRAM_OWNER_ID (you). It reveals nothing but the asker's own ids.
+    if (message && message.chat && /^\/id(@\w+)?$/i.test(text)) {
+      const configured = String(message.chat.id) === String(env.TELEGRAM_CHAT_ID);
+      const lines = [
+        `chat id: ${message.chat.id}`,
+        `chat type: ${message.chat.type}`,
+        `your user id: ${message.from ? message.from.id : "unknown (anonymous admin or channel post)"}`,
+        configured ? "✅ This chat is the configured TELEGRAM_CHAT_ID." : "ℹ️ This chat is NOT the configured TELEGRAM_CHAT_ID.",
+      ];
+      ctx.waitUntil(fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ chat_id: message.chat.id, text: lines.join("\n") }),
+      }));
+      return new Response("ok");
+    }
     // Authorised when the message is in the configured chat, or is written by the owner anywhere (a private chat id
     // is also that person's user id). TELEGRAM_OWNER_ID can name the owner explicitly when the chat is a group.
     const owner = String(env.TELEGRAM_OWNER_ID || env.TELEGRAM_CHAT_ID);
