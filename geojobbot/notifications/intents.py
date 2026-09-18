@@ -130,7 +130,7 @@ def interpret(text: str, is_code: Callable[[str], bool] = lambda token: False) -
         return "weekly", ""
 
     # speculative application: "approach geofit", "candidature spontanée pour geofit", "write to fugro"
-    approach_words = {"approach", "spontanee", "spontaneous", "speculative", "unsolicited", "contacter", "contact"}
+    approach_words = {"approach", "spontanee", "spontaneous", "speculative", "unsolicited"}
     if not code and (any(f in approach_words for f in fixed) or _has(t, r"\b(write|ecris|ecrire) (to|a)\b")):
         target = _after(original, fixed, approach_words | {"write", "ecris", "ecrire"},
                         {"to", "a", "for", "pour", "the", "firm", "company", "candidature", "application", "chez", "with"})
@@ -144,7 +144,7 @@ def interpret(text: str, is_code: Callable[[str], bool] = lambda token: False) -
         if _has(t, r"\b(signals?|tenders?|procurement|contracts? (?:awards?|won)|appels? d offres?|marches publics?|"
                    r"consultanc(?:y|ies)|who (?:is|s) winning)\b"):
             return "signals", str(_number(fixed, 1, 20) or "")
-        if _has(t, r"\b(sources?|yield|job boards?|websites?|sites?)\b") and \
+        if _has(t, r"\b(sources?|yield|job boards?|websites?|sites?)\b") and not _has(t, r"\b(jobs|offers?|offres?|postes?)\b") and \
                 _has(t, r"\b(best|useful|useless|work\w*|deliver\w*|yield|noise|noisy|worth|stats?|statistics|perform\w*|"
                         r"which|quelles?|meilleures?|utiles?|rendement)\b"):
             return "sources", ""
@@ -159,7 +159,7 @@ def interpret(text: str, is_code: Callable[[str], bool] = lambda token: False) -
     if not code and _has(t, r"\b(sponsor\w*|lmia|parrain\w*)\b"):
         return "sponsors", str(_number(fixed, 1, 30) or "")
     # "can i get a visa for these jobs", "visa rules for france", "blue card germany", "visa a3f9c"
-    if _has(t, r"\b(visas?|work permits?|permis de travail|titre de sejour|blue card|carte bleue|immigration|relocat\w*)\b"):
+    if _has(t, r"\b(visas?|work permits?|permis de travail|titre de sejour|blue card|carte bleue)\b"):
         if code:
             return "visa", code
         from ..insights.visa import find_country  # local import: intents stays importable on its own
@@ -187,7 +187,7 @@ def interpret(text: str, is_code: Callable[[str], bool] = lambda token: False) -
     if code:
         if _has(t, r"\b(unhide|restore|bring back|reaffiche\w*|remets?)\b"):
             return "unhide", code
-        if _has(t, r"\b(prep|prepare\w*|preparation|rehearse|practice|questions?)\b"):  # "prepare me for the interview a3f9c"
+        if _has(t, r"\b(prep|prepare\w*|preparation|rehearse|practice|interview questions?)\b"):  # "prepare me for the interview a3f9c"
             return "prep", code
         if _has(t, r"\b(pitch|draft|cover ?letter|letter|motivation|lettre|write|redige\w*|ecris)\b"):
             return "pitch", code
@@ -238,7 +238,7 @@ def interpret(text: str, is_code: Callable[[str], bool] = lambda token: False) -
                     r"bot|envoi\w*|everything|tout)\b"):
         return "pause", ""
     # watch list: "watch fugro", "follow esri closely", "surveille hexagon", "stop watching fugro", "who am i watching"
-    watch_words = {"watch", "watching", "follow", "following", "track", "surveille", "surveiller", "suis", "suivre"}
+    watch_words = {"watch", "watching", "follow", "following", "track", "surveille", "surveiller", "suivre"}
     if not code and any(f in watch_words for f in fixed) and not _has(t, r"\b(jobs?|offers?|offres?|applications?)\b"):
         target = _after(original, fixed, watch_words | {"unwatch", "stop"},
                         {"the", "company", "employer", "entreprise", "closely", "on", "de", "la", "le", "am", "i", "who", "list"})

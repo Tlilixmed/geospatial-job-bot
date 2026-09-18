@@ -140,3 +140,15 @@ def test_inbox_messages_are_processed_in_order_and_deleted():
     assert counts["commands"] == 2 and counts["unreadable"] == 1 and session.calls == []
     assert "paused" in replies.sent[0] and "resumed" in replies.sent[1]   # oldest first: pause, then resume
     assert load_prefs(manager)["paused"] is False and store.list_keys("inbox/") == []
+
+
+def test_new_commands_do_not_hijack_ordinary_searches():
+    """Words shared with /visa, /sources, /approach, /watch and /prep must stay searches when they are about jobs."""
+    for text in ("gis jobs with relocation support", "immigration consultant jobs", "which sites have lidar jobs",
+                 "contact details for acme", "je suis interesse par les offres sig", "watch jobs in canada",
+                 "survey jobs until december", "software developer gis"):
+        assert interpret(text)[0] == "search", text
+    assert interpret("which sources work best") == ("sources", "")
+    assert interpret("which job boards are useful") == ("sources", "")
+    assert interpret("questions about a3f9c", lambda t: t == "a3f9c") == ("why", "a3f9c")
+    assert interpret("interview questions for a3f9c", lambda t: t == "a3f9c") == ("prep", "a3f9c")

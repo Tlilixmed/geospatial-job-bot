@@ -109,14 +109,21 @@ class JobRecord:
     ai: dict = field(default_factory=dict)  # Workers AI second opinion: fit, summary, concerns, requirements, veto
     deadline: str | None = None  # application deadline read from the description (ISO date)
     deadline_reminded: bool = False
+    # annotations other modules put on the stored dict (learned, visa, reposts, watched…): carried through untouched,
+    # so re-observing a job never silently drops what a later pipeline step wrote on it
+    extra: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
-        return asdict(self)
+        data = asdict(self)
+        extra = data.pop("extra") or {}
+        return {**extra, **data}
 
     @classmethod
     def from_dict(cls, data: dict) -> "JobRecord":
-        known = {f.name for f in fields(cls)}
-        return cls(**{k: v for k, v in data.items() if k in known})
+        known = {f.name for f in fields(cls)} - {"extra"}
+        record = cls(**{k: v for k, v in data.items() if k in known})
+        record.extra = {k: v for k, v in data.items() if k not in known and k != "extra"}
+        return record
 
 
 @dataclass

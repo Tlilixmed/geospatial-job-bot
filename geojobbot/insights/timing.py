@@ -27,7 +27,7 @@ _MONTH = "|".join(sorted(MONTHS, key=len, reverse=True))
 CUE_RE = re.compile(
     r"\b(closing date|closes? on|closes?|close date|application deadline|deadline(?: for applications?)?|apply (?:by|before|no later than)|"
     r"applications? (?:close|closes|must be (?:received|submitted) by|due|accepted until|will be accepted until|deadline)|"
-    r"submit(?:ted)? (?:by|before|no later than)|posting end date|end date of posting|open until|until|"
+    r"submit(?:ted)? (?:by|before|no later than)|posting end date|end date of posting|open until|"
     r"date limite(?: de (?:candidature|depot|reception)s?)?|date de cloture|cloture(?: des candidatures)?|au plus tard le|"
     r"avant le|jusqu au|candidatures? (?:jusqu au|avant le)|bewerbungsfrist|bewerbungsschluss)\b")
 DATE_RES = (

@@ -40,8 +40,8 @@ function harness({ index, prefs, ai, inbox = true, prefix = "" } = {}) {
   if (prefix) env.STATE_PREFIX = prefix;
   if (ai) env.AI = { run: async () => ({ response: ai }) };
   globalThis.fetch = async (url, init) => {
-    const body = JSON.parse(init.body);
-    if (String(url).includes("api.telegram.org")) sent.push(body); else dispatched.push(body);
+    const body = init.body ? JSON.parse(init.body) : null;
+    if (String(url).includes("api.telegram.org")) sent.push(body); else if (body) dispatched.push(body);  // PUT …/enable has no body
     return { ok: true, status: 200 };
   };
   let updateId = 100;
@@ -56,8 +56,9 @@ function harness({ index, prefs, ai, inbox = true, prefix = "" } = {}) {
     return response;
   }
   const stored = (key) => (objects.has(key) ? JSON.parse(objects.get(key)) : null);
+  const tick = async () => { const pending = []; await worker.scheduled({}, env, { waitUntil: (x) => pending.push(x) }); await Promise.all(pending); };
   const get = (path) => worker.fetch(new Request("https://worker.example" + path), env, { waitUntil() {} });
-  return { say, get, env, sent, dispatched, stored, objects };
+  return { say, get, tick, env, sent, dispatched, stored, objects };
 }
 
 test("/jobs is answered from the index without starting a workflow", async () => {
@@ -278,4 +279,25 @@ test("the dashboard is off without a key, private with one, and cannot be broken
   assert.equal(data.prefs.muted, undefined);  // only what the page needs
   const script = html.split("<script>")[1].split("</script>")[0];
   assert.doesNotThrow(() => new Function(script));  // the inline script parses
+});
+
+test("watchdog: silent scraper is restarted once per interval, announced once, and recovery is reported", async () => {
+  const fresh = harness({ index: makeIndex([]) });
+  await fresh.tick();
+  assert.equal(fresh.sent.length + fresh.dispatched.length, 0);
+
+  const stale = makeIndex([]);
+  stale.generated_at = iso(9);
+  const h = harness({ index: stale });
+  await h.tick();
+  assert.match(h.sent[0].text, /No scraper run for 9 hours/);
+  assert.deepEqual(h.dispatched.at(-1), { ref: "main" });
+  assert.equal(h.stored("state/watchdog.json").kicks, 1);
+  await h.tick();  // too soon to try again, and nothing is said twice
+  assert.equal(h.sent.length, 1);
+  assert.equal(h.stored("state/watchdog.json").kicks, 1);
+  h.objects.set("state/index.json", JSON.stringify(makeIndex([])));
+  await h.tick();
+  assert.match(h.sent[1].text, /running again/);
+  assert.deepEqual(h.stored("state/watchdog.json"), {});
 });

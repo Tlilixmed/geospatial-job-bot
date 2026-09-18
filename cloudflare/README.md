@@ -88,6 +88,18 @@ Matches (filter, sort, visa and sponsor chips), applications by status, visa rou
 read-only, is never cached or indexed, and needs the `INBOX` binding. Anyone with the link can read it: do not share it,
 and change the secret to revoke it. Without the secret the route answers 404.
 
+## 9. Recommended: the watchdog (a Cron Trigger)
+GitHub's scheduler is best-effort: runs get delayed or dropped, and scheduled workflows are **disabled silently after
+60 days without repository activity**. The scraper re-enables its own schedule on every run, but something outside
+GitHub should notice when no run happens at all.
+
+Worker → **Settings → Triggers → Cron Triggers → Add** → `0 * * * *` (every hour) → Save.
+
+Each hour the Worker looks at the age of `state/index.json`. When the last scraper run is more than 6 hours old it
+re-enables the workflow, starts a run, and tells you once (`🛟 No scraper run for 9 hours…`); it retries every
+3 hours, at most 4 times, and reports `✅ The scraper is running again` afterwards. It uses the `GITHUB_TOKEN` and
+`INBOX` binding you already have; free plan Cron Triggers cost nothing.
+
 ## Which chat? Getting TELEGRAM_CHAT_ID right
 Send `/id` in the chat you want to use. The bot answers there with the chat id, the chat type, your user id, and
 whether that chat is the configured one. Then:

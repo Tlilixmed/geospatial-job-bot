@@ -262,3 +262,13 @@ def test_watch_list_commands_and_alerts_on_possible_matches():
             "o": job("o", "GIS Technician", company="Other Ltd", tier="possible", score=60)}
     selected, _ = select_alerts({"jobs": jobs}, {"w", "o"}, settings, NOW)
     assert [r["canonical_id"] for r in selected] == ["w"] and jobs["w"]["watched"] and not jobs["o"]["watched"]
+
+
+def test_annotations_survive_a_job_being_seen_again():
+    """A job re-observed by a lower-priority source is not rescored: what later steps wrote on it must stay."""
+    from geojobbot.models import JobRecord
+
+    stored = job("k:1", "GIS Analyst", learned={"adj": 4, "because": ["+4 lidar"]}, visa={"verdict": "open"}, watched=True)
+    again = JobRecord.from_dict(stored).to_dict()
+    assert again["learned"] == {"adj": 4, "because": ["+4 lidar"]} and again["visa"] == {"verdict": "open"} and again["watched"] is True
+    assert "extra" not in again and again["title"] == "GIS Analyst"

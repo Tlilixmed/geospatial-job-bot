@@ -686,7 +686,59 @@ async function dashboard(request, env) {
   });
 }
 
+// ---------------------------------------------------------------------------- watchdog (Cron Trigger, optional)
+// GitHub's scheduler is best-effort: runs are delayed, dropped, and schedules are disabled after 60 days without
+// repository activity. With a Cron Trigger on this Worker (e.g. every hour) the bot notices when the scraper has been
+// silent for too long, re-enables and starts the workflow itself, and says so once per incident.
+const STALE_HOURS = 6;
+const KICK_EVERY_HOURS = 3;
+const MAX_KICKS = 4;
+const WATCHDOG_KEY = "state/watchdog.json";
+
+async function github(env, method, path, body) {
+  return fetch(`https://api.github.com/repos/${env.GITHUB_REPO}/actions/workflows/${path}`, {
+    method,
+    headers: { Authorization: `Bearer ${env.GITHUB_TOKEN}`, Accept: "application/vnd.github+json",
+      "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "geospatial-job-bot-worker" },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+}
+
+async function watchdog(env) {
+  if (!env.INBOX) return "no bucket";
+  const index = await readJson(env, INDEX_KEY);
+  const memo = (await readJson(env, WATCHDOG_KEY)) || {};
+  const save = (value) => env.INBOX.put(keyOf(env, WATCHDOG_KEY), JSON.stringify(value), { httpMetadata: { contentType: "application/json" } });
+  const age = index && index.generated_at ? (Date.now() - Date.parse(index.generated_at)) / 36e5 : Infinity;
+  if (age <= STALE_HOURS) {
+    if (memo.alerted) {
+      await tell(env, "✅ The scraper is running again.");
+      await save({});
+    }
+    return "fresh";
+  }
+  const kicks = memo.kicks || 0;
+  if (memo.last_kick && Date.now() - Date.parse(memo.last_kick) < KICK_EVERY_HOURS * 36e5) return "waiting";
+  if (kicks >= MAX_KICKS) return "gave up";  // said so already; a human has to look at GitHub Actions
+  await github(env, "PUT", "scraper.yml/enable");
+  const started = await github(env, "POST", "scraper.yml/dispatches", { ref: "main" });
+  const silent = Number.isFinite(age) ? `${Math.round(age)} hours` : "a long time";
+  if (!memo.alerted) {
+    await tell(env, started.ok
+      ? `🛟 No scraper run for ${silent}. I re-enabled the schedule and started a run myself.`
+      : `⚠️ No scraper run for ${silent}, and I could not start one (GitHub answered ${started.status}). Check the Actions tab and the Worker's GITHUB_TOKEN.`);
+  } else if (kicks + 1 >= MAX_KICKS) {
+    await tell(env, `⚠️ Still no scraper run after ${MAX_KICKS} attempts. Please look at the repository's Actions tab.`);
+  }
+  await save({ alerted: true, last_kick: new Date().toISOString(), kicks: kicks + 1 });
+  return started.ok ? "kicked" : "kick failed";
+}
+
 export default {
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(watchdog(env).catch((error) => console.log("watchdog error", String(error && error.message ? error.message : error))));
+  },
+
   async fetch(request, env, ctx) {
     if (request.method === "GET") {
       const page = await dashboard(request, env);
@@ -713,8 +765,13 @@ export default {
         `chat type: ${message.chat.type}`,
         `your user id: ${message.from ? message.from.id : "unknown (anonymous admin or channel post)"}`,
         configured ? "✅ This chat is the configured TELEGRAM_CHAT_ID." : "ℹ️ This chat is NOT the configured TELEGRAM_CHAT_ID.",
-        `instant replies: ${env.INBOX ? "on (R2 bound)" : "off (add the INBOX R2 binding)"} · AI: ${env.AI ? "on" : "off"}`,
       ];
+      // how the Worker is set up is told only to the configured chat or its owner, never to a stranger asking /id
+      const asker = message.from && !message.from.is_bot ? String(message.from.id) : "";
+      if (configured || asker === String(env.TELEGRAM_OWNER_ID || env.TELEGRAM_CHAT_ID)) {
+        lines.push(`instant replies: ${env.INBOX ? "on (R2 bound)" : "off (add the INBOX R2 binding)"} · AI: ${env.AI ? "on" : "off"}`
+          + ` · dashboard: ${String(env.DASHBOARD_KEY || "").length >= 16 ? "on" : "off"}`);
+      }
       ctx.waitUntil(telegram(env, message.chat.id, lines.join("\n"), false));
       return new Response("ok");
     }

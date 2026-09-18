@@ -38,6 +38,7 @@ GENERIC_TOKENS = {"land", "survey", "surveys", "surveying", "surveyors", "geomat
                   "solutions", "consulting", "consultants", "engineering", "associates", "partners", "company", "global",
                   "international", "north", "south", "east", "west", "first", "general", "national", "new", "city", "county"}
 RECHECK_DAYS = 120
+WATCH_RECHECK_DAYS = 14
 MAX_PROSPECTS = 4000
 PRIORITY = {"watch": 0, "award": 1, "lmia": 2, "register": 3}
 
@@ -130,10 +131,16 @@ class ProspectBackend(Backend):
         targets = collect_targets(ctx.state, data, watch)
         with ctx.lock:
             book = ctx.state.setdefault("prospects", {})
-        recheck = ctx.now - timedelta(days=RECHECK_DAYS)
-        due = [t for t in targets
-               if (parse_datetime((book.get(t["key"]) or {}).get("checked")) or recheck) <= recheck
-               or (t["kind"] == "watch" and not (book.get(t["key"]) or {}).get("checked"))]
+        def is_due(target):
+            entry = book.get(target["key"]) or {}
+            checked = parse_datetime(entry.get("checked"))
+            if checked is None:
+                return True
+            # a watched employer without a board yet is worth another look soon: companies change platforms
+            days = WATCH_RECHECK_DAYS if target["kind"] == "watch" and not entry.get("boards") else RECHECK_DAYS
+            return ctx.now - checked >= timedelta(days=days)
+
+        due = [t for t in targets if is_due(t)]
         found_boards, probed, errors = 0, 0, 0
         for target in due[: ctx.settings.prospects_per_run]:
             if ctx.out_of_time(reserve_s=600):

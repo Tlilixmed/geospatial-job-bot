@@ -5,6 +5,11 @@ on:
     - cron: "0 */2 * * *"   # quota-bound sources keep their own 4-12 h minimum interval
   push:
     branches: [main]   # every push runs the bot once on the new code (the concurrency group prevents overlap)
+    paths-ignore:      # ...unless it cannot change what the bot does
+      - "**.md"
+      - "tests/**"
+      - "cloudflare/**"
+      - ".github/workflows/tests.yml"
   workflow_dispatch:
     inputs:
       dry_run:
@@ -18,13 +23,14 @@ concurrency:
 
 permissions:
   contents: read
+  actions: write   # only used by the keep-alive step below
 
 jobs:
   scrape:
     runs-on: ubuntu-latest
     timeout-minutes: 55
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # "Re-run jobs" replays the commit the original run was created from, not the current main.
       # Fail fast in that case so a stale run never masquerades as a run of the latest code.
@@ -37,7 +43,19 @@ jobs:
             exit 1
           fi
 
-      - uses: actions/setup-python@v5
+      # GitHub disables scheduled workflows after 60 days without repository activity, silently. Re-enabling them
+      # through the API (what the well-known keepalive actions do) keeps a bot that needs no commits running.
+      # The Cloudflare Worker's watchdog (cloudflare/README.md, step 9) is the independent second line.
+      - name: Keep the schedules alive
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for wf in scraper.yml commands.yml; do
+            url="https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/workflows/$wf/enable"
+            curl -fsS -o /dev/null -X PUT -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "$url" || echo "::warning::could not re-enable $wf"
+          done
+
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: pip
