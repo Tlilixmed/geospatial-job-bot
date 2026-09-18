@@ -143,6 +143,7 @@ def make_settings(**overrides) -> Settings:
     s.default_host_delay = 0
     s.store_raw_snapshots = True
     s.weekly_summary = False  # enabled explicitly by the tests that cover it
+    s.sponsor_registers = False
     for key, value in overrides.items():
         setattr(s, key, value)
     return s

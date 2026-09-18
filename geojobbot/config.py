@@ -148,6 +148,7 @@ class Settings:
     candidate_profile: str = ""  # empty = the built-in profile in geojobbot/ai/review.py
     reliefweb_appname: str | None = None  # approved app name from ReliefWeb (free): UN/NGO jobs, hired internationally
     weekly_summary: bool = True
+    sponsor_registers: bool = True  # UK / Canada / Netherlands official sponsor registers, refreshed weekly
     # JSearch (RapidAPI): "query@country" entries rotated across runs, JSEARCH_REQUESTS_PER_RUN per run.
     # The free tier allows 200 requests/month: one per 4-hourly run stays inside it.
     jsearch_api_key: str | None = None
@@ -287,6 +288,7 @@ def load_settings() -> Settings:
     s.ai_veto_possible = env_bool("AI_VETO_POSSIBLE", s.ai_veto_possible)
     s.candidate_profile = env_str("CANDIDATE_PROFILE", s.candidate_profile) or ""
     s.weekly_summary = env_bool("WEEKLY_SUMMARY", s.weekly_summary)
+    s.sponsor_registers = env_bool("SPONSOR_REGISTERS", s.sponsor_registers)
     s.jsearch_api_key = env_str("JSEARCH_API_KEY")
     s.jsearch_requests_per_run = max(0, env_int("JSEARCH_REQUESTS_PER_RUN", s.jsearch_requests_per_run))
     s.jsearch_queries = env_list("JSEARCH_QUERIES", s.jsearch_queries)

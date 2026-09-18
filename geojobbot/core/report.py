@@ -77,6 +77,8 @@ def build_summary(report: dict) -> str:
         f"  Muted / hidden or applied / held while paused: {c.get('muted', 0)} / {c.get('hidden', 0)} / {c.get('paused', 0)}",
         f"  Pending (Telegram not configured / dry run): {c.get('alerts_pending', 0)}",
         "",
+        f"Sponsor registers: {c.get('sponsor_matches', 0)} of this run's jobs are from employers on an official register"
+        + (f" (refreshed: {report['sponsor_registers']})" if report.get('sponsor_registers') else ""),
         f"AI second opinion: {c.get('ai_reviewed', 0)} reviewed, {c.get('ai_vetoed', 0)} vetoed, "
         f"{c.get('ai_failed', 0)} failed, {c.get('ai_deferred', 0)} deferred to the next run",
         "",

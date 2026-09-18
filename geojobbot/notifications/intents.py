@@ -129,6 +129,10 @@ def interpret(text: str, is_code: Callable[[str], bool] = lambda token: False) -
     if _has(t, r"\b(weekly|hebdo\w*|summary|recap|bilan|recapitulatif)\b"):
         return "weekly", ""
 
+    # "jobs from licensed sponsors", "who sponsors visas", "offres avec parrainage"
+    if not code and _has(t, r"\b(sponsor\w*|visa|visas|lmia|parrain\w*|work permit|permis de travail)\b"):
+        return "sponsors", str(_number(fixed, 1, 30) or "")
+
     # which tiers are alerted: "only alert me on high matches", "also send possible matches"
     if _has(t, r"\b(alert\w*|notif\w*|send\w*|envoie\w*|envoy\w*|previens)\b") and \
             _has(t, r"\b(possible|possibles|high|hautes?|strong|best)\b") and _number(fixed, 1, 100) is None:

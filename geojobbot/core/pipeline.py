@@ -20,6 +20,7 @@ from datetime import timedelta
 
 from ..ai.client import WorkersAI
 from ..ai.review import review_job
+from ..insights.sponsors import SponsorRegistry, annotate_record
 from ..models import SourceResult
 from ..notifications.commands import CommandProcessor
 from ..notifications.telegram import TelegramNotifier, format_digest, format_job_message
@@ -113,13 +114,14 @@ class SecretRedactingFilter(logging.Filter):
 
 class Pipeline:
     def __init__(self, settings, *, store: ObjectStore | None = None, http_session=None, notifier=None,
-                 backends: list[Backend] | None = None, now=None, sleep=time.sleep, ai=None):
+                 backends: list[Backend] | None = None, now=None, sleep=time.sleep, ai=None, sponsors=None):
         self.settings = settings
         self.store = store
         self.http_session = http_session
         self.notifier = notifier
         self.backends = backends
         self.ai = ai
+        self.sponsors = sponsors
         self.now = now or utcnow()
         self.sleep = sleep
         suffix = os.environ.get("GITHUB_RUN_ID") or secrets.token_hex(3)
@@ -234,6 +236,7 @@ class Pipeline:
         counts["unique"] = len(fused)
         outcome = process_fused(fused, state, settings, self.now)
         counts.update(outcome.counts)
+        counts.update(self._sponsors(manager, ctx, outcome, state, writes_allowed, report))
         counts.update(self._ai_review(outcome, state))
 
         relevant_by_board = Counter()
@@ -330,6 +333,32 @@ class Pipeline:
             log.warning("stored preferences not applied: %s", type(exc).__name__)
             handled["prefs"] = f"not applied ({type(exc).__name__})"
         return handled
+
+    def _sponsors(self, manager: StateManager, ctx: RunContext, outcome, state: dict, writes_allowed: bool,
+                  report: dict) -> Counter:
+        """Look every accepted employer up in the official sponsor registers (refreshed weekly, never fatal)."""
+        counts = Counter()
+        if not self.settings.sponsor_registers and self.sponsors is None:
+            return counts
+        try:
+            registry = self.sponsors if self.sponsors is not None else SponsorRegistry.load(manager)
+            if self.sponsors is None and registry.stale(self.now) and writes_allowed and not ctx.out_of_time(420):
+                report["sponsor_registers"] = registry.refresh(ctx)
+                registry.save(manager)
+            for _, _, rec in outcome.evaluated:
+                stored = state["jobs"][rec.canonical_id]
+                if set(stored.get("rejection_reasons") or []) - {"LOW_SCORE"}:
+                    continue
+                before = stored.get("tier")
+                annotate_record(stored, registry, self.settings)
+                counts["sponsor_matches"] += bool(stored.get("sponsor"))
+                if stored.get("tier") != before:
+                    counts[f"tier_{before}"] -= 1
+                    counts[f"tier_{stored['tier']}"] += 1
+        except Exception as exc:
+            log.warning("sponsor registers skipped: %s", type(exc).__name__)
+            counts["sponsor_errors"] += 1
+        return counts
 
     def _ai_review(self, outcome, state: dict) -> Counter:
         """Workers AI second opinion for accepted jobs that have a description and no review yet.

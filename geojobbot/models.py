@@ -105,6 +105,7 @@ class JobRecord:
     last_notify_error: str | None = None
     pending_update_alert: bool = False
     changes: list = field(default_factory=list)
+    sponsor: list = field(default_factory=list)  # official visa-sponsor registers the employer appears on
     ai: dict = field(default_factory=dict)  # Workers AI second opinion: fit, summary, concerns, requirements, veto
 
     def to_dict(self) -> dict:

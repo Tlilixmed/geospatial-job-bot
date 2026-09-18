@@ -15,6 +15,7 @@ import requests
 
 from ..models import TIER_HIGH
 from ..utils.dates import parse_datetime
+from ..insights.sponsors import sponsor_badge
 from ..utils.location import ParsedLocation
 from ..utils.text import job_code, normalize_company, normalize_title
 
@@ -74,6 +75,9 @@ def _digest_entry(rec: dict, index: int, same: list[dict] | None = None) -> str:
         facts.append(f"💰 {_esc(rec['salary'])}")
     if "Visa sponsorship offered" in (rec.get("why_matched") or []):
         facts.append("🛂 sponsorship offered")
+    badge = sponsor_badge(rec)
+    if badge:
+        facts.append(_esc(badge))
     skills = [s.split(" (")[0] for s in rec.get("matched_skills") or []]
     tail = []
     if skills:

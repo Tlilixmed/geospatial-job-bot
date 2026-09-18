@@ -32,6 +32,7 @@ HELP = """🗺️ <b>Geospatial job bot — commands</b>
 /high [n] — High matches only
 /search words — search stored jobs (plain text works too)
 /why code — why a job matched, score breakdown and the AI second opinion
+/sponsors [n] — matches from employers on official visa-sponsor registers (UK, Canada, NL)
 /ai [n] — what the AI thinks of current matches: fit /10, summary, concerns
 /pitch code — AI drafts a short application note for that job
 
@@ -263,6 +264,7 @@ class CommandProcessor:
             "/interns": self.cmd_interns, "/pause": self.cmd_pause, "/resume": self.cmd_resume,
             "/status": self.cmd_status, "/run": self.cmd_run, "/weekly": self.cmd_weekly, "/range": self.cmd_range,
             "/pitch": self.cmd_pitch, "/draft": self.cmd_pitch, "/ai": self.cmd_ai, "/possible": self.cmd_possible,
+            "/sponsors": self.cmd_sponsors, "/sponsor": self.cmd_sponsors,
         }
 
     # ------------------------------------------------------------------ find
@@ -332,6 +334,15 @@ class CommandProcessor:
                      **{k: breakdown.get(k, 0) for k in ("title", "tech", "domain", "responsibilities", "location")})]
         if rec.get("why_matched"):
             lines += ["", "<b>Evidence</b>"] + [f"• {_esc(w)}" for w in rec["why_matched"][:12]]
+        for hit in rec.get("sponsor") or []:
+            note = f"{hit.get('icon', '🛂')} {_esc(hit['label'])}: {_esc(hit.get('name'))}"
+            if hit.get("positions"):
+                note += f" · {hit['positions']} approved positions"
+            if hit.get("occupations"):
+                note += " · hired " + _esc(", ".join(hit["occupations"]))
+            if hit.get("match") == "variant":
+                note += " (name variant)"
+            lines += ([""] if hit is (rec.get("sponsor") or [None])[0] else []) + [note]
         review = rec.get("ai") or {}
         if review:
             lines += ["", f"<b>AI second opinion</b> · fit {review.get('fit', '?')}/10"]
@@ -499,6 +510,44 @@ class CommandProcessor:
                  f"Muted: {_esc(', '.join(self.prefs['muted'])) or 'nothing'} · applied: {len(self.prefs['applied'])} · "
                  f"hidden: {len(self.prefs['hidden'])}"]
         return ["\n".join(lines)]
+
+    def cmd_sponsors(self, arg: str) -> list[str]:
+        """Current matches whose employer is on an official sponsor register, or whose posting offers sponsorship."""
+        limit = self._number(arg, 10, 1, 30)
+        rows = []
+        for rec in self._current_matches():
+            offered = ("Visa sponsorship offered" in (rec.get("why_matched") or [])
+                       or (rec.get("ai") or {}).get("sponsorship") == "offered")
+            hits = rec.get("sponsor") or []
+            if not (hits or offered):
+                continue
+            local = any(h.get("country") == rec.get("country") for h in hits)
+            rows.append((0 if offered else 1 if local else 2, -int(rec.get("score") or 0), rec, hits, offered))
+        if not rows:
+            return ["No current match comes from an employer on the UK, Canada or Netherlands sponsor registers yet, and "
+                    "none states that it sponsors. The registers are checked on every run."]
+        rows.sort(key=lambda row: row[:2])
+        lines = ["🛂 <b>Sponsorship evidence</b>",
+                 f"<i>{len(rows)} current matches · posting says so first, then employers licensed in the job's own country</i>"]
+        for index, (_, _, rec, hits, offered) in enumerate(rows[:limit], 1):
+            link = rec.get("apply_url") or rec.get("url")
+            title = f'<a href="{_esc(link)}">{_esc(rec.get("title"))}</a>' if link else f"<b>{_esc(rec.get('title'))}</b>"
+            lines += ["", f"{index}. {title}" + (f" — {_esc(rec['company'])}" if rec.get("company") else ""),
+                      f"   score {int(rec.get('score') or 0)} · {_esc(rec.get('country') or rec.get('location_raw') or 'location unknown')}"
+                      f" · <code>{job_code(rec.get('canonical_id'))}</code>"]
+            if offered:
+                lines.append("   ✅ the posting offers visa sponsorship")
+            for hit in hits[:3]:
+                detail = f"   {hit.get('icon', '🛂')} {_esc(hit['label'])}: {_esc(hit.get('name'))}"
+                if hit.get("positions"):
+                    detail += f" · {hit['positions']} approved positions"
+                if hit.get("occupations"):
+                    detail += " · hired " + _esc(", ".join(hit["occupations"]))
+                if hit.get("match") == "variant":
+                    detail += " (name variant: check)"
+                lines.append(detail)
+        text = "\n".join(lines)
+        return [text if len(text) <= MAX_MESSAGE else text[: MAX_MESSAGE - 1] + "…"]
 
     def _ai_coverage(self) -> tuple[int, int, int]:
         """(current matches, of which reviewed by the AI, jobs the AI vetoed)."""
