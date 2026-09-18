@@ -191,6 +191,20 @@ test("the AI may open read-only views by itself, but never change a setting", as
   assert.equal(nonsense.stored("inbox/000000000100.json").hint, "");
 });
 
+test("views formatted by Python are sent as they are; a missing view goes to Python", async () => {
+  const index = makeIndex([]);
+  index.views = { sources: "📊 <b>Source yield</b>" };
+  const h = harness({ index });
+  await h.say("/yield");
+  await h.say("sources");
+  assert.equal(h.sent[0].text, "📊 <b>Source yield</b>");
+  assert.match(h.sent[1].text, /Source yield/);
+  assert.equal(h.dispatched.length, 0);
+  const older = harness({ index: makeIndex([]) });
+  await older.say("/sources");
+  assert.equal(older.dispatched.length, 1);
+});
+
 test("strangers and wrong secrets are refused", async () => {
   const h = harness({ index: makeIndex([job("gh:acme:1")]) });
   assert.equal((await h.say("/jobs", { secret: "nope" })).status, 403);

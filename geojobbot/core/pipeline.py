@@ -20,7 +20,7 @@ from datetime import timedelta
 
 from ..ai.client import WorkersAI
 from ..ai.review import review_job
-from ..insights import radar, signals
+from ..insights import radar, signals, yields
 from ..insights.learning import apply_learning, build_model
 from ..insights.sponsors import SponsorRegistry, annotate_record
 from ..models import SourceResult
@@ -230,6 +230,7 @@ class Pipeline:
             raws.extend(found)
         counts = report["counts"]
         counts["raw"] = len(raws)
+        yields.record_run(state, raws, self.now)
         counts["prefiltered_out"] = sum(r.get("prefiltered_out", 0) for r in report["sources"])
         for r in report["sources"]:
             details = r.get("details") or {}
@@ -541,7 +542,8 @@ class Pipeline:
             manager.write_json(f"runs/{day}/{self.run_id}.json.gz", full, compress=True)
             manager.write_json("runs/latest.json", dict(report, counts=dict(report["counts"])), compress=False)
             # read model for the Cloudflare Worker's instant replies
-            manager.write_json(INDEX_SUFFIX, build_index(state, self.settings, report, self.now, HELP), compress=False)
+            manager.write_json(INDEX_SUFFIX, build_index(state, self.settings, report, self.now, HELP,
+                                                         views=self._views(manager, state)), compress=False)
             maintenance = state.setdefault("maintenance", {})
             last = parse_datetime(maintenance.get("last_cleanup"))
             if last is None or self.now - last > timedelta(hours=24):
@@ -554,6 +556,15 @@ class Pipeline:
         except (StorageError, ConcurrentModificationError) as exc:
             log.warning("writing run artifacts failed: %s", exc)
             report["artifact_error"] = str(exc)
+
+    def _views(self, manager: StateManager, state: dict) -> dict:
+        """Replies formatted here so the Worker can send them instantly ({command: html})."""
+        views = {}
+        try:
+            views["sources"] = yields.format_yield(yields.compute(state, load_prefs(manager), self.now))
+        except Exception as exc:
+            log.warning("views not built: %s", type(exc).__name__)
+        return views
 
     def _fatal(self, report: dict, message: str, started: float, ctx: RunContext | None = None):
         log.error(message)

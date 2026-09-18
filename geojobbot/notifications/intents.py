@@ -138,6 +138,10 @@ def interpret(text: str, is_code: Callable[[str], bool] = lambda token: False) -
         if _has(t, r"\b(signals?|tenders?|procurement|contracts? (?:awards?|won)|appels? d offres?|marches publics?|"
                    r"consultanc(?:y|ies)|who (?:is|s) winning)\b"):
             return "signals", str(_number(fixed, 1, 20) or "")
+        if _has(t, r"\b(sources?|yield|job boards?|websites?|sites?)\b") and \
+                _has(t, r"\b(best|useful|useless|work\w*|deliver\w*|yield|noise|noisy|worth|stats?|statistics|perform\w*|"
+                        r"which|quelles?|meilleures?|utiles?|rendement)\b"):
+            return "sources", ""
         if _has(t, r"\b(learn(?:ed|ing|t)?|appris|apprentissage)\b"):
             if _has(t, r"\b(forget|reset|wipe|clear|oublie\w*|efface\w*)\b"):
                 return "learning", "reset"

@@ -43,7 +43,8 @@ def _entry(cid: str, rec: dict) -> dict:
     return entry
 
 
-def build_index(state: dict, settings, report: dict, now, help_text: str) -> dict:
+def build_index(state: dict, settings, report: dict, now, help_text: str, views: dict | None = None) -> dict:
+    """`views` are replies Python formatted in advance ({command: html}); the Worker sends them as they are."""
     rows = []
     for cid, rec in state.get("jobs", {}).items():
         accepted = rec.get("tier") in ("high", "possible")
@@ -53,7 +54,7 @@ def build_index(state: dict, settings, report: dict, now, help_text: str) -> dic
     rows.sort(key=lambda e: (e["tier"] != "high", -e["s"]))
     counts = report.get("counts") or {}
     return {
-        "schema": SCHEMA, "generated_at": to_iso(now), "help": help_text,
+        "schema": SCHEMA, "generated_at": to_iso(now), "help": help_text, "views": views or {},
         "settings": {"high": settings.high_threshold, "medium": settings.medium_threshold,
                      "max_age_h": settings.max_job_age_hours, "rotation_max_age_h": settings.rotation_max_job_age_hours,
                      "notify_possible": settings.notify_possible, "exclude_internships": settings.exclude_internships,

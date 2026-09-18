@@ -4,6 +4,7 @@ from __future__ import annotations
 from datetime import timedelta
 
 from ..core.jobs import APPLICATION_STATUSES, alert_block_reason, is_listed
+from ..insights import yields
 from ..models import TIER_HIGH
 from ..utils.dates import parse_datetime
 from ..utils.text import fold, job_code, normalize_company, normalize_title
@@ -89,5 +90,8 @@ def format_weekly(state: dict, prefs: dict, settings, now) -> str | None:
                 lines.append(f"   ⚠️ {_esc(review['concerns'])}")
         lines.append("")
         lines.append("/ai shows the AI's view of every match · /applied code · /hide code")
+    source_lines = yields.weekly_lines(yields.compute(state, prefs, now))
+    if source_lines:
+        lines += [""] + source_lines + ["/sources shows every source"]
     text = "\n".join(lines)
     return text if len(text) <= 4096 else text[:4095] + "…"

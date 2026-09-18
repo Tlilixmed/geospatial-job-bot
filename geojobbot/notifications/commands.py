@@ -17,7 +17,7 @@ from ..ai.review import write_pitch
 from ..core.descriptions import DescriptionStore
 from ..core.jobs import APPLICATION_STATUSES, alert_block_reason, is_listed
 from ..core.prefs import load_prefs, save_prefs
-from ..insights import radar, signals
+from ..insights import radar, signals, yields
 from ..insights.learning import MIN_LABELS, build_model, describe_model, snapshot
 from ..matching.profile import TECH_SKILLS
 from ..models import TIER_HIGH, TIER_POSSIBLE
@@ -58,6 +58,7 @@ HELP = """🗺️ <b>Geospatial job bot — commands</b>
 /status — last run and current settings
 /radar — skills the market asks for vs yours · /skills edits your list
 /signals — firms winning geospatial contracts, consultancies, tenders
+/sources — which sources actually deliver, and which only make noise
 /learning — what I learned from your applications and hidden jobs
 /weekly — applications and open matches summary
 /run — start a scraper run now
@@ -274,7 +275,7 @@ class CommandProcessor:
             "/pitch": self.cmd_pitch, "/draft": self.cmd_pitch, "/ai": self.cmd_ai, "/possible": self.cmd_possible,
             "/sponsors": self.cmd_sponsors, "/sponsor": self.cmd_sponsors, "/outcome": self.cmd_outcome,
             "/learning": self.cmd_learning, "/radar": self.cmd_radar, "/skills": self.cmd_skills,
-            "/signals": self.cmd_signals,
+            "/signals": self.cmd_signals, "/sources": self.cmd_sources, "/yield": self.cmd_sources,
         }
 
     # ------------------------------------------------------------------ find
@@ -581,6 +582,9 @@ class CommandProcessor:
         items = (self.state.get("signals") or {}).get("items") or []
         return [signals.format_signals(items, heading="Recent market signals", limit=self._number(arg, 10, 1, 20))
                 or "No procurement signals stored yet. They are checked once a day during scraper runs."]
+
+    def cmd_sources(self, arg: str) -> list[str]:
+        return [yields.format_yield(yields.compute(self.state, self.prefs, self.now))]
 
     def cmd_possible(self, arg: str) -> list[str]:
         if arg.lower() not in ("on", "off"):

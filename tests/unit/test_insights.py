@@ -138,3 +138,46 @@ def test_signals_classify_filter_and_dedupe():
     proc._state = {"jobs": {}, "signals": state["signals"]}
     proc.run_text("/signals")
     assert "Recent market signals" in replies.sent[-1] and "GEOFIT EXPERT" in replies.sent[-1]
+
+
+def test_source_yield_counts_what_each_source_alone_delivered():
+    from geojobbot.insights import yields
+    from geojobbot.models import RawJob
+
+    def raw(name):
+        return RawJob(source_type="feed", source_name=name, source_url="https://x.example", title="t")
+
+    state = {"jobs": {}}
+    yields.record_run(state, [raw("jobspy:linkedin")] * 40 + [raw("jsearch:LinkedIn")] * 60 + [raw("remoteok")] * 200, NOW)
+    yields.record_run(state, [raw("jsearch:Indeed")] * 10 + [raw("generic_html")] * 3, NOW)
+    assert state["yield"]["days"][NOW.strftime("%Y-%m-%d")] == {"jobspy:linkedin": 40, "jsearch": 70, "remoteok": 200,
+                                                                "career pages": 3}
+    fresh = {"first_seen": NOW.isoformat(), "last_seen": NOW.isoformat()}
+    state["jobs"] = {
+        "a": job("a", "GIS Analyst", sources=[{"source_name": "jobspy:linkedin"}], **fresh),
+        "b": job("b", "GIS Analyst", sources=[{"source_name": "jobspy:linkedin"}, {"source_name": "jsearch:Indeed"}], **fresh),
+        "c": job("c", "GIS Analyst", tier="possible", sources=[{"source_name": "generic_jsonld"}], **fresh),
+        "old": job("old", "GIS Analyst", sources=[{"source_name": "remoteok"}], first_seen=(NOW - timedelta(days=60)).isoformat()),
+        "no": job("no", "Accountant", tier="rejected", sources=[{"source_name": "remoteok"}], **fresh),
+    }
+    for extra in range(4):  # jsearch finds five jobs, every one of them also found elsewhere
+        state["jobs"][f"d{extra}"] = job(f"d{extra}", "GIS Analyst", sources=[{"source_name": "greenhouse"},
+                                                                              {"source_name": "jsearch:Glassdoor"}], **fresh)
+    data = yields.compute(state, {"applied": {"a": {}}}, NOW)
+    rows = {r["source"]: r for r in data["rows"]}
+    assert rows["jobspy:linkedin"] == {"source": "jobspy:linkedin", "raw": 40, "found": 2, "high": 2, "only": 1, "applied": 1}
+    assert rows["jsearch"]["found"] == 5 and rows["jsearch"]["only"] == 0 and rows["career pages"]["only"] == 1
+    assert rows["remoteok"]["found"] == 0 and data["accepted"] == 7
+    text = yields.format_yield(data)
+    assert "Noise so far: remoteok (200 raw" in text and "Redundant so far" in text and "jsearch" in text.split("Redundant")[1]
+    assert "Uses an API quota without adding anything unique: jsearch" in text
+    assert any("Best sources" in line for line in yields.weekly_lines(data))
+    assert "No source statistics yet" in yields.format_yield(yields.compute({}, {}, NOW))
+
+    proc, replies, _, _ = setup([], [])
+    proc._state = state
+    proc.run_text("which sources work best?")
+    assert replies.sent[-1].startswith("↪ <i>/sources</i>") and "Source yield" in replies.sent[-1]
+    # old buckets are dropped
+    yields.record_run(state, [], NOW + timedelta(days=40))
+    assert NOW.strftime("%Y-%m-%d") not in state["yield"]["days"]

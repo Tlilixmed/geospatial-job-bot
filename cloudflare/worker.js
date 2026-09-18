@@ -27,10 +27,11 @@
  */
 const COMMANDS = ["jobs", "high", "range", "search", "why", "applied", "hide", "unhide", "mute", "unmute", "muted",
   "threshold", "locations", "interns", "pause", "resume", "status", "weekly", "run", "help", "pitch", "ai", "sponsors",
-  "outcome", "possible", "radar", "skills", "signals", "learning"];
+  "outcome", "possible", "radar", "skills", "signals", "learning", "sources"];
 const HINT_RE = new RegExp(`^/(${COMMANDS.join("|")})(\\s[^\\n]{0,100})?$`);
 const FAST_READ = new Set(["jobs", "top", "high", "range", "search", "why", "ai", "sponsors", "sponsor", "status", "help",
-  "start", "muted", "signals"]);
+  "start", "muted", "signals", "sources", "yield"]);
+const VIEW_ALIASES = { yield: "sources" };  // replies Python formatted in advance: index.views[command]
 const FAST_WRITE = new Set(["applied", "outcome", "hide", "unhide", "mute", "unmute", "threshold", "locations", "interns",
   "possible", "pause", "resume"]);
 const STATUSES = { applied: "📨", interview: "🎤", offer: "🎉", rejected: "❌", withdrawn: "↩️", ghosted: "👻" };
@@ -63,6 +64,7 @@ Commands:
 /weekly              summary of applications and open matches
 /radar               which skills the market asks for and which the user lacks
 /signals             firms that won geospatial contracts, consultancies, tenders
+/sources             which job sources deliver results and which are noise
 /learning            what the bot learned from the user's applications and hidden jobs
 /run                 search for new jobs right now
 /help                what the bot can do
@@ -474,6 +476,7 @@ async function answerFast(env, command, arg, echo) {
   else if (command === "status") messages = viewStatus(index, prefs);
   else if (command === "muted") messages = [`Muted: ${esc(prefs.muted.join(", ")) || "nothing"}`];
   else if (command === "signals") messages = viewSignals(index, arg);
+  else if ((index.views || {})[VIEW_ALIASES[command] || command]) messages = [index.views[VIEW_ALIASES[command] || command]];
   else if (command === "applied" && !arg.trim()) messages = await viewApplied(prefs);
   else messages = await mutate(env, index, prefs, command, arg.trim());
   if (!messages) return false;
@@ -493,6 +496,7 @@ function shortcut(text, index) {
   if (/^(ai|ia|ai summary|second opinion)$/.test(t)) return ["ai", ""];
   if (/^(sponsors?|visa|visas)$/.test(t)) return ["sponsors", ""];
   if (/^(signals?|tenders?)$/.test(t)) return ["signals", ""];
+  if (/^(sources?|yield)$/.test(t)) return ["sources", ""];
   if (/^[0-9a-f]{5}$/.test(t) && index && index.jobs.some((j) => j.code === t)) return ["why", t];
   return null;
 }
