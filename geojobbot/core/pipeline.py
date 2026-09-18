@@ -30,6 +30,7 @@ from ..notifications.telegram import TelegramNotifier, format_digest, format_job
 from ..notifications.weekly import format_follow_ups, format_weekly
 from ..scrapers.ats.base import ATSBackend
 from ..scrapers.ats.more_ats import all_adapters
+from ..scrapers.official import BundesagenturBackend, FranceTravailBackend
 from ..scrapers.base import Backend, RunContext
 from ..scrapers.feeds import (AdzunaBackend, ArbeitnowBackend, HimalayasBackend, JobicyBackend, JobSpyBackend,
                               JoobleBackend, JSearchBackend, ReliefWebBackend, RemoteOKBackend, RemotiveBackend,
@@ -104,6 +105,8 @@ def build_backends(settings, sponsor_data=None) -> list[Backend]:
         JoobleBackend(),
         JSearchBackend(),
         ReliefWebBackend(),
+        BundesagenturBackend(),
+        FranceTravailBackend(),
         JobSpyBackend(),
     ]
     return backends

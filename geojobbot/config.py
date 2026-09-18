@@ -138,6 +138,8 @@ class Settings:
     adzuna_countries: list[str] = field(default_factory=lambda: ["ca", "gb", "us"])
     adzuna_requests_per_run: int = 30  # free tier: 250 calls/day
     jooble_api_key: str | None = None
+    francetravail_client_id: str | None = None  # free application at francetravail.io (API "Offres d'emploi v2")
+    francetravail_client_secret: str | None = None
     jooble_locations: list[str] = field(default_factory=list)  # falls back to preferred_locations
     jooble_requests_per_run: int = 12
     # Workers AI second opinion (free daily allowance). The account id is derived from the R2 endpoint.
@@ -201,7 +203,7 @@ class Settings:
     def secrets(self) -> list[str]:
         return [s for s in (self.r2_access_key_id, self.r2_secret_access_key, self.telegram_bot_token,
                             self.usajobs_api_key, self.adzuna_app_key, self.jooble_api_key,
-                            self.jsearch_api_key, self.cloudflare_ai_token) if s]
+                            self.jsearch_api_key, self.cloudflare_ai_token, self.francetravail_client_secret) if s]
 
 
 def load_sources(path: str) -> dict:
@@ -283,6 +285,8 @@ def load_settings() -> Settings:
     s.adzuna_app_key = env_str("ADZUNA_APP_KEY")
     s.adzuna_countries = [c.lower() for c in env_list("ADZUNA_COUNTRIES", s.adzuna_countries)]
     s.jooble_api_key = env_str("JOOBLE_API_KEY")
+    s.francetravail_client_id = env_str("FRANCETRAVAIL_CLIENT_ID")
+    s.francetravail_client_secret = env_str("FRANCETRAVAIL_CLIENT_SECRET")
     s.jooble_locations = env_list("JOOBLE_LOCATIONS", s.jooble_locations)
     s.jooble_requests_per_run = env_int("JOOBLE_REQUESTS_PER_RUN", s.jooble_requests_per_run)
     s.adzuna_requests_per_run = env_int("ADZUNA_REQUESTS_PER_RUN", s.adzuna_requests_per_run)
