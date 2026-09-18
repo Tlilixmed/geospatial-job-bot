@@ -82,6 +82,17 @@ Invalid configured slugs are listed prominently in the run summary and GitHub st
 - **French postings.** Titles such as "Ingénieur SIG", "Géomaticien", "Topographe", "Cartographe" or "Chargé d'études SIG" and French skill and domain wording (télédétection, photogrammétrie, nuages de points, levés topographiques, "maîtrise de QGIS exigée"…) are recognised alongside English, so Tunisian, Maghreb and Québec sources score properly. Accents are folded before title matching.
 - **Customising.** Edit `geojobbot/matching/profile.py` to add roles, skills, domains or negatives.
 
+### AI second opinion (optional, free)
+
+With a `CLOUDFLARE_AI_TOKEN` secret the bot asks Cloudflare Workers AI (`@cf/meta/llama-3.1-8b-instruct`, free daily allowance) about every job the deterministic scorer accepted, once per job, best matches first, at most `AI_REVIEWS_PER_RUN` (25) per run:
+
+- a one-sentence English **summary** of what the job is and why it fits (French, Arabic or German postings are translated), shown as 💡 in the digest;
+- **concerns** the keyword rules cannot see ("requires 8+ years", "German required", "licensed surveyor only"), shown as ⚠️;
+- a 0-10 **fit**, minimum years, required languages, sponsorship reading and up to five key requirements, all visible in `/why code`;
+- `/pitch code` drafts a short application note in the posting's language from those requirements and your profile.
+
+The scorer stays the authority. The only decision the model can take is a veto of a *Possible* match it rates clearly irrelevant (fit ≤ 2, `AI_VETO_POSSIBLE=false` disables it); High matches are never vetoed. Every field is validated and clamped, the run never depends on the service (three failures and it stops calling), and an outage changes nothing about alerts. The candidate profile the model sees is the generic one in `geojobbot/ai/review.py`; override it privately with the `CANDIDATE_PROFILE` secret. The account id is taken from the R2 endpoint, so the token is the only thing to add: Cloudflare dashboard → My Profile → API Tokens → Create Token → template **Workers AI** (Read is enough).
+
 ### Deduplication and source fusion
 
 Each observation yields identity keys, strongest first:
@@ -123,7 +134,8 @@ The bot answers messages from the configured chat only; every other chat is igno
 | `/jobs [n]`, `/high [n]` | best current matches that are fresh, not muted, hidden or applied |
 | `/range 60 70` | fresh jobs whose score lies in a range (includes ones just under the Possible cut-off) |
 | `/search words` | search stored matches by title, company, place, skill |
-| `/why code` | score breakdown, evidence, sources and link for one job |
+| `/why code` | score breakdown, evidence, AI second opinion, sources and link for one job |
+| `/pitch code` | Workers AI drafts a short application note for that job, in the posting's language |
 | `/applied code`, `/applied` | mark as applied (never alerted again) · list applications |
 | `/hide code`, `/unhide code` | dismiss or restore a job |
 | `/mute text`, `/unmute text`, `/muted` | silence a company or title word |
@@ -212,6 +224,7 @@ Optional secrets, each enabling one more source:
 | `ADZUNA_APP_ID`, `ADZUNA_APP_KEY` | free at developer.adzuna.com (Canada, UK, US, AU, DE, FR… — not Tunisia) |
 | `JOOBLE_API_KEY` | free at jooble.org/api/about (covers Tunisia, the Maghreb and Canada) |
 | `RELIEFWEB_APPNAME` | free approved app name from apidoc.reliefweb.int/parameters#appname: UN and NGO GIS / information-management jobs, hired internationally, many in French- or Arabic-speaking duty stations |
+| `CLOUDFLARE_AI_TOKEN` | Cloudflare → My Profile → API Tokens → Create Token → **Workers AI** template: AI summaries, concerns, veto and `/pitch` |
 | `JSEARCH_API_KEY` | free tier at rapidapi.com (JSearch, 200 requests/month): Google for Jobs results, i.e. LinkedIn, Indeed and Glassdoor postings with full descriptions, any country |
 
 Optional **variables** (`scraper.yml` applies sensible defaults when unset; Canada and Tunisia are the default locations):
@@ -361,6 +374,7 @@ In a dry run, alerts are printed rather than sent and no state is written, unles
 | `JOOBLE_API_KEY`, `JOOBLE_LOCATIONS` | empty, `PREFERRED_LOCATIONS` | enables Jooble |
 | `ADZUNA_REQUESTS_PER_RUN`, `JOOBLE_REQUESTS_PER_RUN`, `JOBSPY_LOCATIONS_PER_RUN` | `30`, `12`, `3` | per-run budgets; countries, locations and terms rotate across runs so quotas and runtime stay flat as the lists grow |
 | `RELIEFWEB_APPNAME`, `WEEKLY_SUMMARY` | empty, `true` | enables ReliefWeb · weekly Telegram summary |
+| `CLOUDFLARE_AI_TOKEN`, `AI_REVIEWS_PER_RUN`, `AI_VETO_POSSIBLE`, `AI_MODEL`, `CANDIDATE_PROFILE` | empty, `25`, `true`, llama-3.1-8b-instruct, built-in | Workers AI second opinion, veto of clearly irrelevant Possible matches, `/pitch` |
 | `JSEARCH_API_KEY`, `JSEARCH_REQUESTS_PER_RUN`, `JSEARCH_QUERIES` | empty, `1`, fifteen `query@country` entries (CA, TN, US, FR, BE, CH, DE, GB, AU, AE, SA, QA) | enables JSearch; queries rotate across runs to stay inside the free quota |
 | `DISABLED_BACKENDS` | empty | e.g. `search_duckduckgo,arbeitnow` |
 | `SOURCE_CONCURRENCY` | `6` | parallel backends |

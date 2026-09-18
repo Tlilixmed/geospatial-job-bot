@@ -12,6 +12,8 @@ from collections import Counter
 
 import requests
 
+from ..ai.client import WorkersAI
+from ..ai.review import write_pitch
 from ..core.jobs import alert_block_reason
 from ..core.prefs import load_prefs, save_prefs
 from ..models import TIER_HIGH, TIER_POSSIBLE
@@ -29,7 +31,8 @@ HELP = """🗺️ <b>Geospatial job bot — commands</b>
 /jobs [n] — best current matches (default 10)
 /high [n] — High matches only
 /search words — search stored jobs (plain text works too)
-/why code — why a job matched, with its score breakdown
+/why code — why a job matched, score breakdown and the AI second opinion
+/pitch code — AI drafts a short application note for that job
 
 <b>Track</b>
 /applied code — mark as applied (no more alerts for it)
@@ -54,20 +57,21 @@ The <code>code</code> is the 5-character tag shown next to each job.
 
 <b>Or just talk to me</b> (English or French, typos are fine):
 “i want the top 5 matching offers” · “jobs between 60 and 70” · “jobs above 80” · “lidar jobs in montreal”
-“why a3f9c” · “i applied to a3f9c” · “not interested in a3f9c” · “stop showing leidos”
+“why a3f9c” · “write a cover letter for a3f9c” · “i applied to a3f9c” · “not interested in a3f9c” · “stop showing leidos”
 “set threshold to 75” · “no internships” · “pause alerts” · “resume” · “run now” · “what can you do”
 I reply with how I understood you, e.g. ↪ /jobs 5."""
 
 
 class CommandProcessor:
     def __init__(self, settings, manager, notifier, *, state: dict | None = None, session=None, now=None,
-                 in_scraper_run: bool = False):
+                 in_scraper_run: bool = False, ai=None):
         self.settings = settings
         self.manager = manager
         self.notifier = notifier
         self.session = session or requests.Session()
         self.now = now or utcnow()
         self.in_scraper_run = in_scraper_run
+        self.ai = ai
         self._state = state
         self.prefs = load_prefs(manager)
         self._dirty = False
@@ -198,7 +202,7 @@ class CommandProcessor:
             return default
 
     # ------------------------------------------------------------------ dispatch
-    NEEDS_CODE = {"why", "hide", "unhide"}
+    NEEDS_CODE = {"why", "hide", "unhide", "pitch"}
     FALLBACK_INTENTS = {"search", "help"}  # what the rules answer when they did not recognise an instruction
 
     def _accept_hint(self, hint: str) -> tuple[str, str] | None:
@@ -247,6 +251,7 @@ class CommandProcessor:
             "/muted": self.cmd_muted, "/threshold": self.cmd_threshold, "/locations": self.cmd_locations,
             "/interns": self.cmd_interns, "/pause": self.cmd_pause, "/resume": self.cmd_resume,
             "/status": self.cmd_status, "/run": self.cmd_run, "/weekly": self.cmd_weekly, "/range": self.cmd_range,
+            "/pitch": self.cmd_pitch, "/draft": self.cmd_pitch,
         }
 
     # ------------------------------------------------------------------ find
@@ -316,6 +321,24 @@ class CommandProcessor:
                      **{k: breakdown.get(k, 0) for k in ("title", "tech", "domain", "responsibilities", "location")})]
         if rec.get("why_matched"):
             lines += ["", "<b>Evidence</b>"] + [f"• {_esc(w)}" for w in rec["why_matched"][:12]]
+        review = rec.get("ai") or {}
+        if review:
+            lines += ["", f"<b>AI second opinion</b> · fit {review.get('fit', '?')}/10"]
+            if review.get("summary"):
+                lines.append(f"💡 {_esc(review['summary'])}")
+            if review.get("concerns"):
+                lines.append(f"⚠️ {_esc(review['concerns'])}")
+            facts = []
+            if review.get("years") is not None:
+                facts.append(f"{review['years']}+ years")
+            if review.get("sponsorship") and review["sponsorship"] != "unknown":
+                facts.append("sponsorship " + review["sponsorship"].replace("_", " "))
+            if review.get("languages"):
+                facts.append("languages: " + ", ".join(review["languages"]))
+            if facts:
+                lines.append(_esc(" · ".join(facts)))
+            if review.get("requirements"):
+                lines += [f"• {_esc(r)}" for r in review["requirements"]]
         if rec.get("rejection_reasons"):
             lines += ["", "Rejected: " + _esc(", ".join(rec["rejection_reasons"]))]
         sources = sorted({s.get("source_name") for s in rec.get("sources") or [] if s.get("source_name")})
@@ -325,6 +348,22 @@ class CommandProcessor:
         if link:
             lines += ["", f'<a href="{_esc(link)}">Open posting</a>']
         return ["\n".join(lines)]
+
+    def cmd_pitch(self, arg: str) -> list[str]:
+        """Draft a short tailored application note with Workers AI."""
+        rec = self._by_code(arg)
+        if rec is None:
+            return ["Usage: /pitch code — I draft a short application note for that job."]
+        ai = self.ai if self.ai is not None else WorkersAI.from_settings(self.settings, budget=2)
+        if ai is None:
+            return ["Drafting needs Workers AI: add the CLOUDFLARE_AI_TOKEN secret (see README)."]
+        note = write_pitch(ai, self.settings.candidate_profile, rec)
+        if not note:
+            return ["The AI service did not answer just now. Try again in a minute."]
+        link = rec.get("apply_url") or rec.get("url")
+        head = f"✍️ <b>Draft for {_esc(rec.get('title'))}</b>" + (f" — {_esc(rec['company'])}" if rec.get("company") else "")
+        tail = f'\n\n<a href="{_esc(link)}">Apply</a> · edit before sending, it is a draft.' if link else ""
+        return [f"{head}\n\n{note}{tail}"]
 
     # ------------------------------------------------------------------ track
     def cmd_applied(self, arg: str) -> list[str]:

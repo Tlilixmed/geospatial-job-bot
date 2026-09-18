@@ -139,6 +139,13 @@ class Settings:
     jooble_api_key: str | None = None
     jooble_locations: list[str] = field(default_factory=list)  # falls back to preferred_locations
     jooble_requests_per_run: int = 12
+    # Workers AI second opinion (free daily allowance). The account id is derived from the R2 endpoint.
+    cloudflare_ai_token: str | None = None
+    cloudflare_account_id: str | None = None
+    ai_model: str = "@cf/meta/llama-3.1-8b-instruct"
+    ai_reviews_per_run: int = 25
+    ai_veto_possible: bool = True
+    candidate_profile: str = ""  # empty = the built-in profile in geojobbot/ai/review.py
     reliefweb_appname: str | None = None  # approved app name from ReliefWeb (free): UN/NGO jobs, hired internationally
     weekly_summary: bool = True
     # JSearch (RapidAPI): "query@country" entries rotated across runs, JSEARCH_REQUESTS_PER_RUN per run.
@@ -186,7 +193,7 @@ class Settings:
     def secrets(self) -> list[str]:
         return [s for s in (self.r2_access_key_id, self.r2_secret_access_key, self.telegram_bot_token,
                             self.usajobs_api_key, self.adzuna_app_key, self.jooble_api_key,
-                            self.jsearch_api_key) if s]
+                            self.jsearch_api_key, self.cloudflare_ai_token) if s]
 
 
 def load_sources(path: str) -> dict:
@@ -273,6 +280,12 @@ def load_settings() -> Settings:
     s.adzuna_requests_per_run = env_int("ADZUNA_REQUESTS_PER_RUN", s.adzuna_requests_per_run)
     s.jobspy_locations_per_run = max(1, env_int("JOBSPY_LOCATIONS_PER_RUN", s.jobspy_locations_per_run))
     s.reliefweb_appname = env_str("RELIEFWEB_APPNAME")
+    s.cloudflare_ai_token = env_str("CLOUDFLARE_AI_TOKEN")
+    s.cloudflare_account_id = env_str("CLOUDFLARE_ACCOUNT_ID")
+    s.ai_model = env_str("AI_MODEL", s.ai_model)
+    s.ai_reviews_per_run = max(0, env_int("AI_REVIEWS_PER_RUN", s.ai_reviews_per_run))
+    s.ai_veto_possible = env_bool("AI_VETO_POSSIBLE", s.ai_veto_possible)
+    s.candidate_profile = env_str("CANDIDATE_PROFILE", s.candidate_profile) or ""
     s.weekly_summary = env_bool("WEEKLY_SUMMARY", s.weekly_summary)
     s.jsearch_api_key = env_str("JSEARCH_API_KEY")
     s.jsearch_requests_per_run = max(0, env_int("JSEARCH_REQUESTS_PER_RUN", s.jsearch_requests_per_run))

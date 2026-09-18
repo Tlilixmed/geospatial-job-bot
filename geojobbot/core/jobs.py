@@ -60,6 +60,28 @@ def _apply(rec: JobRecord, fused: FusedJob, result: MatchResult) -> None:
     rec.rejection_reasons = result.rejection_reasons
 
 
+AI_NOT_RELEVANT = "AI_NOT_RELEVANT"
+AI_VETO_MAX_FIT = 2
+
+
+def apply_ai_veto(rec) -> bool:
+    """Keep a Possible match rejected once the AI review found it clearly irrelevant (fit <= 2).
+
+    Works on a JobRecord or a stored dict. Rescoring on later runs would otherwise resurrect the job.
+    High matches are never vetoed: the deterministic evidence outranks the model there.
+    """
+    get = rec.get if isinstance(rec, dict) else lambda k, d=None: getattr(rec, k, d)
+    review = get("ai") or {}
+    if not review.get("veto") or get("tier") != TIER_POSSIBLE:
+        return False
+    reasons = list(dict.fromkeys(list(get("rejection_reasons") or []) + [AI_NOT_RELEVANT]))
+    if isinstance(rec, dict):
+        rec["tier"], rec["rejection_reasons"] = TIER_REJECTED, reasons
+    else:
+        rec.tier, rec.rejection_reasons = TIER_REJECTED, reasons
+    return True
+
+
 def _merge_sources(rec: JobRecord, fused: FusedJob, now) -> None:
     existing = {(s.get("source_name"), s.get("job_url") or s.get("source_url")): s for s in rec.sources}
     for src in fused.sources(now):
@@ -118,6 +140,7 @@ def process_fused(fused_jobs: list[FusedJob], state: dict, settings, now) -> Pro
                     if (settings.alert_on_changes and rec.notified and ALERT_CHANGE_FIELDS & set(changed)
                             and rec.tier in (TIER_HIGH, TIER_POSSIBLE)):
                         rec.pending_update_alert = True
+        apply_ai_veto(rec)
         jobs[rec.canonical_id] = rec.to_dict()
         outcome.seen_ids.add(rec.canonical_id)
         outcome.evaluated.append((fused, result, rec))

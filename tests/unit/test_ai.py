@@ -1,0 +1,116 @@
+"""Workers AI second opinion: validated, capped, soft-failing, and never above the deterministic scorer."""
+import json
+from datetime import timedelta
+
+from conftest import GIS_DESCRIPTION, NOW, FakeResponse, FakeS3, FakeSession, make_settings
+from test_commands import job, setup
+from test_pipeline import FakeNotifier, StaticBackend, gis_raw
+
+from geojobbot.ai.client import WorkersAI, account_id_from
+from geojobbot.ai.review import clean_review, review_job
+from geojobbot.core.pipeline import Pipeline
+from geojobbot.notifications.telegram import format_digest
+from geojobbot.storage.r2 import R2Store
+from geojobbot.storage.state import StateManager
+from geojobbot.utils.text import job_code
+
+ACCOUNT = "0123456789abcdef0123456789abcdef"
+URL = f"https://api.cloudflare.com/client/v4/accounts/{ACCOUNT}/ai/run/@cf/meta/llama-3.1-8b-instruct"
+
+
+def ai_with(responses, budget=25):
+    """WorkersAI whose HTTP layer answers with the given texts, one per call."""
+    queue = list(responses)
+
+    def handler(method, url, params, body):
+        text = queue.pop(0) if queue else "{}"
+        if isinstance(text, FakeResponse):
+            return text
+        return FakeResponse(200, {"success": True, "result": {"response": text}})
+
+    session = FakeSession({URL: handler})
+    return WorkersAI(ACCOUNT, "token", session=session, budget=budget), session
+
+
+def test_account_id_is_derived_from_the_r2_endpoint():
+    s = make_settings(r2_endpoint_url=f"https://{ACCOUNT}.r2.cloudflarestorage.com", cloudflare_ai_token="t")
+    assert account_id_from(s) == ACCOUNT and WorkersAI.from_settings(s) is not None
+    assert WorkersAI.from_settings(make_settings()) is None  # no token: AI is simply off
+
+
+def test_review_is_parsed_from_chatty_output_and_clamped():
+    chatty = 'Sure! Here is the JSON:\n```json\n{"fit": 14, "summary": "GIS analyst role using ArcGIS Pro; strong fit.", ' \
+             '"concerns": "None", "years": "3", "sponsorship": "Offered", "languages": ["English"], ' \
+             '"requirements": ["ArcGIS Pro", "Python", "x", "y", "z", "extra"],}\n```'
+    ai, session = ai_with([chatty])
+    review = review_job(ai, "", title="GIS Analyst", company="Acme", location="Dubai", description=GIS_DESCRIPTION)
+    assert review["fit"] == 10 and review["concerns"] == "" and review["years"] == 3 and review["sponsorship"] == "offered"
+    assert len(review["requirements"]) == 5 and "GIS Analyst" in session.calls[0][2]["messages"][1]["content"]
+    assert clean_review({"summary": "no fit value"}) is None and clean_review("nonsense") is None
+
+
+def test_client_fails_soft_and_respects_budget():
+    ai, session = ai_with([FakeResponse(500, {"success": False, "errors": [{"message": "down"}]})] * 5, budget=10)
+    assert [ai.chat("s", "u") for _ in range(5)] == [None] * 5
+    assert len(session.calls) == 3  # three strikes, then it stops calling
+    ai, session = ai_with(['{"fit": 5}'] * 5, budget=2)
+    assert [ai.chat_json("s", "u") is not None for _ in range(4)] == [True, True, False, False] and len(session.calls) == 2
+
+
+def _run(s3, jobs, ai, now=NOW, **kw):
+    settings = make_settings(**kw)
+    notifier = FakeNotifier()
+    code, report = Pipeline(settings, store=R2Store("b", client=s3), backends=[StaticBackend("feed", jobs)], notifier=notifier,
+                            now=now, http_session=FakeSession(), sleep=lambda x: None, ai=ai).run()
+    return report, notifier
+
+
+def test_pipeline_reviews_once_shows_summary_and_vetoes_only_possible():
+    strong = gis_raw(title="GIS Analyst", source_job_id="static:1")
+    weak_text = "Support the team with data tasks in QGIS. GIS exposure, digitizing and georeferencing of asset drawings. " * 5
+    borderline = gis_raw(title="GIS Technician", url="https://acme.example/jobs/2", apply_url="https://acme.example/jobs/2",
+                         description=weak_text, source_job_id="static:2")
+    good = json.dumps({"fit": 9, "summary": "Utility GIS analyst role with ArcGIS Pro and Python.", "concerns": "requires 5+ years",
+                       "requirements": ["ArcGIS Pro"]})
+    bad = json.dumps({"fit": 1, "summary": "Mostly warehouse asset tagging.", "concerns": ""})
+    ai, session = ai_with([good, bad])
+    s3 = FakeS3()
+    report, notifier = _run(s3, [strong, borderline], ai)
+    jobs = StateManager(R2Store("b", client=s3)).load()["jobs"]
+    assert jobs["static:1"]["tier"] == "high" and jobs["static:1"]["ai"]["fit"] == 9 and not jobs["static:1"]["ai"]["veto"]
+    assert jobs["static:2"]["tier"] == "rejected" and "AI_NOT_RELEVANT" in jobs["static:2"]["rejection_reasons"]
+    assert report["counts"]["ai_reviewed"] == 2 and report["counts"]["ai_vetoed"] == 1
+    assert len(notifier.sent) == 1 and "💡 Utility GIS analyst role" in notifier.sent[0] and "⚠️ requires 5+ years" in notifier.sent[0]
+    assert "GIS Technician" not in notifier.sent[0]
+    # next run: nothing is reviewed again and the veto survives rescoring
+    ai2, session2 = ai_with([])
+    report, _ = _run(s3, [strong, borderline], ai2, now=NOW + timedelta(hours=4))
+    jobs = StateManager(R2Store("b", client=s3)).load()["jobs"]
+    assert session2.calls == [] and report["counts"].get("ai_reviewed", 0) == 0 and jobs["static:2"]["tier"] == "rejected"
+
+
+def test_high_matches_are_never_vetoed_and_ai_outage_changes_nothing():
+    ai, _ = ai_with([json.dumps({"fit": 0, "summary": "Model is confused."})])
+    s3 = FakeS3()
+    _run(s3, [gis_raw()], ai)
+    rec = StateManager(R2Store("b", client=s3)).load()["jobs"]["static:1"]
+    assert rec["tier"] == "high" and rec["ai"]["veto"] is True  # recorded, but a High match stays High
+    ai, _ = ai_with([FakeResponse(503, {"success": False})] * 3)
+    s3 = FakeS3()
+    report, notifier = _run(s3, [gis_raw()], ai)
+    assert report["counts"]["ai_failed"] == 1 and len(notifier.sent) == 1  # alert goes out regardless
+
+
+def test_digest_without_review_is_unchanged_and_pitch_command():
+    assert "💡" not in format_digest([job("a:1", "GIS Analyst")], now=NOW)[0][0]
+    rec = job("a:1", "Ingénieur SIG", ai={"fit": 8, "summary": "French GIS role.", "requirements": ["QGIS", "PostGIS"]})
+    ai, session = ai_with(["Madame, Monsieur, je suis ingénieur géomaticien <expérimenté> ..."])
+    proc, replies, _, _ = setup([], [rec])
+    proc.ai = ai
+    proc.run_text(f"write a cover letter for {job_code('a:1')}")
+    draft = replies.sent[-1]
+    assert draft.startswith("↪ <i>/pitch") and "Draft for Ingénieur SIG" in draft and "&lt;expérimenté&gt;" in draft
+    assert "QGIS; PostGIS" in session.calls[0][2]["messages"][1]["content"]
+    proc.ai = None
+    proc.run_text(f"/pitch {job_code('a:1')}")
+    assert "CLOUDFLARE_AI_TOKEN" in replies.sent[-1]  # clear message when AI is not configured

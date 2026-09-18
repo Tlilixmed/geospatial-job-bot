@@ -18,6 +18,8 @@ from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 
+from ..ai.client import WorkersAI
+from ..ai.review import review_job
 from ..models import SourceResult
 from ..notifications.commands import CommandProcessor
 from ..notifications.telegram import TelegramNotifier, format_digest, format_job_message
@@ -38,7 +40,8 @@ from ..utils.http import HttpClient
 from ..utils.robots import RobotsCache
 from .boards import BoardRegistry
 from .fusion import fuse
-from .jobs import mark_failed, mark_notified, process_fused, prune_state, select_alerts
+from .jobs import (AI_VETO_MAX_FIT, apply_ai_veto, mark_failed, mark_notified, process_fused, prune_state,
+                   select_alerts)
 from .prefs import apply_prefs, load_prefs
 from .report import build_markdown, build_summary, diagnostics_rows
 
@@ -109,12 +112,13 @@ class SecretRedactingFilter(logging.Filter):
 
 class Pipeline:
     def __init__(self, settings, *, store: ObjectStore | None = None, http_session=None, notifier=None,
-                 backends: list[Backend] | None = None, now=None, sleep=time.sleep):
+                 backends: list[Backend] | None = None, now=None, sleep=time.sleep, ai=None):
         self.settings = settings
         self.store = store
         self.http_session = http_session
         self.notifier = notifier
         self.backends = backends
+        self.ai = ai
         self.now = now or utcnow()
         self.sleep = sleep
         suffix = os.environ.get("GITHUB_RUN_ID") or secrets.token_hex(3)
@@ -229,6 +233,7 @@ class Pipeline:
         counts["unique"] = len(fused)
         outcome = process_fused(fused, state, settings, self.now)
         counts.update(outcome.counts)
+        counts.update(self._ai_review(outcome, state))
 
         relevant_by_board = Counter()
         for fj, result, _ in outcome.evaluated:
@@ -321,6 +326,47 @@ class Pipeline:
             log.warning("stored preferences not applied: %s", type(exc).__name__)
             handled["prefs"] = f"not applied ({type(exc).__name__})"
         return handled
+
+    def _ai_review(self, outcome, state: dict) -> Counter:
+        """Workers AI second opinion for accepted jobs that have a description and no review yet.
+
+        Best matches first, capped per run (AI_REVIEWS_PER_RUN), stored on the job so it happens once.
+        Never fatal and never required: without a token this is a no-op.
+        """
+        counts = Counter()
+        settings = self.settings
+        if settings.dry_run and not settings.dry_run_write_state:
+            return counts
+        ai = self.ai if self.ai is not None else WorkersAI.from_settings(settings)
+        if ai is None:
+            return counts
+        pending = [(fused, rec) for fused, result, rec in outcome.evaluated
+                   if result.tier in ("high", "possible") and len(fused.description or "") >= 300
+                   and not (state["jobs"].get(rec.canonical_id) or {}).get("ai")]
+        pending.sort(key=lambda pair: -pair[1].score)
+        for fused, rec in pending:
+            if ai.budget <= 0 or ai.failures >= 3:
+                counts["ai_deferred"] += 1
+                continue
+            try:
+                review = review_job(ai, settings.candidate_profile, title=fused.title, company=fused.company,
+                                    location=fused.location.display(), description=fused.description)
+            except Exception as exc:  # a model hiccup must never cost us the run
+                log.warning("ai review skipped for %s: %s", rec.canonical_id, type(exc).__name__)
+                review = None
+            if review is None:
+                counts["ai_failed"] += 1
+                continue
+            stored = state["jobs"][rec.canonical_id]
+            review["veto"] = bool(settings.ai_veto_possible and review["fit"] <= AI_VETO_MAX_FIT)
+            review["at"] = to_iso(self.now)
+            stored["ai"] = review
+            counts["ai_reviewed"] += 1
+            if apply_ai_veto(stored):
+                counts["ai_vetoed"] += 1
+                counts["tier_possible"] -= 1
+                counts["tier_rejected"] += 1
+        return counts
 
     def _weekly_summary(self, manager: StateManager, state: dict, notifier) -> bool:
         """Send the weekly summary once every 7 days (tracked in state.maintenance)."""

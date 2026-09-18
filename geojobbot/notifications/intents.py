@@ -136,6 +136,8 @@ def interpret(text: str, is_code: Callable[[str], bool] = lambda token: False) -
     if code:
         if _has(t, r"\b(unhide|restore|bring back|reaffiche\w*|remets?)\b"):
             return "unhide", code
+        if _has(t, r"\b(pitch|draft|cover ?letter|letter|motivation|lettre|write|redige\w*|ecris)\b"):
+            return "pitch", code
         if _has(t, r"\b(appl(?:y|ied|ying|ication)|postule\w*|candidat\w*|sent my cv|envoye\w*)\b"):
             return "applied", code
         if _has(t, r"\b(hide|remove|dismiss|discard|drop|delete|skip|not interested|pas interesse\w*|cache\w*|supprime\w*|"

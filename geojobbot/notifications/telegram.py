@@ -61,6 +61,11 @@ def _digest_entry(rec: dict, index: int) -> str:
     if link:
         tail.append(f'<a href="{_esc(link)}">Apply</a>')
     lines = [head, "   " + " · ".join(facts)]
+    review = rec.get("ai") or {}
+    if review.get("summary"):  # Workers AI second opinion (English, also for French/Arabic/German postings)
+        lines.append(f"   💡 {_esc(review['summary'])}")
+    if review.get("concerns"):
+        lines.append(f"   ⚠️ {_esc(review['concerns'])}")
     if tail:
         lines.append("   " + " · ".join(tail))
     return "\n".join(lines)
