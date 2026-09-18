@@ -54,8 +54,60 @@ async function aiHint(env, text) {
   return HINT_RE.test(line) ? line : "";
 }
 
+const AI_TIMEOUT_MS = 6000;
+
+function tell(env, text) {
+  return fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ chat_id: env.TELEGRAM_CHAT_ID, text, disable_notification: true }),
+  });
+}
+
+async function handleMessage(env, update, text) {
+  await tell(env, "⏳ On it. Reply in about a minute.");
+
+  // Optional AI reading of free text. It must never delay or break the hand-over: bounded wait, errors ignored.
+  let hint = "";
+  if (!text.startsWith("/") && env.AI) {
+    try {
+      hint = await Promise.race([
+        aiHint(env, text),
+        new Promise((resolve) => setTimeout(() => resolve(""), AI_TIMEOUT_MS)),
+      ]);
+    } catch { hint = ""; }
+  }
+
+  let inputs;
+  if (env.INBOX) {  // private hand-over: nothing about the message appears in the public workflow run
+    const key = `inbox/${String(update.update_id).padStart(12, "0")}.json`;
+    await env.INBOX.put(key, JSON.stringify({ text, hint, at: new Date().toISOString() }),
+      { httpMetadata: { contentType: "application/json" } });
+    inputs = { inbox: "true" };
+  } else {
+    inputs = { text, hint };
+  }
+
+  const dispatch = await fetch(
+    `https://api.github.com/repos/${env.GITHUB_REPO}/actions/workflows/commands.yml/dispatches`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${env.GITHUB_TOKEN}`,
+        Accept: "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "geospatial-job-bot-worker",
+      },
+      body: JSON.stringify({ ref: "main", inputs }),
+    },
+  );
+  if (!dispatch.ok) {
+    await tell(env, `⚠️ I could not start the command (GitHub answered ${dispatch.status}). Check the Worker's GITHUB_TOKEN.`);
+  }
+}
+
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     if (request.method !== "POST") return new Response("geospatial job bot webhook");
     if (request.headers.get("X-Telegram-Bot-Api-Secret-Token") !== env.WEBHOOK_SECRET) {
       return new Response("forbidden", { status: 403 });
@@ -64,47 +116,15 @@ export default {
     try { update = await request.json(); } catch { return new Response("bad request", { status: 400 }); }
     const message = update && update.message;
     const text = message && typeof message.text === "string" ? message.text.trim().slice(0, 500) : "";
-    // Always answer 200 to Telegram from here on, otherwise it retries the same update for hours.
     if (!text || String(message.chat && message.chat.id) !== String(env.TELEGRAM_CHAT_ID)) {
       return new Response("ignored");
     }
-
-    let hint = "";
-    if (!text.startsWith("/") && env.AI) {
-      try { hint = await aiHint(env, text); } catch { hint = ""; }
-    }
-
-    let inputs;
-    if (env.INBOX) {  // private hand-over: nothing about the message appears in the public workflow run
-      const key = `inbox/${String(update.update_id).padStart(12, "0")}.json`;
-      await env.INBOX.put(key, JSON.stringify({ text, hint, at: new Date().toISOString() }),
-        { httpMetadata: { contentType: "application/json" } });
-      inputs = { inbox: "true" };
-    } else {
-      inputs = { text, hint };
-    }
-
-    const dispatch = await fetch(
-      `https://api.github.com/repos/${env.GITHUB_REPO}/actions/workflows/commands.yml/dispatches`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${env.GITHUB_TOKEN}`,
-          Accept: "application/vnd.github+json",
-          "X-GitHub-Api-Version": "2022-11-28",
-          "User-Agent": "geospatial-job-bot-worker",
-        },
-        body: JSON.stringify({ ref: "main", inputs }),
-      },
+    // Answer Telegram at once (a slow reply makes it retry the update) and finish the work in the background.
+    // Whatever goes wrong is reported to the chat instead of failing silently.
+    ctx.waitUntil(
+      handleMessage(env, update, text).catch((error) =>
+        tell(env, `⚠️ Worker error: ${String(error && error.message ? error.message : error).slice(0, 300)}`)),
     );
-    const note = dispatch.ok
-      ? "⏳ On it. Reply in about a minute."
-      : `⚠️ I could not start the command (GitHub answered ${dispatch.status}). Check the Worker's GITHUB_TOKEN.`;
-    await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ chat_id: env.TELEGRAM_CHAT_ID, text: note, disable_notification: true }),
-    });
     return new Response("ok");
   },
 };

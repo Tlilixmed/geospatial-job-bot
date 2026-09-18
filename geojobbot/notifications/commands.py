@@ -152,11 +152,15 @@ class CommandProcessor:
         except Exception as exc:
             log.exception("command failed")
             replies = [f"⚠️ That command failed ({type(exc).__name__}). /help lists what I understand."]
+        counts = Counter(commands=1)
         for reply in replies:
-            self.notifier.send(reply)
+            ok, error = self.notifier.send(reply)
+            if not ok:
+                counts["replies_failed"] += 1
+                log.warning("reply not delivered: %s", error)
         if self._dirty:
             save_prefs(self.manager, self.prefs)
-        return Counter(commands=1)
+        return counts
 
     # ------------------------------------------------------------------ data helpers
     @property
