@@ -95,17 +95,48 @@ The scorer stays the authority. The only decision the model can take is a veto o
 
 ### Official visa-sponsor registers
 
-A posting rarely says whether the employer can sponsor a visa, but governments publish who can. Once a week the bot downloads three official registers and keeps the normalised employer names in `reference/sponsors.json.gz` (about 170,000 names, under 3 MB):
+A posting rarely says whether the employer can sponsor a visa, but governments publish who can. Once a week the bot downloads five official registers and keeps the normalised employer names in `reference/sponsors.json.gz` (about 180,000 names, under 3 MB):
 
 - 🇬🇧 the UK Home Office *Register of licensed sponsors* (Worker routes);
 - 🇨🇦 Canada's quarterly *positive LMIA employers* list, including the occupations each employer was approved for, so an employer that already hired surveyors, cartographers or geomatics technicians abroad is marked;
-- 🇳🇱 the Dutch IND *recognised sponsors* register.
+- 🇳🇱 the Dutch IND *recognised sponsors* register;
+- 🇮🇪 Ireland's DETE list of *companies issued employment permits*, this year and last, with the number of permits (Ireland has no sponsor licence: this is who actually hires from abroad);
+- 🇩🇰 Denmark's SIRI list of *companies certified for the Fast-track scheme*.
 
 Accepted jobs are matched by exact normalised name, then by a conservative "core name" variant (legal suffixes removed, at least four characters; variants are labelled so you can check). A hit adds a small bonus (+4, +6 when the Canadian record shows geomatics occupations) **only when the register is the job's own country**, shows as a badge in the digest and in `/why code`, and `/sponsors` lists all current matches with sponsorship evidence: postings that say so first, then licensed employers. A register that fails to download keeps its previous copy. `SPONSOR_REGISTERS=false` turns it off.
 
 ### Learning from what you do
 
 `/applied`, `/outcome` and `/hide` are labels. After at least four of them the bot compares the words in titles, companies, skills and domains of what you pursue with what you dismiss and nudges new scores by at most **+6 / −8** points (interviews and offers weigh more than applications). It never rescues a rejected job, never touches hard filters, is applied once per job, and is fully visible: `/why code` shows the nudge and its reasons, `/learning` shows what was learned, `/learning off|on|reset` controls it. A snapshot of each labelled job is kept in the preferences, so learning survives pruning.
+
+### Visa routes: is a work visa realistic for this job?
+
+The sponsor badge says an employer *can* sponsor. `/visa` puts the facts of each accepted job next to the rules of its country's main work-visa route, kept in `config/visa_paths.toml` with a source link per route and an `as_of` date (the figures were read from the official pages on 2026-09-18; the bot warns once they are a year old):
+
+- **employer**: on the official register of that country, or the posting offers sponsorship (✓), says it does not (✗), or is silent (?);
+- **salary**: the posted salary, parsed from free text in any of the formats the sources produce, against the legal minimum: UK Skilled Worker £41,700 (£33,400 new entrants), EU Blue Card Germany €50,700 (€45,934 for shortage occupations, which include surveyors and cartographers), Netherlands highly skilled migrant €5,942 a month (€4,357 under 30), France carte bleue €59,373, Ireland Critical Skills €40,904 / €68,911, Denmark Pay Limit DKK 552,000, Australia Core Skills A$79,499. A salary between a reduced and the standard minimum is a "maybe", not a pass;
+- **occupation**: graduate-level routes flag technician titles; Australia lists Surveyor, Cartographer and Other Spatial Scientist;
+- **routes your own profile opens** (`MY_LANGUAGES`, `HOME_COUNTRIES`): in Canada, *Francophone Mobility* means a French speaker needs **no LMIA** for a job outside Québec; in France, *Géomètre*, *Dessinateur du BTP*, *Chargé d'études techniques du BTP* and *Informaticien d'étude* are on the 2008 France–Tunisia list of occupations open to Tunisians **without the labour-market test**;
+- Gulf states: employer-sponsored as a matter of course. US H-1B and Swiss quotas are marked *hard from abroad*.
+
+The verdict (🟢 looks open · 🟡 possible, facts missing · 🟠 hard · ⛔ blocked) annotates digests and `/why code`, orders `/visa`, and never rejects a job. `/visa code` explains one job, `/visa france` a country. It is indicative, not legal advice. `VISA_PATHS=false` turns it off.
+
+### Going where sponsorship is proven: prospects and the watch list
+
+Registers and signals are also a *source*. Each run the prospector takes a few employers (`PROSPECTS_PER_RUN`, default 10): your watch list first, then firms that just won a geospatial contract, Canadian employers whose LMIAs were for surveying and geomatics occupations, and registered sponsors whose name says surveying, geomatics, mapping or LiDAR. It derives the slugs such a company would use and asks the public ATS APIs (Greenhouse, Lever, Ashby, SmartRecruiters, Workable, Recruitee) whether that board exists. A board is kept only when it has jobs **and** the ATS reports a matching company name, so "Summit Geomatics" never becomes some other Summit. Kept boards are read once a day, and every run while they yield relevant jobs. `/prospects` lists what was found and why each employer was tried.
+
+`/watch Fugro` adds an employer yourself (`/watch https://firm.example/careers Firm` for a careers page the generic crawler should read every run). Possible matches from a watched employer are alerted even when alerts are High-only, with a 👀 badge. `/unwatch name` removes one.
+
+### Deadlines, reposts, interview sheets, speculative applications
+
+- **Deadlines.** "Closing date: 30 September", "date limite de candidature : 05/10/2026", "apply by Oct 2" are read from descriptions (only dates right after a deadline phrase). A High match closing within three days that you neither applied to nor hid gets **one** reminder; a posting past its deadline is no longer listed or alerted.
+- **Reposts.** The same title at the same employer seen again three weeks or more after an earlier posting shows `♻️ posted 2× again since Jun 2026`: a role that is hard to fill (a better starting point for sponsorship) or an evergreen advert. Worth knowing before writing.
+- **`/prep code`**: an interview sheet. What the bot established (salary, sponsor record, visa route, deadline), then five likely questions with a hint from your own experience, two weak points, three questions to ask, a one-line introduction. Sent by itself when `/outcome code interview` is recorded.
+- **`/approach firm`**: a short unsolicited application (*candidature spontanée*, in French for francophone firms) that opens with the reason to write now, such as the contract the firm just won according to `/signals`. `/approach` alone lists those firms.
+
+### Knowing which sources earn their keep
+
+`/sources` (and a few lines in the weekly summary): per source over 28 days, the raw volume, the accepted jobs it found, how many of those **no other source carried** ("only here": what you would have missed without it) and how many you applied to. It names noise (volume, nothing accepted), redundant sources, and API quotas spent without anything unique.
 
 ### Skills radar and market signals
 
@@ -162,6 +193,11 @@ The bot answers messages from the configured chat only; every other chat is igno
 | `/why code` | score breakdown, evidence, AI second opinion, sources and link for one job |
 | `/ai [n]` | the AI's view of current matches, best fit first: fit /10, summary, concerns, years, sponsorship, languages |
 | `/pitch code` | Workers AI drafts a short application note for that job, in the posting's language |
+| `/prep code` | interview sheet for that job (sent by itself when an interview is recorded) |
+| `/approach [firm]` | firms with a reason to hire · draft a speculative application to one |
+| `/visa`, `/visa code`, `/visa country` | how open the work-visa route looks for current matches · one job · a country's rules |
+| `/watch [company or URL]`, `/unwatch name`, `/prospects` | employers to follow closely · employers proven to sponsor whose boards were found |
+| `/sources` | which sources deliver, which only make noise |
 | `/sponsors [n]` | current matches with sponsorship evidence: the posting says so, or the employer is on an official register |
 | `/applied code`, `/applied` | mark as applied (never alerted again) · list applications with their status |
 | `/outcome code interview\|offer\|rejected\|withdrawn\|ghosted` | record what happened to an application (feeds the weekly summary and learning) |
@@ -182,6 +218,8 @@ The bot answers messages from the configured chat only; every other chat is igno
 
 **Plain language.** Slash commands are optional. Ordinary sentences in English or French are understood, typos included: "i want the top 5 matching offers", "jobs between 60 and 70", "jobs above 80", "lidar jobs in montreal", "why a3f9c", "i applied to a3f9c", "not interested in a3f9c", "stop showing leidos", "set threshold to 75", "no internships", "pause alerts", "resume", "run now", "what can you do", "montre moi les meilleures offres", "mets le seuil à 75". The reply starts with how the sentence was understood (`↪ /jobs 5`), so a misreading is visible and reversible. Anything that is not an instruction is treated as a search. The rules are deterministic (`geojobbot/notifications/intents.py`). Optionally, the Cloudflare Worker can add a free Workers AI reading of the sentence as a second opinion: it is used only when the rules fall back to a search, is validated against the command list and existing job codes, and is labelled `· AI` in the reply.
 
+**Dashboard.** With a `DASHBOARD_KEY` secret on the Worker, `https://<worker>/dash/<key>` shows the same data in a browser: filterable matches with visa, sponsor, deadline and AI chips, your applications by status, visa routes, employers and sources. Read-only; you act through Telegram.
+
 **Instant replies.** `cloudflare/worker.js` is a Telegram webhook. With its `INBOX` R2 binding it answers most messages itself in under a second: every scraper run publishes `state/index.json` (current matches, codes, scores, AI notes, sponsor hits, run status, the help text), and the Worker reads it together with `state/prefs.json`, which it also updates for `/applied`, `/outcome`, `/hide`, `/mute`, `/threshold`, `/pause` and the other preference commands, in the same schema the Python side uses. `/run`, `/pitch`, `/weekly`, `/radar`, `/skills`, `/learning` and free-text sentences that would change something start the commands workflow instead (reply in about a minute, nothing billed while you are silent). The Worker's own AI reading of a sentence may open read-only views only; the deterministic rules remain the authority for anything that changes a setting. `cloudflare/README.md` has the setup steps; afterwards set the repository variable `TELEGRAM_WEBHOOK=true` so scheduled polling is skipped. **On a public repository the `INBOX` binding is also what keeps your messages private** (step 6): workflow inputs are world-readable, and with the binding they travel through the bucket instead.
 
 ---
@@ -195,7 +233,7 @@ state/state.json.gz                         authoritative state (jobs, boards, s
 state/prefs.json                            preferences set from Telegram (mutes, applications and outcomes, hidden, thresholds, pause, skills)
 state/index.json                            compact read model for the Cloudflare Worker, rewritten by every run
 state/descriptions.json.gz                  descriptions of accepted jobs (6,000 characters each) for /pitch and late AI reviews
-reference/sponsors.json.gz                  official visa-sponsor registers, refreshed weekly
+reference/sponsors.json.gz                  official sponsor registers (UK, CA, NL, IE, DK), refreshed weekly
 inbox/<update_id>.json                      a Telegram message handed from the Worker to the commands workflow (deleted once read)
 state/backups/<timestamp>-<run>.json.gz     previous versions (STATE_BACKUPS_KEEP, default 20)
 state/conflicts/<run>.json.gz               state that could not be saved because another writer changed it
@@ -410,7 +448,10 @@ In a dry run, alerts are printed rather than sent and no state is written, unles
 | `JOOBLE_API_KEY`, `JOOBLE_LOCATIONS` | empty, `PREFERRED_LOCATIONS` | enables Jooble |
 | `ADZUNA_REQUESTS_PER_RUN`, `JOOBLE_REQUESTS_PER_RUN`, `JOBSPY_LOCATIONS_PER_RUN` | `30`, `12`, `3` | per-run budgets; countries, locations and terms rotate across runs so quotas and runtime stay flat as the lists grow |
 | `RELIEFWEB_APPNAME`, `WEEKLY_SUMMARY` | empty, `true` | enables ReliefWeb · weekly Telegram summary |
-| `SPONSOR_REGISTERS` | `true` | UK, Canada and Netherlands sponsor registers: badge, small bonus, `/sponsors` |
+| `SPONSOR_REGISTERS` | `true` | UK, Canada, Netherlands, Ireland and Denmark registers: badge, small bonus, `/sponsors` |
+| `VISA_PATHS`, `MY_LANGUAGES` | `true`, `English,French,Arabic` | visa-route check (`config/visa_paths.toml`) · languages that open routes such as Francophone Mobility |
+| `PROSPECTS_PER_RUN` | `10` | employers looked up on the public ATS APIs per run (`0` = off) |
+| `FRANCETRAVAIL_CLIENT_ID`, `FRANCETRAVAIL_CLIENT_SECRET` | empty | enables France Travail (free application at francetravail.io, API *Offres d'emploi v2*) |
 | `MONTHLY_RADAR`, `MY_SKILLS` | `true`, built-in list | monthly skills radar · your skills, comma-separated (`/skills` overrides) |
 | `MARKET_SIGNALS` | `true` | daily check of World Bank procurement notices for geospatial work |
 | `CLOUDFLARE_AI_TOKEN`, `AI_REVIEWS_PER_RUN`, `AI_VETO_POSSIBLE`, `AI_MODEL`, `CANDIDATE_PROFILE` | empty, `40`, `true`, llama-3.1-8b-instruct, built-in | Workers AI second opinion, veto of clearly irrelevant Possible matches, `/pitch` |
@@ -451,6 +492,8 @@ In a dry run, alerts are printed rather than sent and no state is written, unles
 - **Rotation is slow at scale.** With tens of thousands of discovered boards, a full pass takes days to weeks. Boards that produce relevant jobs are promoted to every run.
 - **No JavaScript rendering.** Pages that load jobs only through client-side JavaScript, without JSON-LD or embedded JSON, can't be extracted. Workday is handled through its public JSON endpoints.
 - **Blocked sites stay blocked.** No CAPTCHA solving, login, stealth browsers or proxies are used. Such failures are recorded and skipped.
+- **Official APIs.** Germany's Bundesagentur API needs no key and was checked live, but nearly all of its postings are written in German: those are skipped (and remembered), so expect only the occasional English posting from it. France Travail was built from its documented format and tested against mocked responses only; it stays disabled until `FRANCETRAVAIL_CLIENT_ID` and `FRANCETRAVAIL_CLIENT_SECRET` exist.
+- **Visa routes are indicative.** The thresholds are dated and sourced in `config/visa_paths.toml`, but occupation eligibility is judged from the title alone and immigration rules change: check the linked official page before relying on a verdict.
 - **JobSpy** depends on third-party sites that may rate-limit or block, and each site's terms apply to you (LinkedIn's robots.txt disallows its guest job search; JobSpy uses it anyway, which is why it is a separate, optional package). Indeed and LinkedIn work from GitHub runners; Glassdoor and Bayt frequently answer 400/403 and are off by default. Indeed has no Tunisian site, so Tunisia is searched on LinkedIn only.
 - **LinkedIn and Glassdoor** have no public job API. There is no legitimate way to read them beyond JobSpy's best-effort scraping above.
 - **Fuzzy deduplication** can very occasionally merge two genuinely different postings with identical company, title and place that don't come from ATS APIs (for example, two identical openings on a generic careers page).
@@ -480,6 +523,10 @@ geojobbot/
   insights/learning.py   score nudges learned from applications and hidden jobs
   insights/radar.py      skills in demand versus yours
   insights/signals.py    World Bank procurement: awards, consultancies, tenders
+  insights/visa.py       visa-route check against config/visa_paths.toml
+  insights/prospects.py  finds the job boards of employers proven to sponsor; watch list
+  insights/timing.py     application deadlines, closing-soon reminders, reposts
+  insights/yields.py     which sources earn their keep
   ai/                    Workers AI client, job review, /pitch
   matching/profile.py    roles, skills, domains, negatives (edit me)
   matching/matcher.py    deterministic scorer
@@ -489,6 +536,7 @@ geojobbot/
   scrapers/pages.py      career sites, sitemaps, generic page backend
   scrapers/search.py     SearXNG, DuckDuckGo, Common Crawl
   scrapers/feeds.py      public feeds, RSS, USAJOBS, JobSpy
+  scrapers/official.py   Bundesagentur (Germany, no key), France Travail (free key)
   storage/               ObjectStore, R2Store, LocalStore, StateManager
   notifications/         telegram.py (digest), commands.py, intents.py (plain language), weekly.py
   utils/                 http (retries/rate limits), robots, urls, location, dates, text

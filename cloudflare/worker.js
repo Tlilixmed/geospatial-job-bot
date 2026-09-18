@@ -16,6 +16,7 @@
  *   GITHUB_REPO          e.g. Tlilixmed/geospatial-job-bot
  *   TELEGRAM_OWNER_ID    optional: your own Telegram user id, when TELEGRAM_CHAT_ID is a group or channel
  *   STATE_PREFIX         optional: only when the GitHub side sets STATE_PREFIX (same value)
+ *   DASHBOARD_KEY        optional: 16+ random characters; enables the read-only page at /dash/<DASHBOARD_KEY>
  *
  * Who is obeyed: messages in TELEGRAM_CHAT_ID, and messages written by the owner in any chat the bot can read.
  *
@@ -593,8 +594,104 @@ async function handleMessage(env, update, text) {
   return dispatchToPython(env, update, text, hint);
 }
 
+// ---------------------------------------------------------------------------- private dashboard (read-only)
+// GET /dash/<DASHBOARD_KEY> renders state/index.json and state/prefs.json. Off until the DASHBOARD_KEY secret exists.
+// The page script uses no backticks, no "${" and no backslashes, so it can live in this template literal unchanged.
+const DASHBOARD_PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow">
+<title>Geospatial jobs</title><style>
+:root{--bg:#f6f7f9;--card:#fff;--ink:#1a2330;--mute:#5d6b7c;--line:#dde3ea;--acc:#0b6bcb;--good:#1a7f4b;--warn:#b26a00;--bad:#b3261e}
+@media (prefers-color-scheme:dark){:root{--bg:#10151c;--card:#182029;--ink:#e6ebf1;--mute:#93a1b2;--line:#2a3542;--acc:#6db3ff;--good:#5fd39a;--warn:#f0b35a;--bad:#ff8a80}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 system-ui,Segoe UI,Roboto,sans-serif}
+header{padding:16px;max-width:1100px;margin:auto}h1{font-size:20px;margin:0 0 4px}small,.mute{color:var(--mute)}
+nav{display:flex;gap:6px;flex-wrap:wrap;padding:0 16px;max-width:1100px;margin:auto}
+nav button{border:1px solid var(--line);background:var(--card);color:var(--ink);padding:7px 12px;border-radius:18px;cursor:pointer;font:inherit}
+nav button.on{background:var(--acc);color:#fff;border-color:var(--acc)}
+main{padding:16px;max-width:1100px;margin:auto}.bar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+input,select{font:inherit;padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink);min-width:0}
+input{flex:1 1 180px}.job,.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px;margin-bottom:10px}
+.job h3{margin:0 0 4px;font-size:16px}.job a{color:var(--acc);text-decoration:none}.row{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
+.chip{border:1px solid var(--line);border-radius:12px;padding:1px 8px;font-size:12.5px;color:var(--mute)}
+.chip.good{color:var(--good);border-color:var(--good)}.chip.warn{color:var(--warn);border-color:var(--warn)}.chip.bad{color:var(--bad);border-color:var(--bad)}
+.score{float:right;font-weight:700;font-size:18px}.score.high{color:var(--good)}.note{margin-top:6px;color:var(--mute);font-size:13.5px}
+.cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}.cols h4{margin:0 0 8px}
+.view{white-space:pre-wrap;overflow-wrap:anywhere}.view a{color:var(--acc)}code{background:var(--line);border-radius:4px;padding:0 4px}
+</style></head><body><header><h1>Geospatial jobs</h1><small id="meta"></small></header>
+<nav id="nav"></nav><main id="main"></main><script id="data" type="application/json">__DATA__</script><script>
+(function(){
+var D=JSON.parse(document.getElementById("data").textContent),I=D.index||{},P=D.prefs||{},jobs=I.jobs||[],now=Date.now();
+var hidden={},applied=P.applied||{};(P.hidden||[]).forEach(function(id){hidden[id]=1});
+function el(tag,cls,text){var e=document.createElement(tag);if(cls)e.className=cls;if(text!=null)e.textContent=text;return e}
+function current(j){var s=I.settings||{};if(j.rel&&j.p){var lim=j.rot?s.rotation_max_age_h:s.max_age_h;if(lim&&(now-Date.parse(j.p))/36e5>lim)return false}
+ if(j.seen&&now-Date.parse(j.seen)>(j.rot?21:5)*864e5)return false;if(j.dl&&Date.parse(j.dl)+864e5<now)return false;return !hidden[j.id]&&!applied[j.id]}
+function safe(url){return /^https?:/i.test(url||"")?url:"#"}
+function chip(text,kind){return el("span","chip"+(kind?" "+kind:""),text)}
+function jobCard(j){var c=el("div","job"),h=el("h3");c.appendChild(el("span","score"+(j.tier==="high"?" high":""),String(j.s)));
+ var a=el("a",null,j.t||"");a.href=safe(j.url);a.target="_blank";a.rel="noopener noreferrer";h.appendChild(a);c.appendChild(h);
+ c.appendChild(el("div","mute",[j.c,j.loc].filter(Boolean).join(" · ")));var r=el("div","row");r.appendChild(chip(j.code));
+ if(j.sal)r.appendChild(chip(j.sal));if(j.dl)r.appendChild(chip("closes "+j.dl,"warn"));if(j.offered)r.appendChild(chip("sponsorship offered","good"));
+ (j.sp||[]).slice(0,1).forEach(function(s){r.appendChild(chip(s.label,s.country===j.country?"good":""))});
+ if(j.visa&&j.visa.v)r.appendChild(chip("visa: "+j.visa.v,j.visa.v==="strong"?"good":j.visa.v==="blocked"?"bad":j.visa.v==="hard"?"warn":""));
+ if(j.w)r.appendChild(chip("watched","good"));if(j.rp)r.appendChild(chip(j.rp));if(j.ai)r.appendChild(chip("AI fit "+j.ai.fit+"/10"));
+ (j.sk||[]).slice(0,4).forEach(function(s){r.appendChild(chip(s.split(" (")[0]))});c.appendChild(r);
+ if(j.ai&&j.ai.summary)c.appendChild(el("div","note",j.ai.summary));if(j.ai&&j.ai.concerns)c.appendChild(el("div","note","⚠ "+j.ai.concerns));return c}
+function matches(root){var bar=el("div","bar"),q=el("input"),tier=el("select"),visa=el("select"),sort=el("select"),list=el("div");q.placeholder="Filter: title, company, place, skill";
+ [["","High and possible"],["high","High only"],["all","Everything stored"]].forEach(function(o){var x=el("option",null,o[1]);x.value=o[0];tier.appendChild(x)});
+ [["","Any visa route"],["strong","Visa looks open"],["open","Visa possible"],["sponsor","Sponsor evidence"]].forEach(function(o){var x=el("option",null,o[1]);x.value=o[0];visa.appendChild(x)});
+ [["s","Best score"],["p","Newest"],["dl","Closing soonest"]].forEach(function(o){var x=el("option",null,o[1]);x.value=o[0];sort.appendChild(x)});
+ function draw(){var words=q.value.toLowerCase().split(" ").filter(Boolean),rows=jobs.filter(function(j){
+  if(tier.value==="high"&&j.tier!=="high")return false;if(tier.value===""&&j.tier!=="high"&&j.tier!=="possible")return false;if(!current(j))return false;
+  if(visa.value==="sponsor"&&!((j.sp||[]).length||j.offered))return false;if((visa.value==="strong"||visa.value==="open")&&!(j.visa&&j.visa.v===visa.value))return false;
+  var hay=[j.t,j.c,j.loc,j.country,(j.sk||[]).join(" ")].join(" ").toLowerCase();return words.every(function(w){return hay.indexOf(w)>=0})});
+  rows.sort(function(a,b){if(sort.value==="p")return String(b.p||"").localeCompare(String(a.p||""));if(sort.value==="dl")return String(a.dl||"9").localeCompare(String(b.dl||"9"));return b.s-a.s});
+  list.textContent="";list.appendChild(el("div","mute",rows.length+" jobs"));rows.slice(0,150).forEach(function(j){list.appendChild(jobCard(j))})}
+ [q,tier,visa,sort].forEach(function(x){x.addEventListener("input",draw);bar.appendChild(x)});root.appendChild(bar);root.appendChild(list);draw()}
+function applications(root){var order=["applied","interview","offer","rejected","ghosted","withdrawn"],cols=el("div","cols"),by={};
+ Object.keys(applied).forEach(function(id){var a=applied[id],s=a.status||"applied";(by[s]=by[s]||[]).push(a)});
+ if(!Object.keys(applied).length){root.appendChild(el("div","card","No applications recorded yet. In Telegram: /applied code"));return}
+ order.forEach(function(s){if(!by[s])return;var col=el("div","card");col.appendChild(el("h4",null,s+" ("+by[s].length+")"));
+  by[s].sort(function(a,b){return String(b.at||"").localeCompare(String(a.at||""))}).forEach(function(a){var d=el("div","note"),l=el("a",null,a.title||"?");l.href=safe(a.url);l.target="_blank";l.rel="noopener noreferrer";
+   d.appendChild(l);d.appendChild(document.createTextNode(" — "+(a.company||"?")+" · "+String(a.at||"").slice(0,10)));col.appendChild(d)});cols.appendChild(col)});root.appendChild(cols)}
+function view(name){return function(root){var box=el("div","card view"),html=(I.views||{})[name];if(html){box.innerHTML=html}else{box.textContent="Nothing yet: this view is published by the next scraper run."}root.appendChild(box)}}
+function watch(root){var w=P.watch||[],box=el("div","card");box.appendChild(el("h4",null,"Employers you watch"));
+ if(!w.length)box.appendChild(el("div","mute","None. In Telegram: /watch company"));w.forEach(function(x){box.appendChild(el("div","note",x.name+(x.url?" — "+x.url:"")))});root.appendChild(box);view("prospects")(root)}
+var tabs=[["Matches",matches],["Applications",applications],["Visa routes",view("visa")],["Employers",watch],["Sources",view("sources")]],nav=document.getElementById("nav"),main=document.getElementById("main");
+function open(i){main.textContent="";Array.prototype.forEach.call(nav.children,function(b,k){b.className=k===i?"on":""});tabs[i][1](main)}
+tabs.forEach(function(t,i){var b=el("button",null,t[0]);b.addEventListener("click",function(){open(i)});nav.appendChild(b)});
+var run=I.run||{};document.getElementById("meta").textContent="index of "+(I.generated_at||"?")+" · last run: "+(run.high||0)+" high, "+(run["new"]||0)+" new, "+(run.jobs_in_state||0)+" stored"+((run.failed||[]).length?" · failed: "+run.failed.join(", "):"")+" · read-only, act through Telegram";
+open(0)})();
+</script></body></html>`;
+
+function sameKey(given, expected) {
+  if (!expected || given.length !== expected.length) return false;
+  let diff = 0;
+  for (let i = 0; i < given.length; i += 1) diff |= given.charCodeAt(i) ^ expected.charCodeAt(i);
+  return diff === 0;
+}
+
+async function dashboard(request, env) {
+  const parts = new URL(request.url).pathname.split("/").filter(Boolean);
+  if (parts[0] !== "dash") return null;
+  const key = String(env.DASHBOARD_KEY || "");
+  if (key.length < 16 || !env.INBOX || !sameKey(decodeURIComponent(parts[1] || ""), key)) return new Response("not found", { status: 404 });
+  const [index, prefs] = await Promise.all([readJson(env, INDEX_KEY), loadPrefs(env)]);
+  const data = JSON.stringify({ index: index || {}, prefs: { applied: prefs.applied, hidden: prefs.hidden, watch: prefs.watch || [] } })
+    .replace(/</g, "\\u003c").replace(/[\u2028\u2029]/g, " ");
+  return new Response(DASHBOARD_PAGE.replace("__DATA__", () => data), {
+    headers: {
+      "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "X-Robots-Tag": "noindex, nofollow",
+      "Referrer-Policy": "no-referrer", "X-Content-Type-Options": "nosniff", "X-Frame-Options": "DENY",
+      "Content-Security-Policy": "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'",
+    },
+  });
+}
+
 export default {
   async fetch(request, env, ctx) {
+    if (request.method === "GET") {
+      const page = await dashboard(request, env);
+      if (page) return page;
+    }
     if (request.method !== "POST") return new Response("geospatial job bot webhook");
     if (request.headers.get("X-Telegram-Bot-Api-Secret-Token") !== env.WEBHOOK_SECRET) {
       return new Response("forbidden", { status: 403 });

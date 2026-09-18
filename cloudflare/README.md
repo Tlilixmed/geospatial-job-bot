@@ -9,7 +9,7 @@ AI notes, sponsor hits, run status, help text) and `state/prefs.json` (your pref
 
 | Answered instantly by the Worker | Handed to the `Telegram commands` workflow ("On it", about a minute) |
 |---|---|
-| `/jobs` `/high` `/range` `/search` `/why` `/ai` `/sponsors` `/status` `/signals` `/muted` `/help` | `/run` `/pitch` `/weekly` `/radar` `/skills` `/learning` |
+| `/jobs` `/high` `/range` `/search` `/why` `/ai` `/sponsors` `/visa` `/sources` `/prospects` `/status` `/signals` `/muted` `/help` | `/run` `/pitch` `/prep` `/approach` `/watch` `/unwatch` `/weekly` `/radar` `/skills` `/learning` |
 | `/applied` `/outcome` `/hide` `/unhide` `/mute` `/unmute` `/threshold` `/locations` `/interns` `/possible` `/pause` `/resume` | free-text sentences that would change a setting or record an application |
 | plain words: `status`, `help`, `top 10`, `high 5`, `ai`, `sponsors`, a bare job code | anything when the index is missing (before the first run with this version) |
 | free text the Worker's AI reads as a **read-only** view (marked `↪ /sponsors · AI`) | |
@@ -75,6 +75,18 @@ otherwise the reading travels with the message as a hint, and the Python rules d
 when the rules see nothing but a search, and must refer to a job code that exists (`↪ /resume · AI`).
 
 After changing `cloudflare/worker.js` in the repository, paste the new version into the Worker (**Edit code → Deploy**).
+
+## 8. Optional: private dashboard
+Worker → **Settings → Variables and secrets → Add** → type **Secret** → name `DASHBOARD_KEY`, value: a random string of
+at least 16 letters and digits (treat it like a password) → **Deploy**. Then open
+
+```
+https://geojobbot-telegram.<you>.workers.dev/dash/<DASHBOARD_KEY>
+```
+
+Matches (filter, sort, visa and sponsor chips), applications by status, visa routes, employers, sources. The page is
+read-only, is never cached or indexed, and needs the `INBOX` binding. Anyone with the link can read it: do not share it,
+and change the secret to revoke it. Without the secret the route answers 404.
 
 ## Which chat? Getting TELEGRAM_CHAT_ID right
 Send `/id` in the chat you want to use. The bot answers there with the chat id, the chat type, your user id, and

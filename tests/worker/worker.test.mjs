@@ -56,7 +56,8 @@ function harness({ index, prefs, ai, inbox = true, prefix = "" } = {}) {
     return response;
   }
   const stored = (key) => (objects.has(key) ? JSON.parse(objects.get(key)) : null);
-  return { say, sent, dispatched, stored, objects };
+  const get = (path) => worker.fetch(new Request("https://worker.example" + path), env, { waitUntil() {} });
+  return { say, get, env, sent, dispatched, stored, objects };
 }
 
 test("/jobs is answered from the index without starting a workflow", async () => {
@@ -256,4 +257,25 @@ test("strangers and wrong secrets are refused", async () => {
   await h.say("/jobs", { chat: -100123, from: 42 });  // the owner, writing from a group
   assert.equal(h.sent.length, 1);
   assert.equal(h.sent[0].chat_id, "42");
+});
+
+test("the dashboard is off without a key, private with one, and cannot be broken out of", async () => {
+  const evil = job("gh:acme:1", { t: "</script><script>alert(1)</script>" });
+  const h = harness({ index: makeIndex([evil]), prefs: { applied: { x: { title: "Cartographer", status: "interview" } } } });
+  assert.equal((await h.get("/dash/anything")).status, 404);  // no DASHBOARD_KEY: disabled
+  h.env.DASHBOARD_KEY = "k".repeat(24);
+  assert.equal((await h.get("/dash/wrong-key-wrong-key-wrong")).status, 404);
+  assert.equal(await (await h.get("/")).text(), "geospatial job bot webhook");
+  const page = await h.get("/dash/" + "k".repeat(24));
+  assert.equal(page.status, 200);
+  assert.equal(page.headers.get("Cache-Control"), "no-store");
+  assert.match(page.headers.get("Content-Security-Policy"), /default-src 'none'/);
+  const html = await page.text();
+  assert.equal(html.split("</script>").length, 3);  // the data block and the page script, nothing injected
+  const data = JSON.parse(html.split('type="application/json">')[1].split("</script>")[0]);
+  assert.equal(data.index.jobs[0].t, "</script><script>alert(1)</script>");
+  assert.equal(data.prefs.applied.x.status, "interview");
+  assert.equal(data.prefs.muted, undefined);  // only what the page needs
+  const script = html.split("<script>")[1].split("</script>")[0];
+  assert.doesNotThrow(() => new Function(script));  // the inline script parses
 });
