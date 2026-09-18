@@ -156,6 +156,7 @@ class Settings:
     market_signals: bool = True  # World Bank procurement: geospatial awards, consultancies, tenders
     sponsor_registers: bool = True  # UK / Canada / Netherlands official sponsor registers, refreshed weekly
     prospects_per_run: int = 10  # employers looked up per run on the public ATS APIs (insights/prospects.py); 0 = off
+    visa_penalty: int = 12  # points lost when the visa route is hard or blocked and nothing says the employer sponsors; 0 = label only
     visa_paths: bool = True  # per-job check against config/visa_paths.toml (licence, salary minimum, occupation)
     my_languages: list[str] = field(default_factory=lambda: ["English", "French", "Arabic"])  # opens language-based routes
     # JSearch (RapidAPI): "query@country" entries rotated across runs, JSEARCH_REQUESTS_PER_RUN per run.
@@ -301,6 +302,7 @@ def load_settings() -> Settings:
     s.weekly_summary = env_bool("WEEKLY_SUMMARY", s.weekly_summary)
     s.sponsor_registers = env_bool("SPONSOR_REGISTERS", s.sponsor_registers)
     s.visa_paths = env_bool("VISA_PATHS", s.visa_paths)
+    s.visa_penalty = max(0, min(30, env_int("VISA_PENALTY", s.visa_penalty)))
     s.prospects_per_run = max(0, env_int("PROSPECTS_PER_RUN", s.prospects_per_run))
     s.my_languages = env_list("MY_LANGUAGES", s.my_languages)
     s.my_skills = env_list("MY_SKILLS", s.my_skills)

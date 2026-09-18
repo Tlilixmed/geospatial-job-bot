@@ -189,8 +189,26 @@ def _parse_place(text: str) -> tuple[str | None, str | None, str | None]:
     return city, region, country
 
 
+# Workday and some other ATSs prefix the location with an ISO country code: "SA - Riyadh", "CA - MB, Winnipeg"
+ISO_PREFIX = {"SA": "Saudi Arabia", "AE": "United Arab Emirates", "QA": "Qatar", "KW": "Kuwait", "OM": "Oman", "BH": "Bahrain",
+              "CA": "Canada", "US": "United States", "GB": "United Kingdom", "UK": "United Kingdom", "IE": "Ireland",
+              "AU": "Australia", "NZ": "New Zealand", "FR": "France", "DE": "Germany", "NL": "Netherlands", "BE": "Belgium",
+              "CH": "Switzerland", "DK": "Denmark", "SE": "Sweden", "NO": "Norway", "ES": "Spain", "IT": "Italy", "PT": "Portugal",
+              "TN": "Tunisia", "MA": "Morocco", "EG": "Egypt", "IN": "India", "SG": "Singapore", "ZA": "South Africa"}
+ISO_PREFIX_RE = re.compile(r"^([A-Z]{2}) +[-–] +(.+)$")
+
+
 def parse_location(raw: str | None, remote_flag: bool | None = None, workplace_type=None) -> ParsedLocation:
     text = (raw or "").strip()
+    prefixed = ISO_PREFIX_RE.match(text)
+    if prefixed and prefixed.group(1) in ISO_PREFIX:
+        rest = prefixed.group(2)
+        region_first = re.match(r"^([A-Z]{2}), *(.+)$", rest)  # "MB, Winnipeg" -> "Winnipeg, MB"
+        if region_first:
+            rest = f"{region_first.group(2)}, {region_first.group(1)}"
+        parsed = parse_location(f"{rest}, {ISO_PREFIX[prefixed.group(1)]}", remote_flag, workplace_type)
+        parsed.raw = text
+        return parsed
     first = re.split(r";| or | / |\n", text)[0].strip() if text else ""
     loc = ParsedLocation(raw=text)
 

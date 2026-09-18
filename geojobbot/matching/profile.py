@@ -281,6 +281,10 @@ WORK_AUTH_REQUIRED = [
     r"\bwithout (?:the need for |need of |requiring |current or future )?(?:visa |employer )?sponsorship\b",
     r"\bsponsorship (?:is|will) (?:not|unavailable)|\bsponsorship (?:is )?not (?:available|offered|provided|possible)\b",
     r"\b(?:u\.?s\.?a?\.?|american|canadian|british|uk|australian|eu|german|french|dutch) (?:citizens?|citizenship|nationals?)\b",
+    # jobs reserved for a country's own nationals (Gulf nationalisation programmes)
+    r"\b(?:saudi|emirati|uae|qatari|kuwaiti|omani|bahraini|gcc) nationals?\b", r"\bnationals? only\b",
+    r"\b(?:saudi[sz]ation|emirati[sz]ation|omani[sz]ation|qatari[sz]ation|nitaqat|tawteen)\b",
+    r"\b(?:for|only|open to) (?:saudis|emiratis|qataris|kuwaitis|omanis|bahrainis)\b", r"\b(?:saudis|emiratis) only\b",
     r"\bpermanent residen(?:t|ts|cy|ce)\b", r"\bgreen card\b",
     r"\b(?:security|secret|top secret|government|dv|sc|baseline) clearance\b", r"\bts/sci\b", r"\bclearance (?:is )?required\b",
     r"\b(?:valid |current )?(?:work|employment) (?:permit|visa|authori[sz]ation)\b", r"\bopen work permit\b",

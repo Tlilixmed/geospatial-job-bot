@@ -262,11 +262,38 @@ def assess(rec: dict, settings, rules: dict | None = None) -> dict | None:
 def annotate(rec: dict, settings, rules: dict | None = None) -> bool:
     """Store the assessment on the job (recomputed every run: sponsor hits and AI readings arrive later)."""
     result = assess(rec, settings, rules)
+    _apply_penalty(rec, result, settings)
     if result is None:
         rec.pop("visa", None)
         return False
     rec["visa"] = result
     return True
+
+
+def _apply_penalty(rec: dict, result: dict | None, settings) -> None:
+    """A route that is hard or blocked, with no sign that the employer sponsors, costs VISA_PENALTY points.
+
+    Kept in score_breakdown["visa"] so it is applied once, shown in /why, and lifted again when the facts change
+    (a register hit or an AI reading that sponsorship is offered). It never adds a rejection reason.
+    """
+    from .sponsors import retier  # local import: sponsors does not know about visa routes
+
+    breakdown = rec.setdefault("score_breakdown", {})
+    wanted = 0
+    size = int(getattr(settings, "visa_penalty", 0) or 0)
+    if result is not None and size and result["verdict"] in ("hard", "blocked"):
+        sponsor = next((c for c in result.get("checks") or [] if c["k"] == "sponsor"), None)
+        if not (sponsor and sponsor["ok"] is True and result["verdict"] == "hard"):
+            wanted = -size
+    current = int(breakdown.get("visa") or 0)
+    if wanted == current or set(rec.get("rejection_reasons") or []) - {"LOW_SCORE"}:
+        return
+    rec["score"] = max(0, min(100, int(rec.get("score") or 0) + wanted - current))
+    if wanted:
+        breakdown["visa"] = wanted
+    else:
+        breakdown.pop("visa", None)
+    retier(rec, settings)
 
 
 # ---------------------------------------------------------------------------- text
@@ -299,6 +326,9 @@ def detail_lines(rec: dict, now=None) -> list[str]:
         return []
     lines = [f"{VERDICT_ICON.get(visa['verdict'], '🛂')} <b>Visa route: {escape(visa['path'])}</b> — {VERDICT_TEXT.get(visa['verdict'], '')}"]
     lines += [f"   {MARK[c['ok']]} {escape(c['text'])}" for c in visa.get("checks") or []]
+    penalty = int((rec.get("score_breakdown") or {}).get("visa") or 0)
+    if penalty:
+        lines.append(f"   score {penalty} points: this route is {VERDICT_TEXT.get(visa['verdict'], visa['verdict'])} and nothing says the employer sponsors")
     if visa.get("note"):
         lines.append(f"   <i>{escape(visa['note'])}</i>")
     for other in visa.get("others") or []:

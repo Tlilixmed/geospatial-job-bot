@@ -258,7 +258,7 @@ class Pipeline:
         counts.update(self._sponsors(manager, ctx, outcome, state, writes_allowed, report))
         counts.update(self._learning(manager, outcome, state))
         counts.update(self._ai_review(outcome, state))
-        counts.update(self._visa(state))
+        counts.update(self._visa(state, outcome.seen_ids))
         counts.update(self._timing(outcome, state))
 
         relevant_by_board = Counter()
@@ -499,16 +499,25 @@ class Pipeline:
             log.warning("deadline reminders skipped: %s", type(exc).__name__)
         return 0
 
-    def _visa(self, state: dict) -> Counter:
+    def _visa(self, state: dict, seen_ids: set) -> Counter:
         """Compare every accepted job with its country's work-visa route (pure computation, never fatal)."""
         counts = Counter()
         if not self.settings.visa_paths:
             return counts
         try:
             rules = visa.load_rules()
-            for rec in state["jobs"].values():
-                if rec.get("tier") in ("high", "possible") and visa.annotate(rec, self.settings, rules):
+            for cid, rec in state["jobs"].items():
+                before = rec.get("tier")
+                # jobs the penalty pushed under the cut-off are revisited too, so it can be lifted when facts change
+                if before not in ("high", "possible") and not (rec.get("score_breakdown") or {}).get("visa"):
+                    continue
+                if visa.annotate(rec, self.settings, rules):
                     counts[f"visa_{rec['visa']['verdict']}"] += 1
+                if rec.get("tier") != before:
+                    counts["visa_retiered"] += 1
+                if rec.get("tier") != before and cid in seen_ids:  # the run's tier counts cover this run's jobs only
+                    counts[f"tier_{before}"] -= 1
+                    counts[f"tier_{rec['tier']}"] += 1
         except Exception as exc:
             log.warning("visa routes skipped: %s", type(exc).__name__)
         return counts

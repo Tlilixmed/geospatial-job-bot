@@ -213,3 +213,21 @@ def test_surveyor_and_mapping_titles_need_geomatics_evidence():
     assert M.score_job("Survey Technician", "", {}).tier == "possible"
     assert M.score_job("Topographe", "", {}).tier == "possible"
     assert M.score_job("GIS Analyst", "", {}).tier == "possible"  # strong titles unchanged
+
+
+def test_jobs_reserved_for_nationals_are_rejected_and_iso_prefixed_locations_parse():
+    from conftest import make_settings
+    from geojobbot.utils.location import parse_location
+
+    score_job = M.score_job
+    loc = parse_location("SA - Riyadh, Qiddiya")
+    assert (loc.city, loc.country) == ("Riyadh", "Saudi Arabia")
+    winnipeg = parse_location("CA - MB, Winnipeg")
+    assert (winnipeg.city, winnipeg.region, winnipeg.country) == ("Winnipeg", "Manitoba", "Canada")
+    reserved = score_job("GIS Specialist (Saudi National)", GIS_DESCRIPTION, loc.to_dict(), make_settings().match_config())
+    assert reserved.tier == "rejected" and "WORK_AUTHORIZATION_REQUIRED" in reserved.rejection_reasons
+    emiratisation = score_job("GIS Analyst", GIS_DESCRIPTION + " This role is part of our Emiratisation programme, UAE nationals only.",
+                              parse_location("AE - Dubai").to_dict(), make_settings().match_config())
+    assert emiratisation.tier == "rejected"
+    open_role = score_job("GIS Specialist", GIS_DESCRIPTION, loc.to_dict(), make_settings().match_config())
+    assert open_role.tier != "rejected"

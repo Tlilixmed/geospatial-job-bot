@@ -119,7 +119,7 @@ The sponsor badge says an employer *can* sponsor. `/visa` puts the facts of each
 - **routes your own profile opens** (`MY_LANGUAGES`, `HOME_COUNTRIES`): in Canada, *Francophone Mobility* means a French speaker needs **no LMIA** for a job outside Québec; in France, *Géomètre*, *Dessinateur du BTP*, *Chargé d'études techniques du BTP* and *Informaticien d'étude* are on the 2008 France–Tunisia list of occupations open to Tunisians **without the labour-market test**;
 - Gulf states: employer-sponsored as a matter of course. US H-1B and Swiss quotas are marked *hard from abroad*.
 
-The verdict (🟢 looks open · 🟡 possible, facts missing · 🟠 hard · ⛔ blocked) annotates digests and `/why code`, orders `/visa`, and never rejects a job. `/visa code` explains one job, `/visa france` a country. It is indicative, not legal advice. `VISA_PATHS=false` turns it off.
+The verdict (🟢 looks open · 🟡 possible, facts missing · 🟠 hard · ⛔ blocked) annotates digests and `/why code` and orders `/visa`. It never adds a rejection, but a route that is *hard* or *blocked* with nothing saying the employer sponsors costs the job `VISA_PENALTY` points (default 12, `0` = label only): in a live run 13 of 33 High matches were US jobs reachable only through the H-1B lottery, outranking jobs with an open route. The deduction is shown in `/why`, and is lifted by itself when a register hit or the AI review later shows sponsorship. Unknown facts are never punished. `/visa code` explains one job, `/visa france` a country. It is indicative, not legal advice. `VISA_PATHS=false` turns it off.
 
 ### Going where sponsorship is proven: prospects and the watch list
 
@@ -449,6 +449,7 @@ In a dry run, alerts are printed rather than sent and no state is written, unles
 | `ADZUNA_REQUESTS_PER_RUN`, `JOOBLE_REQUESTS_PER_RUN`, `JOBSPY_LOCATIONS_PER_RUN` | `30`, `12`, `3` | per-run budgets; countries, locations and terms rotate across runs so quotas and runtime stay flat as the lists grow |
 | `RELIEFWEB_APPNAME`, `WEEKLY_SUMMARY` | empty, `true` | enables ReliefWeb · weekly Telegram summary |
 | `SPONSOR_REGISTERS` | `true` | UK, Canada, Netherlands, Ireland and Denmark registers: badge, small bonus, `/sponsors` |
+| `VISA_PENALTY` | `12` | points a job loses when its visa route is hard or blocked and nothing says the employer sponsors |
 | `VISA_PATHS`, `MY_LANGUAGES` | `true`, `English,French,Arabic` | visa-route check (`config/visa_paths.toml`) · languages that open routes such as Francophone Mobility |
 | `PROSPECTS_PER_RUN` | `10` | employers looked up on the public ATS APIs per run (`0` = off) |
 | `FRANCETRAVAIL_CLIENT_ID`, `FRANCETRAVAIL_CLIENT_SECRET` | empty | enables France Travail (free application at francetravail.io, API *Offres d'emploi v2*) |

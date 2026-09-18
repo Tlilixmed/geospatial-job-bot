@@ -129,3 +129,23 @@ def test_pipeline_annotates_and_publishes_visa_views():
     index = manager.read_json("state/index.json")
     assert index["jobs"][0]["visa"]["v"] == "open" and any("Skilled Worker" in line for line in index["jobs"][0]["visa"]["d"])
     assert "Visa routes of current matches" in index["views"]["visa"] and "Work-visa routes: United Kingdom" in index["visa_cards"]["uk"]
+
+
+def test_a_hard_or_blocked_route_without_sponsorship_costs_points_once_and_is_lifted_when_facts_change():
+    s = make_settings()
+    us = job("p:1", "GIS Analyst", country="United States", score=80, tier="high", score_breakdown={"title": 40})
+    assert visa.annotate(us, s) and us["score"] == 68 and us["tier"] == "possible" and us["score_breakdown"]["visa"] == -12
+    assert visa.annotate(us, s) and us["score"] == 68  # applied once
+    assert "score -12 points" in "\n".join(visa.detail_lines(us, NOW))
+    us["ai"] = {"fit": 8, "sponsorship": "offered"}  # the AI later reads that the employer sponsors
+    assert visa.annotate(us, s) and us["score"] == 80 and us["tier"] == "high" and "visa" not in us["score_breakdown"]
+
+    low_pay = job("p:2", "GIS Analyst", country="United Kingdom", salary="£25,000 a year", score=72, tier="high", score_breakdown={})
+    visa.annotate(low_pay, s)
+    assert low_pay["score"] == 60 and low_pay["tier"] == "possible" and low_pay["rejection_reasons"] == []
+    label_only = job("p:3", "GIS Analyst", country="United States", score=80, tier="high", score_breakdown={})
+    visa.annotate(label_only, make_settings(visa_penalty=0))
+    assert label_only["score"] == 80 and label_only["visa"]["verdict"] == "hard"
+    open_route = job("p:4", "GIS Analyst", country="United Kingdom", score=80, tier="high", score_breakdown={})
+    visa.annotate(open_route, s)
+    assert open_route["score"] == 80  # unknown facts are never punished
