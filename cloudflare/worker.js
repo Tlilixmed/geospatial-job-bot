@@ -11,6 +11,11 @@
  *   WEBHOOK_SECRET       any random string of letters and digits; also given to Telegram in setWebhook
  *   GITHUB_TOKEN         fine-grained personal access token: this repository only, Actions = Read and write
  *   GITHUB_REPO          e.g. Tlilixmed/geospatial-job-bot
+ *   TELEGRAM_OWNER_ID    optional: your own Telegram user id. Only needed when TELEGRAM_CHAT_ID is a group or channel
+ *                        and you also want to be obeyed elsewhere; with a private chat id the two are the same.
+ *
+ * Who is obeyed: messages in TELEGRAM_CHAT_ID, and messages written by the owner in any chat the bot can read.
+ * Replies always go to TELEGRAM_CHAT_ID.
  *
  * Optional bindings (Settings -> Bindings -> Add):
  *   INBOX  R2 bucket = the bot's bucket. Messages are then handed over through R2 (inbox/<id>.json) instead of
@@ -120,7 +125,12 @@ export default {
       || update.edited_message || update.edited_channel_post);
     const raw = message && (typeof message.text === "string" ? message.text : message.caption);
     const text = typeof raw === "string" ? raw.trim().slice(0, 500) : "";
-    const chatMatches = Boolean(message && message.chat) && String(message.chat.id) === String(env.TELEGRAM_CHAT_ID);
+    // Authorised when the message is in the configured chat, or is written by the owner anywhere (a private chat id
+    // is also that person's user id). TELEGRAM_OWNER_ID can name the owner explicitly when the chat is a group.
+    const owner = String(env.TELEGRAM_OWNER_ID || env.TELEGRAM_CHAT_ID);
+    const inChat = Boolean(message && message.chat) && String(message.chat.id) === String(env.TELEGRAM_CHAT_ID);
+    const fromOwner = Boolean(message && message.from) && !message.from.is_bot && String(message.from.id) === owner;
+    const chatMatches = inChat || fromOwner;
     if (!text || !chatMatches) {
       // Visible in the Worker's Observability logs; says why without revealing the message.
       console.log("ignored update", JSON.stringify({
@@ -133,7 +143,8 @@ export default {
       return new Response("ignored");
     }
     console.log("accepted update", JSON.stringify({
-      chatType: message.chat.type, command: text.startsWith("/"), ai: Boolean(env.AI), inbox: Boolean(env.INBOX),
+      chatType: message.chat.type, via: inChat ? "chat" : "owner", command: text.startsWith("/"),
+      ai: Boolean(env.AI), inbox: Boolean(env.INBOX),
     }));
     // Answer Telegram at once (a slow reply makes it retry the update) and finish the work in the background.
     // Whatever goes wrong is reported to the chat instead of failing silently.

@@ -96,7 +96,12 @@ class CommandProcessor:
             last = update.get("update_id", last)
             message = update.get("message") or {}
             text = (message.get("text") or "").strip()
-            if str((message.get("chat") or {}).get("id")) != str(self.settings.telegram_chat_id):
+            # obey the configured chat, or its owner writing from any other chat (a private chat id is a user id)
+            owner = str(os.environ.get("TELEGRAM_OWNER_ID") or self.settings.telegram_chat_id)
+            sender = message.get("from") or {}
+            in_chat = str((message.get("chat") or {}).get("id")) == str(self.settings.telegram_chat_id)
+            from_owner = not sender.get("is_bot") and str(sender.get("id")) == owner
+            if not (in_chat or from_owner):
                 counts["ignored_other_chat"] += 1
                 continue
             if not text:

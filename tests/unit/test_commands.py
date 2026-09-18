@@ -142,3 +142,19 @@ def test_direct_text_path_used_by_the_worker_needs_no_polling():
     assert "a:1" in load_prefs(manager)["applied"] and session.calls == []  # never touched getUpdates
     proc.run_text("/weekly")
     assert "Weekly job summary" in replies.sent[-1]
+
+
+def test_owner_is_obeyed_from_another_chat_but_strangers_there_are_not():
+    proc, replies, session, manager = setup([])
+    group = -1001234567890
+    updates = [
+        {"update_id": 1, "message": {"chat": {"id": group, "type": "supergroup"}, "from": {"id": int(CHAT)}, "text": "/pause"}},
+        {"update_id": 2, "message": {"chat": {"id": group, "type": "supergroup"}, "from": {"id": 777}, "text": "/resume"}},
+        {"update_id": 3, "message": {"chat": {"id": group, "type": "supergroup"}, "from": {"id": int(CHAT), "is_bot": True},
+                                     "text": "/resume"}},
+    ]
+    session.routes[f"{API}/getUpdates"] = lambda m, u, p, body: FakeResponse(
+        200, {"ok": True, "result": [] if "offset" in (body or {}) else updates})
+    counts = proc.run()
+    assert counts["commands"] == 1 and counts["ignored_other_chat"] == 2
+    assert load_prefs(manager)["paused"] is True  # the owner's /pause counted, the others' /resume did not
