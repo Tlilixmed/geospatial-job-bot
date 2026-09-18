@@ -118,6 +118,10 @@ def interpret(text: str, is_code: Callable[[str], bool] = lambda token: False) -
 
     if not fixed:
         return "help", ""
+    # "ai summary", "what does the AI think of the top 5", "second opinion": before help/weekly, which share words
+    if not code and (_has(t, r"\b(ai|ia|a\.i\.?|artificial intelligence|second opinion|deuxieme avis|avis de l ia)\b")
+                     or _has(t, r"\b(fit|fits)\b.*\b(me|best|profile)\b")):
+        return "ai", str(_number(fixed, 1, 25) or "")
     if _has(t, r"\b(help|aide|commands?|commandes?|menu|options|manual|guide)\b") or \
             _has(t, r"\bwhat\b.*\b(can|do|does|could)\b") or _has(t, r"\bque (?:peux|sais|fais)\b") or \
             _has(t, r"\bhow (?:do|does|to)\b.*\b(work|use)\b") or _has(t, r"\bcomment (?:ca marche|t utiliser|utiliser)\b"):

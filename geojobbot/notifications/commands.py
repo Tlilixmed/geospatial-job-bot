@@ -32,6 +32,7 @@ HELP = """🗺️ <b>Geospatial job bot — commands</b>
 /high [n] — High matches only
 /search words — search stored jobs (plain text works too)
 /why code — why a job matched, score breakdown and the AI second opinion
+/ai [n] — what the AI thinks of current matches: fit /10, summary, concerns
 /pitch code — AI drafts a short application note for that job
 
 <b>Track</b>
@@ -260,7 +261,7 @@ class CommandProcessor:
             "/muted": self.cmd_muted, "/threshold": self.cmd_threshold, "/locations": self.cmd_locations,
             "/interns": self.cmd_interns, "/pause": self.cmd_pause, "/resume": self.cmd_resume,
             "/status": self.cmd_status, "/run": self.cmd_run, "/weekly": self.cmd_weekly, "/range": self.cmd_range,
-            "/pitch": self.cmd_pitch, "/draft": self.cmd_pitch,
+            "/pitch": self.cmd_pitch, "/draft": self.cmd_pitch, "/ai": self.cmd_ai,
         }
 
     # ------------------------------------------------------------------ find
@@ -477,6 +478,8 @@ class CommandProcessor:
                  f"That run: {counts.get('tier_high', 0)} high · {counts.get('tier_possible', 0)} possible · "
                  f"{counts.get('alerts_sent', 0)} alerted · {counts.get('new', 0)} new",
                  f"Stored jobs: {len(jobs)} · fresh matches now: {len(self._current_matches())}",
+                 "AI second opinion: " + ("{1} of {0} current matches reviewed · {2} vetoed".format(*self._ai_coverage())
+                                          if self.settings.cloudflare_ai_token else "off (CLOUDFLARE_AI_TOKEN not set here)"),
                  f"Failed sources: {_esc(', '.join(failed)) or 'none'}",
                  f"Thresholds: High ≥ {self.prefs['high_threshold'] or self.settings.high_threshold}, "
                  f"Possible ≥ {self.prefs['medium_threshold'] or self.settings.medium_threshold}",
@@ -485,6 +488,52 @@ class CommandProcessor:
                  f"Muted: {_esc(', '.join(self.prefs['muted'])) or 'nothing'} · applied: {len(self.prefs['applied'])} · "
                  f"hidden: {len(self.prefs['hidden'])}"]
         return ["\n".join(lines)]
+
+    def _ai_coverage(self) -> tuple[int, int, int]:
+        """(current matches, of which reviewed by the AI, jobs the AI vetoed)."""
+        current = self._current_matches()
+        reviewed = sum(1 for rec in current if (rec.get("ai") or {}).get("summary") or (rec.get("ai") or {}).get("fit") is not None)
+        vetoed = sum(1 for rec in self.state.get("jobs", {}).values() if "AI_NOT_RELEVANT" in (rec.get("rejection_reasons") or []))
+        return len(current), reviewed, vetoed
+
+    def cmd_ai(self, arg: str) -> list[str]:
+        """The AI's second opinion on current matches, best fit first, in a layout built around it."""
+        limit = self._number(arg, 8, 1, 25)
+        total, reviewed_count, vetoed = self._ai_coverage()
+        reviewed = [rec for rec in self._current_matches() if (rec.get("ai") or {}).get("fit") is not None]
+        if not reviewed:
+            if not self.settings.cloudflare_ai_token:
+                return ["🤖 The AI second opinion is off: the CLOUDFLARE_AI_TOKEN secret is not reaching this workflow."]
+            return [f"🤖 No current match has an AI review yet ({total} waiting). Reviews are added during scraper runs, "
+                    f"up to {self.settings.ai_reviews_per_run} per run, best matches first. /run starts one now."]
+        reviewed.sort(key=lambda r: (-int(r["ai"]["fit"]), -int(r.get("score") or 0)))
+        lines = ["🤖 <b>AI second opinion</b>",
+                 f"<i>{reviewed_count} of {total} current matches reviewed · {vetoed} vetoed as irrelevant · best fit first</i>"]
+        for index, rec in enumerate(reviewed[:limit], 1):
+            review = rec["ai"]
+            link = rec.get("apply_url") or rec.get("url")
+            title = f'<a href="{_esc(link)}">{_esc(rec.get("title"))}</a>' if link else f"<b>{_esc(rec.get('title'))}</b>"
+            lines += ["", f"{index}. {title}" + (f" — {_esc(rec['company'])}" if rec.get("company") else ""),
+                      f"   🎯 fit {review['fit']}/10 · score {int(rec.get('score') or 0)} · "
+                      f"<code>{job_code(rec.get('canonical_id'))}</code>"]
+            if review.get("summary"):
+                lines.append(f"   💡 {_esc(review['summary'])}")
+            if review.get("concerns"):
+                lines.append(f"   ⚠️ {_esc(review['concerns'])}")
+            extra = []
+            if review.get("years") is not None:
+                extra.append(f"{review['years']}+ yrs")
+            if review.get("sponsorship") == "offered":
+                extra.append("🛂 sponsorship offered")
+            elif review.get("sponsorship") == "not_offered":
+                extra.append("no sponsorship")
+            if review.get("languages"):
+                extra.append(", ".join(review["languages"][:3]))
+            if extra:
+                lines.append("   " + _esc(" · ".join(extra)))
+        lines += ["", "/why code shows the full review · /pitch code drafts an application"]
+        text = "\n".join(lines)
+        return [text if len(text) <= MAX_MESSAGE else text[: MAX_MESSAGE - 1] + "…"]
 
     def cmd_weekly(self, arg: str) -> list[str]:
         return [format_weekly(self.state, self.prefs, self.settings, self.now)

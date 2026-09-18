@@ -114,3 +114,36 @@ def test_digest_without_review_is_unchanged_and_pitch_command():
     proc.ai = None
     proc.run_text(f"/pitch {job_code('a:1')}")
     assert "CLOUDFLARE_AI_TOKEN" in replies.sent[-1]  # clear message when AI is not configured
+
+
+def test_ai_view_weekly_lines_status_coverage_and_intent():
+    from geojobbot.notifications.intents import interpret
+    from geojobbot.notifications.weekly import format_weekly
+    assert interpret("ai summary") == ("ai", "") and interpret("what does the AI think of the top 5") == ("ai", "5")
+    assert interpret("weekly summary") == ("weekly", "") and interpret("deuxième avis") == ("ai", "")
+    good = {"fit": 9, "summary": "Utility GIS role, strong ArcGIS Pro match.", "concerns": "requires 5+ years", "years": 5,
+            "sponsorship": "offered", "languages": ["English", "French"]}
+    jobs = [job("a:1", "GIS Data Analyst", company="Pomerleau", score=96, ai=good, last_seen=NOW.isoformat()),
+            job("a:2", "GIS Data Analyst", company="Pomerleau", score=96, last_seen=NOW.isoformat()),
+            job("a:3", "LiDAR Technician", company="ScanCo", score=88, last_seen=NOW.isoformat(),
+                ai={"fit": 6, "summary": "Point-cloud processing.", "concerns": ""})]
+    proc, replies, _, _ = setup([], jobs)
+    proc.settings.cloudflare_ai_token = "t"
+    proc.run_text("ai summary")
+    view = replies.sent[-1]
+    assert view.startswith("↪ <i>/ai</i>") and "2 of 3 current matches reviewed" in view
+    assert view.index("GIS Data Analyst") < view.index("LiDAR Technician")  # best fit first
+    assert "🎯 fit 9/10 · score 96" in view and "💡 Utility GIS role" in view and "⚠️ requires 5+ years" in view
+    assert "5+ yrs · 🛂 sponsorship offered · English, French" in view
+    proc.run_text("/status")
+    assert "AI second opinion: 2 of 3 current matches reviewed" in replies.sent[-1]
+    weekly = format_weekly(proc.state, proc.prefs, proc.settings, NOW)
+    assert weekly.count("GIS Data Analyst") == 1 and "×2" in weekly and "🎯 fit 9/10" in weekly and "💡 Utility GIS role" in weekly
+    assert "2 of them reviewed by the AI so far" in weekly
+    # nothing reviewed yet: say so, and say why
+    proc2, replies2, _, _ = setup([], [job("b:1", "GIS Analyst")])
+    proc2.run_text("/ai")
+    assert "is off" in replies2.sent[-1]
+    proc2.settings.cloudflare_ai_token = "t"
+    proc2.run_text("/ai")
+    assert "No current match has an AI review yet (1 waiting)" in replies2.sent[-1]

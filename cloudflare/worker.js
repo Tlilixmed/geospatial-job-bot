@@ -24,7 +24,7 @@
  *          and the AI answer is only accepted if it is one of the known commands.
  */
 const COMMANDS = ["jobs", "high", "range", "search", "why", "applied", "hide", "unhide", "mute", "unmute", "muted",
-  "threshold", "locations", "interns", "pause", "resume", "status", "weekly", "run", "help", "pitch"];
+  "threshold", "locations", "interns", "pause", "resume", "status", "weekly", "run", "help", "pitch", "ai"];
 const HINT_RE = new RegExp(`^/(${COMMANDS.join("|")})(\\s[^\\n]{0,100})?$`);
 
 const SYSTEM_PROMPT = `You translate one chat message (English, French or Arabic, typos possible) sent to a job-alert bot
@@ -36,6 +36,7 @@ Commands:
 /search WORDS        look for jobs about a skill, title, company or place (keep only the meaningful words)
 /why CODE            explain one job; CODE is a 5-character tag like a3f9c
 /pitch CODE          write a cover letter / application note for that job
+/ai [n]              show the AI's opinion (fit, summary, concerns) of the current matches
 /applied CODE        the user applied to that job        /applied   list applications
 /hide CODE           the user is not interested          /unhide CODE   bring it back
 /mute TEXT           stop showing a company or title word /unmute TEXT   /muted  list mutes

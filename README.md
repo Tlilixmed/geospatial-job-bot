@@ -84,7 +84,7 @@ Invalid configured slugs are listed prominently in the run summary and GitHub st
 
 ### AI second opinion (optional, free)
 
-With a `CLOUDFLARE_AI_TOKEN` secret the bot asks Cloudflare Workers AI (`@cf/meta/llama-3.1-8b-instruct`, free daily allowance) about every job the deterministic scorer accepted, once per job, best matches first, at most `AI_REVIEWS_PER_RUN` (25) per run:
+With a `CLOUDFLARE_AI_TOKEN` secret the bot asks Cloudflare Workers AI (`@cf/meta/llama-3.1-8b-instruct`, free daily allowance) about every job the deterministic scorer accepted, once per job, best matches first, at most `AI_REVIEWS_PER_RUN` (40) per run (a backlog of older matches is worked off as they are seen again; `/status` and `/ai` show the coverage):
 
 - a one-sentence English **summary** of what the job is and why it fits (French, Arabic or German postings are translated), shown as 💡 in the digest;
 - **concerns** the keyword rules cannot see ("requires 8+ years", "German required", "licensed surveyor only"), shown as ⚠️;
@@ -135,6 +135,7 @@ The bot answers messages from the configured chat only; every other chat is igno
 | `/range 60 70` | fresh jobs whose score lies in a range (includes ones just under the Possible cut-off) |
 | `/search words` | search stored matches by title, company, place, skill |
 | `/why code` | score breakdown, evidence, AI second opinion, sources and link for one job |
+| `/ai [n]` | the AI's view of current matches, best fit first: fit /10, summary, concerns, years, sponsorship, languages |
 | `/pitch code` | Workers AI drafts a short application note for that job, in the posting's language |
 | `/applied code`, `/applied` | mark as applied (never alerted again) · list applications |
 | `/hide code`, `/unhide code` | dismiss or restore a job |

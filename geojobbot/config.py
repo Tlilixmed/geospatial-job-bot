@@ -143,7 +143,7 @@ class Settings:
     cloudflare_ai_token: str | None = None
     cloudflare_account_id: str | None = None
     ai_model: str = "@cf/meta/llama-3.1-8b-instruct"
-    ai_reviews_per_run: int = 25
+    ai_reviews_per_run: int = 40  # ~35 neurons each; 6 runs a day stays inside the free 10,000/day
     ai_veto_possible: bool = True
     candidate_profile: str = ""  # empty = the built-in profile in geojobbot/ai/review.py
     reliefweb_appname: str | None = None  # approved app name from ReliefWeb (free): UN/NGO jobs, hired internationally

@@ -6,7 +6,7 @@ from datetime import timedelta
 from ..core.jobs import alert_block_reason
 from ..models import TIER_HIGH
 from ..utils.dates import parse_datetime
-from ..utils.text import fold, job_code
+from ..utils.text import fold, job_code, normalize_company, normalize_title
 from .telegram import _esc
 
 STILL_LISTED_DAYS = 4   # a posting not seen by any source for this long is treated as gone
@@ -46,13 +46,29 @@ def format_weekly(state: dict, prefs: dict, settings, now) -> str | None:
                          + (f" — {_esc(info['company'])}" if info.get("company") else "")
                          + f" · applied {age} · {'still listed' if listed else 'no longer listed'}")
     if still_open:
-        lines += ["", f"<b>High matches still open, not applied ({len(still_open)})</b>"]
-        for rec in still_open[:OPEN_SHOWN]:
+        # the same title at the same company posted for several locations is one line, not several
+        groups: dict[tuple, list[dict]] = {}
+        for rec in still_open:
+            groups.setdefault((normalize_company(rec.get("company")), normalize_title(rec.get("title"))), []).append(rec)
+        reviewed = sum(1 for r in still_open if (r.get("ai") or {}).get("fit") is not None)
+        lines += ["", f"<b>High matches still open, not applied ({len(still_open)})</b>",
+                  f"<i>{reviewed} of them reviewed by the AI so far</i>"]
+        for same in list(groups.values())[:OPEN_SHOWN]:
+            rec = same[0]
             link = rec.get("apply_url") or rec.get("url")
             title = f'<a href="{_esc(link)}">{_esc(rec.get("title"))}</a>' if link else _esc(rec.get("title"))
+            codes = " ".join(f"<code>{job_code(r.get('canonical_id'))}</code>" for r in same[:3])
+            lines.append("")
             lines.append(f"• {title}" + (f" — {_esc(rec['company'])}" if rec.get("company") else "")
-                         + f" · {int(rec.get('score') or 0)} · <code>{job_code(rec.get('canonical_id'))}</code>")
+                         + (f" ×{len(same)}" if len(same) > 1 else ""))
+            review = next((r["ai"] for r in same if (r.get("ai") or {}).get("fit") is not None), {})
+            facts = f"   score {int(rec.get('score') or 0)}" + (f" · 🎯 fit {review['fit']}/10" if review else "") + f" · {codes}"
+            lines.append(facts)
+            if review.get("summary"):
+                lines.append(f"   💡 {_esc(review['summary'])}")
+            if review.get("concerns"):
+                lines.append(f"   ⚠️ {_esc(review['concerns'])}")
         lines.append("")
-        lines.append("/applied code marks one as done · /hide code drops it")
+        lines.append("/ai shows the AI's view of every match · /applied code · /hide code")
     text = "\n".join(lines)
     return text if len(text) <= 4096 else text[:4095] + "…"
