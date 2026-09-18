@@ -85,3 +85,41 @@ def write_pitch(ai, profile: str, rec: dict, description: str = "") -> str | Non
         facts.append("Posting text (excerpt): " + description[:2500])
     text = ai.chat(PITCH_SYSTEM.format(profile=profile or DEFAULT_PROFILE), "\n".join(facts), max_tokens=420)
     return html.escape(text.strip()) if text else None
+
+
+PREP_SYSTEM = """You prepare ONE candidate for a job interview. Be specific to the posting, never generic.
+Candidate: {profile}
+Write in English, plain text, no markdown symbols, at most 230 words, exactly these four parts:
+LIKELY QUESTIONS: five questions this employer will probably ask, each followed by " -> " and a six-to-twelve word hint on how THIS candidate should answer from real experience.
+WEAK POINTS: two gaps between the candidate and the posting, each with one sentence on how to address it honestly.
+ASK THEM: three good questions for the candidate to ask (one about the team's tools or data, one about relocation or visa support when the job is abroad).
+ONE LINE: a single sentence the candidate can use to introduce themselves for this job.
+Never invent facts about the employer."""
+
+APPROACH_SYSTEM = """You write a short unsolicited application (candidature spontanée) from ONE candidate to a firm that has not advertised a job.
+Candidate: {profile}
+Write in French when the firm or the project is in a French-speaking country, otherwise in English.
+First line: "Subject: ..." (or "Objet : ..."). Then 110-150 words, first person, concrete: open with the specific reason for writing now
+(given in the facts, such as a contract the firm just won), name 2-3 of the candidate's real skills that such work needs, say the candidate
+can relocate or work remotely, and end by asking for a short call. No clichés, no invented facts, no placeholders such as [Name]."""
+
+
+def write_prep(ai, profile: str, rec: dict, description: str = "", facts: list[str] | None = None) -> str | None:
+    review = rec.get("ai") or {}
+    lines = [f"Job title: {rec.get('title')}", f"Company: {rec.get('company') or 'unknown'}",
+             f"Location: {rec.get('location_raw') or rec.get('country') or 'unknown'}"]
+    requirements = review.get("requirements") or rec.get("matched_skills") or rec.get("skills") or []
+    if requirements:
+        lines.append("Key requirements: " + "; ".join(str(r) for r in requirements))
+    if review.get("concerns"):
+        lines.append("Known concern: " + review["concerns"])
+    lines += list(facts or [])
+    if description:
+        lines.append("Posting text (excerpt): " + description[:2500])
+    text = ai.chat(PREP_SYSTEM.format(profile=profile or DEFAULT_PROFILE), "\n".join(lines), max_tokens=600)
+    return html.escape(text.strip()) if text else None
+
+
+def write_approach(ai, profile: str, firm: str, facts: list[str]) -> str | None:
+    text = ai.chat(APPROACH_SYSTEM.format(profile=profile or DEFAULT_PROFILE), "\n".join([f"Firm: {firm}"] + facts), max_tokens=420)
+    return html.escape(text.strip()) if text else None

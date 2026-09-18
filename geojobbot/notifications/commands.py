@@ -13,7 +13,7 @@ from collections import Counter
 import requests
 
 from ..ai.client import WorkersAI
-from ..ai.review import write_pitch
+from ..ai.review import write_approach, write_pitch, write_prep
 from ..core.descriptions import DescriptionStore
 from ..core.jobs import APPLICATION_STATUSES, alert_block_reason, is_listed
 from ..core.prefs import load_prefs, save_prefs
@@ -40,6 +40,8 @@ HELP = """🗺️ <b>Geospatial job bot — commands</b>
 /visa — is a work visa realistic? licence, legal salary minimum, occupation · /visa code · /visa france
 /ai [n] — what the AI thinks of current matches: fit /10, summary, concerns
 /pitch code — AI drafts a short application note for that job
+/prep code — interview sheet: likely questions, weak points, what to ask (sent by itself when you record an interview)
+/approach firm — AI drafts a speculative application to a firm that just won geospatial work · /approach lists them
 
 <b>Track</b>
 /applied code — mark as applied (no more alerts for it)
@@ -280,7 +282,7 @@ class CommandProcessor:
             "/learning": self.cmd_learning, "/radar": self.cmd_radar, "/skills": self.cmd_skills,
             "/signals": self.cmd_signals, "/sources": self.cmd_sources, "/yield": self.cmd_sources,
             "/visa": self.cmd_visa, "/watch": self.cmd_watch, "/unwatch": self.cmd_unwatch,
-            "/prospects": self.cmd_prospects,
+            "/prospects": self.cmd_prospects, "/prep": self.cmd_prep, "/approach": self.cmd_approach,
         }
 
     # ------------------------------------------------------------------ find
@@ -415,6 +417,81 @@ class CommandProcessor:
         tail = f'\n\n<a href="{_esc(link)}">Apply</a> · edit before sending, it is a draft.' if link else ""
         return [f"{head}\n\n{note}{tail}"]
 
+    def _known_facts(self, rec: dict) -> list[str]:
+        """What the bot already established about a job, in plain text (shown to the user and given to the AI)."""
+        facts = []
+        if rec.get("salary"):
+            facts.append(f"Posted salary: {rec['salary']}")
+        for hit in (rec.get("sponsor") or [])[:2]:
+            text = f"{hit.get('label')}: {hit.get('name')}"
+            if hit.get("occupations"):
+                text += " (already hired " + ", ".join(hit["occupations"]) + " from abroad)"
+            facts.append(text)
+        route = rec.get("visa") or {}
+        if route.get("line"):
+            facts.append(f"Visa route ({route.get('country')}): {route['line']}")
+        closes, again = timing.deadline_badge(rec, self.now), timing.repost_badge(rec)
+        if closes:
+            facts.append(closes.replace("⏳ ", "Application "))
+        if again:
+            facts.append(again.replace("♻️ ", "This role was ") + ": ask why it is open again")
+        return facts
+
+    def cmd_prep(self, arg: str) -> list[str]:
+        """/prep code: interview sheet for a job (sent by itself when /outcome records an interview)."""
+        code = arg.split()[0] if arg.split() else ""
+        rec = self._by_code(code)
+        if rec is None:  # applied long ago: the job may have left the state, the application snapshot has not
+            cid, info = self._applied_by_code(code)
+            rec = dict(info, canonical_id=cid) if cid else None
+        if rec is None:
+            return ["Usage: /prep code — an interview sheet for that job. /applied lists your codes."]
+        ai = self.ai if self.ai is not None else WorkersAI.from_settings(self.settings, budget=2)
+        facts = self._known_facts(rec)
+        head = f"🎤 <b>Interview sheet: {_esc(rec.get('title'))}</b>" + (f" — {_esc(rec['company'])}" if rec.get("company") else "")
+        known = ("\n\n<b>What I know</b>\n" + "\n".join(f"• {_esc(f)}" for f in facts)) if facts else ""
+        if ai is None:
+            return [head + known + "\n\nThe question list needs Workers AI: add the CLOUDFLARE_AI_TOKEN secret (see README)."]
+        sheet = write_prep(ai, self.settings.candidate_profile, rec, DescriptionStore.load(self.manager).get(rec["canonical_id"]), facts)
+        if not sheet:
+            return [head + known + "\n\nThe AI service did not answer just now. /prep " + _esc(code) + " tries again."]
+        return [f"{head}{known}\n\n{sheet}\n\n<i>A draft to rehearse with, not a script. Good luck.</i>"[:4090]]
+
+    def cmd_approach(self, arg: str) -> list[str]:
+        """/approach firm: a speculative application to a firm with a reason to hire (a contract it just won…)."""
+        name = arg.strip()
+        awards = [s for s in (self.state.get("signals") or {}).get("items") or [] if s.get("kind") == "award" and s.get("winner")]
+        if not name:
+            if not awards:
+                return ["Usage: /approach firm name — I draft a short unsolicited application. "
+                        "/signals will list firms that just won geospatial contracts once some are found."]
+            lines = ["✉️ <b>Firms with a reason to hire</b> (they just won geospatial work)"]
+            for s in awards[:8]:
+                lines.append(f"• <b>{_esc(s['winner'])}</b>" + (f" ({_esc(s['winner_country'])})" if s.get("winner_country") else "")
+                             + f" — {_esc((s.get('title') or '')[:70])}, {_esc(s.get('country') or '?')}")
+            lines += ["", "/approach firm name drafts the message · /watch firm name follows their job board"]
+            return ["\n".join(lines)]
+        ai = self.ai if self.ai is not None else WorkersAI.from_settings(self.settings, budget=2)
+        if ai is None:
+            return ["Drafting needs Workers AI: add the CLOUDFLARE_AI_TOKEN secret (see README)."]
+        wanted = prospects.normalize_company(name)
+        facts = []
+        for s in awards:
+            if wanted and wanted in prospects.normalize_company(s["winner"]):
+                name = s["winner"]
+                facts.append(f"Reason to write now: the firm just won the contract “{s.get('title')}” in {s.get('country') or 'an unnamed country'}"
+                             + (f" ({s['value']})" if s.get("value") else "") + (f". The firm is based in {s['winner_country']}" if s.get("winner_country") else ""))
+        book = (self.state.get("prospects") or {}).get(wanted) or {}
+        if book.get("why") and not facts:
+            facts.append(f"What is known about the firm: {book['why']}" + (f", based in {book['country']}" if book.get("country") else ""))
+        if not facts:
+            facts.append("No specific event is known: write about the firm's field of work in general, without inventing projects.")
+        note = write_approach(ai, self.settings.candidate_profile, name, facts)
+        if not note:
+            return ["The AI service did not answer just now. Try again in a minute."]
+        return [f"✉️ <b>Speculative application: {_esc(name)}</b>\n\n{note}\n\n"
+                f"<i>A draft: check every fact, find a named person to send it to. /watch {_esc(name)} follows their job board.</i>"[:4090]]
+
     # ------------------------------------------------------------------ track
     def cmd_applied(self, arg: str) -> list[str]:
         if not arg:
@@ -468,7 +545,10 @@ class CommandProcessor:
         cheer = {"interview": "🎤 An interview! Well done.", "offer": "🎉 An offer! Congratulations.",
                  "rejected": "❌ Noted. Their loss; on to the next.", "withdrawn": "↩️ Noted as withdrawn.",
                  "ghosted": "👻 Noted as no reply.", "applied": "📨 Back to 'applied'."}[status]
-        return [f"{cheer}\n<b>{_esc(info.get('title'))}</b>" + (f" — {_esc(info['company'])}" if info.get("company") else "")]
+        replies = [f"{cheer}\n<b>{_esc(info.get('title'))}</b>" + (f" — {_esc(info['company'])}" if info.get("company") else "")]
+        if status == "interview":  # the moment an interview sheet is useful
+            replies += self.cmd_prep(job_code(cid))
+        return replies
 
     def cmd_hide(self, arg: str) -> list[str]:
         rec = self._by_code(arg)

@@ -134,7 +134,7 @@ test("/hide, /applied and /outcome write the same prefs schema Python uses", asy
   assert.match(h.sent.at(-1).text, /Nothing relevant and fresh/);
   await h.say("/unhide 2fd2a");
   assert.deepEqual(h.stored("state/prefs.json").hidden, []);
-  assert.equal(h.dispatched.length, 0);
+  assert.equal(h.dispatched.length, 1);  // only the interview sheet went to Python
 });
 
 test("an outcome can be recorded for an application that left the index", async () => {
@@ -234,6 +234,17 @@ test("saving preferences keeps keys the Worker does not know", async () => {
   assert.equal(prefs.future_key, 7);
   assert.equal(prefs.paused, true);
   await h.say("/watch Hexagon");  // decided by Python
+  assert.equal(h.dispatched.length, 1);
+});
+
+test("recording an interview answers at once and asks Python for the interview sheet", async () => {
+  const h = harness({ index: makeIndex([job("gh:acme:1")]) });
+  await h.say("/outcome 419b7 interview");
+  assert.match(h.sent[0].text, /An interview!/);
+  assert.match(h.sent[1].text, /Preparing your interview sheet/);
+  assert.equal(h.stored("inbox/000000000100.json").text, "/prep 419b7");
+  assert.equal(h.dispatched.length, 1);
+  await h.say("/outcome 419b7 rejected");
   assert.equal(h.dispatched.length, 1);
 });
 

@@ -27,7 +27,7 @@
  */
 const COMMANDS = ["jobs", "high", "range", "search", "why", "applied", "hide", "unhide", "mute", "unmute", "muted",
   "threshold", "locations", "interns", "pause", "resume", "status", "weekly", "run", "help", "pitch", "ai", "sponsors",
-  "outcome", "possible", "radar", "skills", "signals", "learning", "sources", "visa", "watch", "unwatch", "prospects"];
+  "outcome", "possible", "radar", "skills", "signals", "learning", "sources", "visa", "watch", "unwatch", "prospects", "prep", "approach"];
 const HINT_RE = new RegExp(`^/(${COMMANDS.join("|")})(\\s[^\\n]{0,100})?$`);
 const FAST_READ = new Set(["jobs", "top", "high", "range", "search", "why", "ai", "sponsors", "sponsor", "status", "help",
   "start", "muted", "signals", "sources", "yield", "visa", "prospects"]);
@@ -49,6 +49,8 @@ Commands:
 /search WORDS        look for jobs about a skill, title, company or place (keep only the meaningful words)
 /why CODE            explain one job; CODE is a 5-character tag like a3f9c
 /pitch CODE          write a cover letter / application note for that job
+/prep CODE           prepare for an interview for that job: likely questions, weak points
+/approach FIRM       write an unsolicited application to a firm (no job posted)
 /ai [n]              show the AI's opinion (fit, summary, concerns) of the current matches
 /sponsors [n]        jobs from employers on official visa-sponsor registers, or that offer sponsorship
 /visa [CODE|COUNTRY] is a work visa realistic: salary minimum, licence, occupation; or a country's visa rules
@@ -454,7 +456,7 @@ async function mutate(env, index, prefs, command, arg) {
 }
 
 /** Try to answer from R2. Returns true when the message was handled here. */
-async function answerFast(env, command, arg, echo) {
+async function answerFast(env, command, arg, echo, update) {
   if (!env.INBOX || !(FAST_READ.has(command) || FAST_WRITE.has(command))) return false;
   const index = await readJson(env, INDEX_KEY);
   if (!index || !Array.isArray(index.jobs)) return false;  // no index yet: Python answers as before
@@ -504,6 +506,11 @@ async function answerFast(env, command, arg, echo) {
   if (!messages) return false;
   if (echo) messages[0] = `${echo}\n\n${messages[0]}`;
   await reply(env, messages);
+  // an interview was just recorded: the interview sheet needs the AI and the stored description, so Python writes it
+  if (command === "outcome" && update && /\binterview\b/i.test(arg) && /^[🎤]/u.test(messages[0].replace(/^↪[^\n]*\n\n/, ""))) {
+    const code = arg.split(/\s+/).find((w) => /^[0-9a-f]{5}$/i.test(w));
+    if (code) await dispatchToPython(env, update, `/prep ${code.toLowerCase()}`, "", "🎤 Preparing your interview sheet, about a minute.");
+  }
   return true;
 }
 
@@ -525,8 +532,8 @@ function shortcut(text, index) {
 }
 
 // ---------------------------------------------------------------------------- hand-over to Python
-async function dispatchToPython(env, update, text, hint) {
-  await tell(env, "⏳ On it. Reply in about a minute.");
+async function dispatchToPython(env, update, text, hint, notice) {
+  await tell(env, notice || "⏳ On it. Reply in about a minute.");
   let inputs;
   if (env.INBOX) {  // private hand-over: nothing about the message appears in the public workflow run
     const key = keyOf(env, `inbox/${String(update.update_id).padStart(12, "0")}.json`);
@@ -559,7 +566,7 @@ async function handleMessage(env, update, text) {
   if (text.startsWith("/")) {
     const [head, ...rest] = text.split(/\s+/);
     const command = head.slice(1).split("@")[0].toLowerCase();
-    if (await answerFast(env, command, rest.join(" "), "")) return;
+    if (await answerFast(env, command, rest.join(" "), "", update)) return;
     return dispatchToPython(env, update, text, "");
   }
   // 2. obvious words

@@ -163,3 +163,36 @@ def test_descriptions_are_kept_and_the_backlog_gets_reviewed_later():
     # descriptions of jobs that are no longer accepted are pruned
     store = DescriptionStore({"static:1": "x" * 400, "gone:1": "y" * 400})
     assert store.prune({"static:1": {"tier": "high"}}) == 1 and list(store.data) == ["static:1"]
+
+
+def test_interview_sheet_and_speculative_application():
+    from test_commands import job, setup
+
+    from geojobbot.notifications.intents import interpret
+    from geojobbot.utils.text import job_code
+
+    rec = job("a:1", "GIS Analyst", company="Acme", country="United Kingdom", salary="£45,000 a year",
+              sponsor=[{"label": "UK licensed sponsor", "name": "ACME LTD", "country": "United Kingdom"}])
+    proc, replies, _, manager = setup([], [rec])
+    code = job_code("a:1")
+    proc.run_text(f"/prep {code}")  # no AI configured: the known facts still come
+    assert "Interview sheet: GIS Analyst" in replies.sent[-1] and "UK licensed sponsor: ACME LTD" in replies.sent[-1]
+    assert "needs Workers AI" in replies.sent[-1]
+
+    ai, session = ai_with(["LIKELY QUESTIONS: Tell us about your LiDAR work -> describe the TerraScan classification project",
+                           "Objet : Candidature spontanée\nBonjour, vous venez de remporter le marché LiDAR au Sénégal…"])
+    proc.ai = ai
+    proc.run_text(f"/outcome {code} interview")
+    assert "An interview!" in replies.sent[-2] and "LIKELY QUESTIONS" in replies.sent[-1] and "What I know" in replies.sent[-1]
+    assert "Posted salary: £45,000 a year" in str(session.calls[0][2])  # the AI is given the facts the bot established
+
+    proc._state = {"jobs": {}, "signals": {"items": [{"kind": "award", "winner": "GEOFIT EXPERT", "winner_country": "France",
+                                                      "title": "Levé LiDAR côtier", "country": "Senegal", "value": "EUR 250000"}]}}
+    proc.run_text("/approach")
+    assert "Firms with a reason to hire" in replies.sent[-1] and "GEOFIT EXPERT" in replies.sent[-1]
+    proc.run_text("/approach geofit")
+    assert "Speculative application: GEOFIT EXPERT" in replies.sent[-1] and "Objet" in replies.sent[-1]
+    assert "just won the contract" in str(session.calls[1][2])
+    assert interpret("prepare me for the interview " + code, lambda t: t == code) == ("prep", code)
+    assert interpret("write to geofit expert") == ("approach", "geofit expert")
+    assert interpret("candidature spontanée pour Geofit") == ("approach", "Geofit")

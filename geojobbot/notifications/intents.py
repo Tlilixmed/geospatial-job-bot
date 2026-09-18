@@ -129,6 +129,12 @@ def interpret(text: str, is_code: Callable[[str], bool] = lambda token: False) -
     if _has(t, r"\b(weekly|hebdo\w*|summary|recap|bilan|recapitulatif)\b"):
         return "weekly", ""
 
+    # speculative application: "approach geofit", "candidature spontanée pour geofit", "write to fugro"
+    approach_words = {"approach", "spontanee", "spontaneous", "speculative", "unsolicited", "contacter", "contact"}
+    if not code and (any(f in approach_words for f in fixed) or _has(t, r"\b(write|ecris|ecrire) (to|a)\b")):
+        target = _after(original, fixed, approach_words | {"write", "ecris", "ecrire"},
+                        {"to", "a", "for", "pour", "the", "firm", "company", "candidature", "application", "chez", "with"})
+        return "approach", target
     # insights: skills radar, procurement signals, what the bot learned
     if not code:
         if _has(t, r"\b(radar|skills? gap|gaps?|what (?:should|to) (?:i )?learn|in demand|demandees?|competences? (?:demandees|recherchees|manquantes))\b"):
@@ -181,6 +187,8 @@ def interpret(text: str, is_code: Callable[[str], bool] = lambda token: False) -
     if code:
         if _has(t, r"\b(unhide|restore|bring back|reaffiche\w*|remets?)\b"):
             return "unhide", code
+        if _has(t, r"\b(prep|prepare\w*|preparation|rehearse|practice|questions?)\b"):  # "prepare me for the interview a3f9c"
+            return "prep", code
         if _has(t, r"\b(pitch|draft|cover ?letter|letter|motivation|lettre|write|redige\w*|ecris)\b"):
             return "pitch", code
         # what happened to an application: "got an interview for a3f9c", "they rejected me a3f9c", "offer a3f9c"
