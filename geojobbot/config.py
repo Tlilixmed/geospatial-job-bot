@@ -129,13 +129,18 @@ class Settings:
     # selects the Indeed/Glassdoor site and falls back to jobspy_country_indeed.
     jobspy_locations: list[str] = field(default_factory=lambda: ["Remote"])
     jobspy_results_wanted: int = 15
+    jobspy_locations_per_run: int = 3  # locations rotate across runs so runtime stays flat as the list grows
     jobspy_country_indeed: str = "USA"
     jobspy_linkedin_fetch_description: bool = True
     adzuna_app_id: str | None = None
     adzuna_app_key: str | None = None
     adzuna_countries: list[str] = field(default_factory=lambda: ["ca", "gb", "us"])
+    adzuna_requests_per_run: int = 30  # free tier: 250 calls/day
     jooble_api_key: str | None = None
     jooble_locations: list[str] = field(default_factory=list)  # falls back to preferred_locations
+    jooble_requests_per_run: int = 12
+    reliefweb_appname: str | None = None  # approved app name from ReliefWeb (free): UN/NGO jobs, hired internationally
+    weekly_summary: bool = True
     # JSearch (RapidAPI): "query@country" entries rotated across runs, JSEARCH_REQUESTS_PER_RUN per run.
     # The free tier allows 200 requests/month: one per 4-hourly run stays inside it.
     jsearch_api_key: str | None = None
@@ -143,6 +148,8 @@ class Settings:
     jsearch_queries: list[str] = field(default_factory=lambda: [
         "GIS geospatial geomatics@ca", "SIG géomatique topographe@tn", "GIS analyst remote@us",
         "LiDAR photogrammetry surveying@ca", "cartographer remote sensing@ca", "ingénieur SIG géomatique@fr",
+        "GIS visa sponsorship@us", "GIS specialist@ae", "GIS engineer@sa", "GIS analyst@qa", "géomaticien SIG@be",
+        "GIS Geomatik@ch", "GIS mining exploration@au", "GIS visa sponsorship@gb", "GIS analyst@de",
     ])
     feeds_enabled: list[str] = field(default_factory=lambda: ["remotive", "jobicy", "himalayas", "arbeitnow", "remoteok"])
     disabled_backends: list[str] = field(default_factory=list)
@@ -262,6 +269,11 @@ def load_settings() -> Settings:
     s.adzuna_countries = [c.lower() for c in env_list("ADZUNA_COUNTRIES", s.adzuna_countries)]
     s.jooble_api_key = env_str("JOOBLE_API_KEY")
     s.jooble_locations = env_list("JOOBLE_LOCATIONS", s.jooble_locations)
+    s.jooble_requests_per_run = env_int("JOOBLE_REQUESTS_PER_RUN", s.jooble_requests_per_run)
+    s.adzuna_requests_per_run = env_int("ADZUNA_REQUESTS_PER_RUN", s.adzuna_requests_per_run)
+    s.jobspy_locations_per_run = max(1, env_int("JOBSPY_LOCATIONS_PER_RUN", s.jobspy_locations_per_run))
+    s.reliefweb_appname = env_str("RELIEFWEB_APPNAME")
+    s.weekly_summary = env_bool("WEEKLY_SUMMARY", s.weekly_summary)
     s.jsearch_api_key = env_str("JSEARCH_API_KEY")
     s.jsearch_requests_per_run = max(0, env_int("JSEARCH_REQUESTS_PER_RUN", s.jsearch_requests_per_run))
     s.jsearch_queries = env_list("JSEARCH_QUERIES", s.jsearch_queries)

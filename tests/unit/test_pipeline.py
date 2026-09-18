@@ -172,3 +172,15 @@ def test_individual_format_sends_one_message_per_job():
     n = FakeNotifier()
     run(FakeS3(), [StaticBackend("feed", many_jobs(2))], n, alert_format="individual")
     assert len(n.sent) == 2 and all("HIGH MATCH" in message for message in n.sent)
+
+
+def test_weekly_summary_sent_once_per_week():
+    s3, n = FakeS3(), FakeNotifier()
+    _, report = run(s3, [StaticBackend("feed", many_jobs(1))], n, weekly_summary=True)
+    assert report["counts"]["weekly_summary_sent"] == 1 and any("Weekly job summary" in m for m in n.sent)
+    n2 = FakeNotifier()
+    _, report = run(s3, [StaticBackend("feed", many_jobs(1))], n2, now=NOW + timedelta(days=2), weekly_summary=True)
+    assert report["counts"]["weekly_summary_sent"] == 0 and n2.sent == []
+    n3 = FakeNotifier()
+    _, report = run(s3, [StaticBackend("feed", many_jobs(1))], n3, now=NOW + timedelta(days=8), weekly_summary=True)
+    assert report["counts"]["weekly_summary_sent"] == 1

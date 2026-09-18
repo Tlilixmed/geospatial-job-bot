@@ -73,6 +73,9 @@ Invalid configured slugs are listed prominently in the run summary and GitHub st
 - **Negative titles** (Director, VP, Recruiter, Nurse, Electrical Engineer, …) are rejected. "Architect" is overridden when the title is geospatial ("GIS Architect"). "Engineer" is never excluded globally.
 - **Title-only sources.** A strong geospatial title with no description available is floored at *Possible* and labelled "Title-only evidence".
 - **Evidence-only explanations.** "Why it matched" bullets are generated only from terms actually found in the job text.
+- **Weak titles.** "Surveyor", "surveying", "mapping", "topographe", "géomètre", "arpenteur" and "مساح" are geospatial only in context. Quantity, building, marine, insurance and chartered surveyors, survey researchers and process/data mapping roles are excluded outright; any other title whose only geospatial signal is one of these words must show geomatics evidence in the description (GNSS, total station, land/topographic/cadastral survey, Civil 3D, point clouds, or another geospatial family such as GIS or LiDAR), and gets no title-only benefit of the doubt unless it is an explicit role such as "Survey Technician" or "Topographe".
+- **Arabic postings.** Titles such as مهندس نظم معلومات جغرافية or فني مساحة and the main domain terms are recognised (hamza forms are folded).
+- **Sponsorship.** A posting that offers visa sponsorship gets the full location score wherever it is.
 - **Internships.** Intern, co-op, trainee, apprentice, working-student titles and their French, German and Spanish forms (stagiaire, stage, PFE, alternance, Werkstudent, prácticas…) are rejected. `EXCLUDE_INTERNSHIPS=false` or `/interns on` brings them back.
 - **Work authorisation.** Postings that require an existing right to work, citizenship or permanent residency, a security clearance, or that state no visa sponsorship is offered (English and French wording) are rejected with `WORK_AUTHORIZATION_REQUIRED`, unless the job is in one of `HOME_COUNTRIES` (default `Tunisia`) or the posting says sponsorship is available, in which case "Visa sponsorship offered" appears in the evidence and the digest shows 🛂. Disable with `EXCLUDE_WORK_AUTH_REQUIRED=false`.
 - **Rejection codes:** `NO_RELEVANT_TITLE`, `NEGATIVE_TITLE`, `INSUFFICIENT_GEOSPATIAL_SIGNALS`, `LOW_TECHNICAL_RELEVANCE`, `LOCATION_MISMATCH`, `WORK_AUTHORIZATION_REQUIRED`, `LOW_SCORE`.
@@ -127,9 +130,12 @@ The bot answers messages from the configured chat only; every other chat is igno
 | `/locations Canada, Tunisia`, `/locations reset` | preferred locations |
 | `/interns on\|off` | include or exclude internships |
 | `/pause`, `/resume` | hold alerts (jobs are still collected and released on resume) |
+| `/weekly` | applications (still listed or gone) and High matches still open; also sent automatically once a week (`WEEKLY_SUMMARY=false` disables) |
 | `/status`, `/run`, `/help` | last run and settings · start a scraper run now · this list |
 
 `code` is the 5-character tag printed next to every job in a digest.
+
+**Instant replies.** `cloudflare/worker.js` is a Telegram webhook that dispatches the commands workflow with your message the moment you send it (reply in about a minute, nothing billed while you are silent). `cloudflare/README.md` has the five setup steps; afterwards set the repository variable `TELEGRAM_WEBHOOK=true` so scheduled polling is skipped.
 
 ---
 
@@ -202,16 +208,17 @@ Optional secrets, each enabling one more source:
 | `USAJOBS_API_KEY`, `USAJOBS_EMAIL` | free key from developer.usajobs.gov |
 | `ADZUNA_APP_ID`, `ADZUNA_APP_KEY` | free at developer.adzuna.com (Canada, UK, US, AU, DE, FR… — not Tunisia) |
 | `JOOBLE_API_KEY` | free at jooble.org/api/about (covers Tunisia, the Maghreb and Canada) |
+| `RELIEFWEB_APPNAME` | free approved app name from apidoc.reliefweb.int/parameters#appname: UN and NGO GIS / information-management jobs, hired internationally, many in French- or Arabic-speaking duty stations |
 | `JSEARCH_API_KEY` | free tier at rapidapi.com (JSearch, 200 requests/month): Google for Jobs results, i.e. LinkedIn, Indeed and Glassdoor postings with full descriptions, any country |
 
 Optional **variables** (`scraper.yml` applies sensible defaults when unset; Canada and Tunisia are the default locations):
 
 | Name | Purpose |
 |---|---|
-| `PREFERRED_LOCATIONS` | default `Canada,Tunisia,Tunisie,Tunis` |
+| `PREFERRED_LOCATIONS` | empty by default: any country is acceptable when the employer sponsors; set it to favour some |
 | `ACCEPTED_REMOTE_SCOPES` | default `Worldwide,EMEA,Africa,Americas` |
 | `JOBSPY_SITES` | default `indeed,linkedin`; add `glassdoor`, `bayt`, `google` at your own risk |
-| `JOBSPY_LOCATIONS` | default `Remote@usa,Canada@canada,Tunisia@worldwide` (`@country` picks the Indeed site; `worldwide` skips Indeed/Glassdoor) |
+| `JOBSPY_LOCATIONS` | default: Remote, Canada, Tunisia, France, UAE, Saudi Arabia, Qatar, Belgium, Switzerland, Germany, Australia, UK, Morocco, three per run in rotation (`@country` picks the Indeed site; `worldwide` skips Indeed/Glassdoor) |
 | `JOOBLE_LOCATIONS`, `ADZUNA_COUNTRIES` | default `Canada,Tunisia` and `ca,gb,us` |
 | `ALERT_FORMAT` | `digest` (default) or `individual` |
 | `DUCKDUCKGO_ENABLED` | default `false` in Actions (DuckDuckGo serves a bot check to runners) |
@@ -349,7 +356,9 @@ In a dry run, alerts are printed rather than sent and no state is written, unles
 | `USAJOBS_API_KEY`, `USAJOBS_EMAIL` | empty | enables USAJOBS |
 | `ADZUNA_APP_ID`, `ADZUNA_APP_KEY`, `ADZUNA_COUNTRIES` | empty, empty, `ca,gb,us` | enables Adzuna |
 | `JOOBLE_API_KEY`, `JOOBLE_LOCATIONS` | empty, `PREFERRED_LOCATIONS` | enables Jooble |
-| `JSEARCH_API_KEY`, `JSEARCH_REQUESTS_PER_RUN`, `JSEARCH_QUERIES` | empty, `1`, six `query@country` entries for CA/TN/US/FR | enables JSearch; queries rotate across runs to stay inside the free quota |
+| `ADZUNA_REQUESTS_PER_RUN`, `JOOBLE_REQUESTS_PER_RUN`, `JOBSPY_LOCATIONS_PER_RUN` | `30`, `12`, `3` | per-run budgets; countries, locations and terms rotate across runs so quotas and runtime stay flat as the lists grow |
+| `RELIEFWEB_APPNAME`, `WEEKLY_SUMMARY` | empty, `true` | enables ReliefWeb · weekly Telegram summary |
+| `JSEARCH_API_KEY`, `JSEARCH_REQUESTS_PER_RUN`, `JSEARCH_QUERIES` | empty, `1`, fifteen `query@country` entries (CA, TN, US, FR, BE, CH, DE, GB, AU, AE, SA, QA) | enables JSearch; queries rotate across runs to stay inside the free quota |
 | `DISABLED_BACKENDS` | empty | e.g. `search_duckduckgo,arbeitnow` |
 | `SOURCE_CONCURRENCY` | `6` | parallel backends |
 | `RUN_TIME_BUDGET_MINUTES` | `40` | soft deadline; backends stop early and report PARTIAL |

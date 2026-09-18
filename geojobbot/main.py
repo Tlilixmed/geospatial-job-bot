@@ -14,6 +14,7 @@ import argparse
 import gzip
 import json
 import logging
+import os
 import sys
 import uuid
 
@@ -253,7 +254,18 @@ def cmd_commands(settings, args) -> int:
         apply_prefs(settings, load_prefs(manager))
         notifier = TelegramNotifier(settings.telegram_bot_token, settings.telegram_chat_id,
                                     delay_s=settings.telegram_delay_s)
-        counts = CommandProcessor(settings, manager, notifier).run()
+        processor = CommandProcessor(settings, manager, notifier)
+        text = (getattr(args, "text", None) or os.environ.get("COMMAND_TEXT") or "").strip()
+        if text:  # handed over by the Cloudflare Worker webhook, which has already checked the chat id
+            counts = processor.run_text(text)
+        else:
+            try:
+                counts = processor.run()
+            except RuntimeError as exc:
+                if "409" in str(exc):  # a webhook owns the updates: polling is simply not the active path
+                    print("telegram polling unavailable: a webhook is set (commands arrive through the Worker)")
+                    return 0
+                raise
     except ConfigError as exc:
         print(exc)
         return 1
@@ -283,7 +295,8 @@ def main(argv=None) -> int:
     p.add_argument("--grep")
     sub.add_parser("selftest-r2")
     sub.add_parser("selftest-telegram")
-    sub.add_parser("commands")
+    p = sub.add_parser("commands")
+    p.add_argument("--text", help="execute this message instead of polling Telegram")
     args = parser.parse_args(argv)
     try:
         settings = load_settings()

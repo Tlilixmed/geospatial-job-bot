@@ -179,3 +179,37 @@ def test_french_titles_classify_like_english():
     assert M.title_prefilter("Ingénieur SIG", False)
     assert not M.title_prefilter("Ingénieur Mécanique", True)
     assert not M.title_prefilter("Ingénieur", False)  # generic French title needs geospatial context
+
+
+def test_arabic_titles_and_sponsorship_location_bonus():
+    assert M.classify_title("مهندس نظم معلومات جغرافية")[0] == "direct"
+    assert M.classify_title("أخصائي نظم المعلومات الجغرافية")[0] == "geo_title"
+    assert M.classify_title("فني مساحة")[0] == "direct"
+    assert M.classify_title("مهندس ميكانيكي")[0] == "none"
+    r = M.score_job("مهندس نظم معلومات جغرافية", "خبرة في نظم المعلومات الجغرافية والاستشعار عن بعد وإنتاج الخرائط. ArcGIS Pro.", {})
+    assert {"GIS", "Remote sensing", "Cartography"} <= set(r.domain_names)
+    cfg = MatchConfig(preferred_locations=["Canada"])
+    plain = M.score_job("GIS Analyst", GIS_DESCRIPTION, {"city": "Dubai", "country": "United Arab Emirates", "raw": "Dubai"}, cfg)
+    sponsored = M.score_job("GIS Analyst", GIS_DESCRIPTION + " Visa sponsorship is available.",
+                            {"city": "Dubai", "country": "United Arab Emirates", "raw": "Dubai"}, cfg)
+    assert plain.breakdown["location"] == 0 and sponsored.breakdown["location"] == 5
+
+
+def test_surveyor_and_mapping_titles_need_geomatics_evidence():
+    # explicit non-geomatics "surveyor" roles are negatives
+    for title in ("Quantity Surveyor", "Senior Building Surveyor", "Marine Surveyor", "Survey Researcher", "Process Mapping Analyst"):
+        assert not M.title_prefilter(title, True), title
+    costs = ("Prepare bills of quantities, cost plans and valuations for residential developments. Manage subcontractor "
+             "accounts, tender documentation and final accounts, reporting commercial performance to the director. " * 3)
+    assert M.weak_only_title("Surveyor") and M.weak_only_title("Mapping Specialist") and not M.weak_only_title("GIS Surveyor")
+    rejected = M.score_job("Surveyor", costs, {})
+    assert rejected.tier == "rejected" and M.INSUFFICIENT_GEOSPATIAL_SIGNALS in rejected.rejection_reasons
+    land = ("Carry out topographic survey and boundary survey work with GNSS and total station, process data in AutoCAD "
+            "Civil 3D and ArcGIS Pro, register LiDAR point clouds and prepare cadastral plans. Field work with a survey crew. " * 3)
+    accepted = M.score_job("Surveyor", land, {})
+    assert M.INSUFFICIENT_GEOSPATIAL_SIGNALS not in accepted.rejection_reasons and accepted.tier in ("high", "possible")
+    # with no description, a bare weak title gets no benefit of the doubt, an explicit role still does
+    assert M.score_job("Surveyor", "", {}).tier == "rejected"
+    assert M.score_job("Survey Technician", "", {}).tier == "possible"
+    assert M.score_job("Topographe", "", {}).tier == "possible"
+    assert M.score_job("GIS Analyst", "", {}).tier == "possible"  # strong titles unchanged

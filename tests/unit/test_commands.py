@@ -6,6 +6,7 @@ from conftest import NOW, FakeResponse, FakeS3, FakeSession, make_settings
 from geojobbot.core.jobs import select_alerts
 from geojobbot.core.prefs import apply_prefs, load_prefs
 from geojobbot.notifications.commands import CommandProcessor
+from geojobbot.notifications.weekly import format_weekly
 from geojobbot.storage.r2 import R2Store
 from geojobbot.storage.state import StateManager
 from geojobbot.utils.text import job_code
@@ -115,3 +116,29 @@ def test_run_dispatches_scraper_workflow(monkeypatch):
     proc.run()
     assert "run started" in replies.sent[0]
     assert any("dispatches" in call[1] and call[2] == {"ref": "main"} for call in session.calls)
+
+
+def test_weekly_summary_tracks_applications_and_open_matches():
+    listed = job("a:1", "GIS Analyst", last_seen=NOW.isoformat())
+    gone = job("a:2", "LiDAR Technician", last_seen=(NOW - timedelta(days=9)).isoformat())
+    open_high = job("a:3", "Cartographer", score=91, last_seen=NOW.isoformat(), notified=True,
+                    notified_at=(NOW - timedelta(days=2)).isoformat())
+    state = {"jobs": {r["canonical_id"]: r for r in (listed, gone, open_high)}}
+    prefs = {"applied": {"a:1": {"title": "GIS Analyst", "company": "Acme", "at": (NOW - timedelta(days=3)).isoformat()},
+                         "a:2": {"title": "LiDAR Technician", "company": "Acme", "at": (NOW - timedelta(days=10)).isoformat()}},
+             "hidden": [], "muted": []}
+    text = format_weekly(state, prefs, make_settings(), NOW)
+    assert "1 alerted this week (1 high)" in text and "2 applications tracked" in text
+    assert "🟢 GIS Analyst" in text and "applied 3d ago · still listed" in text
+    assert "⚪ LiDAR Technician" in text and "no longer listed" in text
+    assert "Cartographer" in text and job_code("a:3") in text and "GIS Analyst</a>" not in text  # applied ones are not re-offered
+    assert format_weekly({"jobs": {}}, {"applied": {}, "hidden": [], "muted": []}, make_settings(), NOW) is None
+
+
+def test_direct_text_path_used_by_the_worker_needs_no_polling():
+    proc, replies, session, manager = setup([], [job("a:1", "GIS Analyst")])
+    counts = proc.run_text(f"/applied {job_code('a:1')}")
+    assert counts["commands"] == 1 and "Marked as applied" in replies.sent[0]
+    assert "a:1" in load_prefs(manager)["applied"] and session.calls == []  # never touched getUpdates
+    proc.run_text("/weekly")
+    assert "Weekly job summary" in replies.sent[-1]

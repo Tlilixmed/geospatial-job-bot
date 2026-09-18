@@ -1,13 +1,22 @@
 name: Telegram commands
 
-# Polls Telegram for messages you sent the bot and executes them (/help lists the commands).
-# Each execution bills about one minute. Private repositories get 2,000 minutes a month, so the
-# default is hourly; on a public repository minutes are unlimited and "*/10 * * * *" gives
-# near-instant replies. The scraper also processes pending commands at the start of every run.
+# Executes messages you send the bot (/help lists the commands). Two ways in:
+#  * webhook (recommended): the Cloudflare Worker in cloudflare/ receives each message instantly and
+#    dispatches this workflow with the text, so you get a reply in about a minute and nothing runs when
+#    you are silent. After deploying it, set the repository variable TELEGRAM_WEBHOOK=true: scheduled
+#    polls are then skipped (a skipped job bills no minutes).
+#  * polling: without the Worker this workflow polls Telegram hourly. Each poll bills about one minute
+#    (private repositories get 2,000 a month); on a public repository "*/10 * * * *" is fine.
+# The scraper also processes pending messages at the start of every run.
 on:
   schedule:
     - cron: "17 * * * *"
   workflow_dispatch:
+    inputs:
+      text:
+        description: "Message to execute (sent by the Cloudflare Worker); empty = poll Telegram"
+        required: false
+        default: ""
 
 concurrency:
   group: geospatial-job-commands
@@ -19,6 +28,7 @@ permissions:
 
 jobs:
   commands:
+    if: ${{ github.event_name != 'schedule' || vars.TELEGRAM_WEBHOOK != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -37,7 +47,8 @@ jobs:
           R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          PREFERRED_LOCATIONS: ${{ vars.PREFERRED_LOCATIONS || 'Canada,Tunisia,Tunisie,Tunis' }}
+          PREFERRED_LOCATIONS: ${{ vars.PREFERRED_LOCATIONS }}
+          COMMAND_TEXT: ${{ inputs.text }}   # passed through the environment, never interpolated into the shell
           GITHUB_TOKEN: ${{ github.token }}
           REQUIRE_R2: "true"
         run: python -m geojobbot commands

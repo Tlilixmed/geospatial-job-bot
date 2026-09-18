@@ -65,14 +65,18 @@ jobs:
           ADZUNA_APP_KEY: ${{ secrets.ADZUNA_APP_KEY }}
           JOOBLE_API_KEY: ${{ secrets.JOOBLE_API_KEY }}
           JSEARCH_API_KEY: ${{ secrets.JSEARCH_API_KEY }}
+          RELIEFWEB_APPNAME: ${{ secrets.RELIEFWEB_APPNAME }}
           SEARXNG_URL: ${{ vars.SEARXNG_URL }}
           # Repository variables override these defaults (Settings -> Secrets and variables -> Actions -> Variables)
-          PREFERRED_LOCATIONS: ${{ vars.PREFERRED_LOCATIONS || 'Canada,Tunisia,Tunisie,Tunis' }}
-          ACCEPTED_REMOTE_SCOPES: ${{ vars.ACCEPTED_REMOTE_SCOPES || 'Worldwide,EMEA,Africa,Americas' }}
+          # No preferred location by default: any country is fine when the employer sponsors, and postings that
+          # demand existing work authorisation are rejected by the matcher (HOME_COUNTRIES exempts Tunisia).
+          PREFERRED_LOCATIONS: ${{ vars.PREFERRED_LOCATIONS }}
+          ACCEPTED_REMOTE_SCOPES: ${{ vars.ACCEPTED_REMOTE_SCOPES || 'Worldwide,EMEA,Africa,MENA,Middle East,Europe,Americas' }}
           JOBSPY_SITES: ${{ vars.JOBSPY_SITES || 'indeed,linkedin' }}
-          JOBSPY_LOCATIONS: ${{ vars.JOBSPY_LOCATIONS || 'Remote@usa,Canada@canada,Tunisia@worldwide' }}
-          JOOBLE_LOCATIONS: ${{ vars.JOOBLE_LOCATIONS || 'Canada,Tunisia' }}
-          ADZUNA_COUNTRIES: ${{ vars.ADZUNA_COUNTRIES || 'ca,gb,us' }}
+          # three of these are searched per run, in rotation (JOBSPY_LOCATIONS_PER_RUN)
+          JOBSPY_LOCATIONS: ${{ vars.JOBSPY_LOCATIONS || 'Remote@usa,Canada@canada,Tunisia@worldwide,France@france,United Arab Emirates@united arab emirates,Saudi Arabia@saudi arabia,Qatar@qatar,Belgium@belgium,Switzerland@switzerland,Germany@germany,Australia@australia,United Kingdom@uk,Morocco@morocco' }}
+          JOOBLE_LOCATIONS: ${{ vars.JOOBLE_LOCATIONS || 'Canada,Tunisia,France,Belgium,Switzerland,United Arab Emirates,Saudi Arabia,Qatar,Morocco' }}
+          ADZUNA_COUNTRIES: ${{ vars.ADZUNA_COUNTRIES || 'ca,fr,gb,us,de,be,ch,nl,au,at' }}
           ALERT_FORMAT: ${{ vars.ALERT_FORMAT || 'digest' }}
           DUCKDUCKGO_ENABLED: ${{ vars.DUCKDUCKGO_ENABLED || 'false' }}
           BOT_USER_AGENT: ${{ vars.BOT_USER_AGENT }}

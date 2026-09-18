@@ -1,7 +1,8 @@
 from conftest import GIS_DESCRIPTION, FakeResponse, FakeSession, make_ctx, make_settings
 
 from geojobbot.scrapers.feeds import (AdzunaBackend, HimalayasBackend, JobSpyBackend, JoobleBackend, JSearchBackend,
-                                      RemoteOKBackend, RemotiveBackend, RssFeedBackend, UsaJobsBackend, days_window)
+                                      ReliefWebBackend, RemoteOKBackend, RemotiveBackend, RssFeedBackend, UsaJobsBackend,
+                                      days_window, rotating_batch)
 from geojobbot.scrapers.search import CommonCrawlBackend, DuckDuckGoBackend, SearxngBackend
 
 
@@ -206,3 +207,38 @@ def test_commoncrawl_discovers_boards_and_paginates():
     out = CommonCrawlBackend().run(ctx)
     assert out.details["boards_new"] == 2 and {"greenhouse:alpha", "greenhouse:beta"} <= set(ctx.state["boards"])
     assert ctx.cursor("commoncrawl")["patterns"]["boards.greenhouse.io/*"]["next_page"] == 1
+
+
+def test_rotating_batch_covers_all_pairs_within_budget():
+    ctx = make_ctx(FakeSession())
+    pairs = [(c, t) for c in ("ca", "fr", "ae") for t in ("GIS", "LiDAR")]
+    first = rotating_batch(ctx, "x", pairs, 4)
+    second = rotating_batch(ctx, "x", pairs, 4)
+    assert first == {"ca": ["GIS", "LiDAR"], "fr": ["GIS", "LiDAR"]}
+    assert second == {"ae": ["GIS", "LiDAR"], "ca": ["GIS", "LiDAR"]}  # wraps around
+    assert rotating_batch(ctx, "y", [], 3) == {} and rotating_batch(ctx, "y", pairs, 0) == {}
+
+
+def test_adzuna_budget_limits_requests_and_rotates_countries():
+    s = FakeSession({"https://api.adzuna.com/v1/api/jobs/": FakeResponse(200, {"results": []})})
+    ctx = make_ctx(s, make_settings(adzuna_app_id="id", adzuna_app_key="key", adzuna_countries=["ca", "fr"],
+                                    adzuna_requests_per_run=10))
+    AdzunaBackend().run(ctx)
+    assert len(s.calls) == 10 and sum("/jobs/fr/" in c[1] for c in s.calls) == 2  # 8 terms for ca, then 2 for fr
+    AdzunaBackend().run(ctx)
+    assert sum("/jobs/fr/" in c[1] for c in s.calls) == 8  # the rest of fr, then back to ca
+
+
+def test_reliefweb_needs_appname_and_parses():
+    assert ReliefWebBackend().enabled(make_ctx(FakeSession()))[0] is False
+    payload = {"totalCount": 1, "data": [{"id": "4001", "fields": {
+        "title": "GIS Officer", "body": GIS_DESCRIPTION, "how_to_apply": "Apply online.", "url": "https://reliefweb.int/job/4001",
+        "source": [{"name": "UNHCR"}], "country": [{"name": "Tunisia"}], "city": [{"name": "Tunis"}],
+        "type": [{"name": "Job"}], "date": {"created": "2026-09-14T09:00:00+00:00"}}},
+        {"id": "4002", "fields": {"title": "Finance Officer"}}]}
+    s = FakeSession({"https://api.reliefweb.int/v2/jobs": FakeResponse(200, payload)})
+    out = ReliefWebBackend().run(make_ctx(s, make_settings(reliefweb_appname="approved-app")))
+    assert out.status == "SUCCESS" and [j.title for j in out.jobs] == ["GIS Officer"] and out.prefiltered_out == 1
+    job = out.jobs[0]
+    assert (job.company, job.location_raw, job.source_job_id) == ("UNHCR", "Tunis, Tunisia", "reliefweb:4001")
+    assert "Apply online." in job.description and "appname=approved-app" in s.calls[0][1]

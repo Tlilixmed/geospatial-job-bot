@@ -125,6 +125,25 @@ def _link_native(url: str | None) -> str | None:
     return native
 
 
+def rotating_batch(ctx: RunContext, name: str, pairs: list[tuple], budget: int) -> dict:
+    """Next `budget` (outer, inner) pairs after the stored cursor, grouped by outer value.
+
+    Lets a source cover many countries/terms over several runs while each run stays inside the
+    provider's quota and the workflow's time budget.
+    """
+    if not pairs or budget <= 0:
+        return {}
+    cursor = ctx.cursor(name)
+    start = int(cursor.get("index", 0)) % len(pairs)
+    n = min(budget, len(pairs))
+    cursor["index"] = (start + n) % len(pairs)
+    grouped: dict = {}
+    for i in range(n):
+        outer, inner = pairs[(start + i) % len(pairs)]
+        grouped.setdefault(outer, []).append(inner)
+    return grouped
+
+
 def days_window(settings) -> int:
     """The alert freshness window in whole days, used as each source's own 'posted within' filter."""
     return max(1, -(-int(settings.max_job_age_hours) // 24))
@@ -479,7 +498,7 @@ class JobSpyBackend(Backend):
     min_interval_hours = 4
     terms = ["GIS Analyst", "GIS Technician", "Geospatial Analyst", "GIS Specialist", "LiDAR", "Cartographer",
              "Photogrammetry", "Remote Sensing Specialist", "Geomatics", "Survey Technician", "Utility GIS",
-             "CAD/GIS Technician"]
+             "CAD/GIS Technician", "Ingénieur SIG", "Géomaticien", "Topographe", "GIS Mining Exploration"]
 
     def enabled(self, ctx):
         ok, reason = super().enabled(ctx)
@@ -537,7 +556,11 @@ class JobSpyBackend(Backend):
         start = int(cursor.get("index", 0))
         n = min(ctx.settings.jobspy_terms_per_run, len(self.terms))
         all_sites = [s.strip().lower() for s in ctx.settings.jobspy_sites if s.strip()]
-        specs = self.location_specs(ctx.settings)
+        all_specs = self.location_specs(ctx.settings)
+        first = int(cursor.get("loc_index", 0)) % len(all_specs)
+        per_run = min(ctx.settings.jobspy_locations_per_run, len(all_specs))
+        specs = [all_specs[(first + i) % len(all_specs)] for i in range(per_run)]
+        cursor["loc_index"] = (first + per_run) % len(all_specs)
         errors, ok = [], 0
         for offset in range(n):
             term = self.terms[(start + offset) % len(self.terms)]
@@ -638,8 +661,9 @@ class AdzunaBackend(Backend):
         out = BackendOutput()
         errors, ok, seen = [], 0, set()
         stop = False
-        for country in ctx.settings.adzuna_countries:
-            for term in self.terms:
+        pairs = [(country, term) for country in ctx.settings.adzuna_countries for term in self.terms]
+        for country, terms in rotating_batch(ctx, self.name, pairs, ctx.settings.adzuna_requests_per_run).items():
+            for term in terms:
                 if stop or ctx.out_of_time(200):
                     break
                 url = self.api.format(country=country)
@@ -724,8 +748,9 @@ class JoobleBackend(Backend):
         locations = ctx.settings.jooble_locations or ctx.settings.preferred_locations or [""]
         errors, ok, seen = [], 0, set()
         stop = False
-        for location in locations:
-            for term in self.terms:
+        pairs = [(location, term) for location in locations for term in self.terms]
+        for location, terms in rotating_batch(ctx, self.name, pairs, ctx.settings.jooble_requests_per_run).items():
+            for term in terms:
                 if stop or ctx.out_of_time(200):
                     break
                 try:
@@ -884,5 +909,75 @@ class JSearchBackend(Backend):
             employment_type=item.get("job_employment_type") or None, salary=salary, posted_at=posted,
             posted_at_reliable=posted is not None, native_id=_link_native(url),
             source_job_id=f"jsearch:{item['job_id']}" if item.get("job_id") else None, extraction_method="api",
+            geo_context=True,
+        )
+
+
+class ReliefWebBackend(Backend):
+    """ReliefWeb jobs API (UN agencies and NGOs; GIS / information-management roles, hired internationally,
+    many in French or Arabic-speaking duty stations). Free, but the API only accepts an approved
+    appname: request one at https://apidoc.reliefweb.int/parameters#appname and set RELIEFWEB_APPNAME."""
+
+    name = "reliefweb"
+    phase = "extraction"
+    source_type = "feed"
+    min_interval_hours = 6
+    api = "https://api.reliefweb.int/v2/jobs"
+    query = 'GIS OR geospatial OR geomatics OR cartography OR cartographer OR "remote sensing" OR SIG OR cartographie'
+
+    def enabled(self, ctx):
+        ok, reason = super().enabled(ctx)
+        if ok and not ctx.settings.reliefweb_appname:
+            return False, "RELIEFWEB_APPNAME not set"
+        return ok, reason
+
+    def run(self, ctx: RunContext) -> BackendOutput:
+        out = BackendOutput()
+        params = {"appname": ctx.settings.reliefweb_appname, "query[value]": self.query, "query[operator]": "OR",
+                  "limit": 100, "profile": "full", "sort[]": "date:desc"}
+        try:
+            data = ctx.client.get_json(self.api, params=params, respect_robots=False)
+        except FetchError as exc:
+            out.status, out.error, out.http_status = "FAILED", f"{exc.kind}", exc.status
+            return out
+        items = data.get("data") if isinstance(data, dict) else None
+        if not isinstance(items, list):
+            out.status, out.error = "FAILED", "unexpected response structure"
+            return out
+        for item in items:
+            fields = (item or {}).get("fields") or {}
+            try:
+                job = self.to_raw(item, fields)
+            except Exception:
+                ctx.record_parser_error(self.name)
+                continue
+            if not job.title:
+                continue
+            if ctx.prefilter(job.title, True):
+                out.jobs.append(job)
+            else:
+                out.prefiltered_out += 1
+        out.details = {"listed": len(items)}
+        if out.jobs:
+            ctx.snapshot(self.name, [j.snapshot() for j in out.jobs])
+        return out
+
+    @staticmethod
+    def to_raw(item: dict, fields: dict) -> RawJob:
+        posted = parse_datetime((fields.get("date") or {}).get("created"))
+        places = [c.get("name") for c in fields.get("city") or [] if isinstance(c, dict)]
+        places += [c.get("name") for c in fields.get("country") or [] if isinstance(c, dict)]
+        url = fields.get("url") or fields.get("url_alias")
+        parts = (html_to_text(fields.get("body-html") or fields.get("body")),
+                 html_to_text(fields.get("how_to_apply-html") or fields.get("how_to_apply")))
+        description = " ".join(x for x in parts if x)
+        return RawJob(
+            source_type="feed", source_name="reliefweb", source_url="https://api.reliefweb.int/v2/jobs",
+            title=(fields.get("title") or "").strip(),
+            company=next((s.get("name") for s in fields.get("source") or [] if isinstance(s, dict)), None),
+            url=url, apply_url=url, description=description, location_raw=", ".join(p for p in places[:2] if p),
+            employment_type=next((t.get("name") for t in fields.get("type") or [] if isinstance(t, dict)), None),
+            posted_at=posted, posted_at_reliable=posted is not None,
+            source_job_id=f"reliefweb:{item['id']}" if item.get("id") else None, extraction_method="api",
             geo_context=True,
         )

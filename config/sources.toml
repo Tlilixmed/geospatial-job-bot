@@ -19,6 +19,7 @@ greenhouse = [
   "developmentseed", # Development Seed - geospatial software (1)
   "nearspacelabs",   # Near Space Labs - aerial imagery (1)
   "capellaspace",    # Capella Space - SAR (0 at last check, board exists)
+  "koboldmetals",    # KoBold Metals - AI mineral exploration (33)
 ]
 lever = [
   "aeva",            # Aeva - LiDAR sensors (45)
@@ -35,10 +36,12 @@ ashby = [
 ]
 smartrecruiters = [
   "nearmap",         # Nearmap - aerial imagery (34)
+  "endeavourmining", # Endeavour Mining - West Africa gold, French-speaking sites (1)
 ]
 workable = [
   "pix4d",           # Pix4D - photogrammetry (3)
   "umbra",           # Umbra - SAR (2)
+  "eldoradogold",    # Eldorado Gold - Canada/Greece/Turkey mining (33)
 ]
 recruitee = [
   "sweco",           # Sweco Nederland - engineering consultancy (175)
@@ -57,6 +60,10 @@ workday = [
   "https://leidos.wd5.myworkdayjobs.com/External",        # Leidos - many GEOINT roles (2000+)
   "https://parsons.wd5.myworkdayjobs.com/Search",         # Parsons - geospatial/defence (1900+)
   "https://kbr.wd5.myworkdayjobs.com/Kbr_Careers",        # KBR - geospatial/defence (1750+)
+  # Mining and resources (verified 2026-09-18; keyword search keeps these cheap)
+  "https://riotinto.wd3.myworkdayjobs.com/Riotinto_Careers", # Rio Tinto
+  "https://alcoa.wd5.myworkdayjobs.com/Careers",             # Alcoa
+  "https://mosaic.wd5.myworkdayjobs.com/Mosaic",             # Mosaic - phosphate/potash
 ]
 
 # Not on any supported ATS (checked): Maxar, Hexagon, Stantec, WSP, Carto, Ecopia, Felt,

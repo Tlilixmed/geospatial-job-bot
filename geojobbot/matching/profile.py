@@ -39,6 +39,9 @@ DIRECT_ROLES = [
     "Cartographe", "Topographe", "Géomètre", "Géomètre-Topographe", "Ingénieur Topographe",
     "Technicien Topographe", "Dessinateur Topographe", "Ingénieur Télédétection", "Chargé de Télédétection",
     "Photogrammètre", "Analyste Géospatial", "Ingénieur Géospatial", "Géodésien", "Arpenteur-Géomètre",
+    # Arabic titles (Gulf and Maghreb postings); hamza forms are folded, so أخصائي and اخصائي both match
+    "مهندس نظم معلومات جغرافية", "أخصائي نظم معلومات جغرافية", "فني نظم معلومات جغرافية", "محلل نظم معلومات جغرافية",
+    "مهندس مساحة", "فني مساحة", "مساح", "رسام خرائط", "مهندس جيوماتكس",
 ]
 
 ADJACENT_ROLES = [
@@ -65,7 +68,24 @@ GEO_TITLE_TERMS = [
     # French (titles are accent-folded before these run)
     r"\bsig\b", r"\bgeomatiq\w*", r"\bgeomaticien\w*", r"\btopograph\w*", r"\bgeometres?\b", r"\bteledetection\b",
     r"\bgeodesien\w*", r"\bsystemes? d.information geographique", r"\barpent\w*",
+    # Arabic
+    r"نظم (?:ال)?معلومات (?:ال)?جغرافي", r"مساح", r"جيوماتكس", r"استشعار عن بعد", r"خرائط",
 ]
+
+# Weak title terms: words that are geospatial in a geomatics context but common elsewhere ("Quantity
+# Surveyor", "Marine Surveyor", market-research "Survey ..." roles, business "Mapping"). A title whose only
+# geospatial signal is one of these must be backed by SURVEY_EVIDENCE or another geospatial family in the
+# description, and gets no title-only benefit of the doubt unless it is an explicit DIRECT/ADJACENT role.
+WEAK_GEO_TITLE_TERMS = [
+    r"\bsurvey(?:or|ors|ing|s)?\b", r"\b(?:mapping|mapper)\b", r"\btopograph\w*", r"\bgeometres?\b", r"\barpent\w*",
+    r"مساح",
+]
+SURVEY_EVIDENCE = (
+    r"\b(?:gnss|gps|rtk|total\s+stations?|stations?\s+totales?|th[ée]odolite|levell?ing|nivellement|bornage|"
+    r"(?:land|topographic|cadastral|geodetic|boundary|hydrographic|construction|engineering|legal|mine|as-?built)\s+survey\w*|"
+    r"lev[ée]s?\s+(?:topographiques?|de\s+terrain)|control\s+points?|stake-?out|point\s+clouds?|"
+    r"civil\s*3d|covadis|trimble|leica|topcon|cadastr\w*)\b"
+)
 
 ROLE_NOUNS = (
     r"analyst|specialist|technician|tech|officer|coordinator|developer|engineer|scientist|manager|lead|"
@@ -74,7 +94,9 @@ ROLE_NOUNS = (
     # French role nouns
     r"ingenieur|technicien(?:ne)?|analyste|chargee?|cartographe|topographe|geometre|geomaticien(?:ne)?|"
     r"dessinat(?:eur|rice)|operat(?:eur|rice)|responsable|specialiste|developpeu(?:r|se)|administrat(?:eur|rice)|"
-    r"stagiaire|geodesien|arpenteur|chef de projet"
+    r"stagiaire|geodesien|arpenteur|chef de projet|"
+    # Arabic role nouns as they look after folding (hamza carriers decompose: أخصائي -> اخصايي)
+    r"مهندس|فني|اخصايي|اخصائي|محلل|مساح|مطور|رسام"
 )
 
 # Generic titles need at least MIN_GEO_SIGNALS distinct geospatial families in the text.
@@ -93,6 +115,13 @@ NEGATIVE_TITLES = [
     "Physician", "Lawyer", "Attorney", "Architect", "Interior Designer", "Structural Engineer",
     "Civil Structural Engineer", "Mechanical Engineer", "Electrical Engineer", "Chief", "Head of",
     "Sales Representative", "Business Development",
+    # "Surveyor"/"survey" roles outside geomatics
+    "Quantity Surveyor", "Quantity Surveying", "Building Surveyor", "Building Surveying", "Marine Surveyor",
+    "Cargo Surveyor", "Insurance Surveyor", "Chartered Surveyor", "Valuation Surveyor", "Estates Surveyor",
+    "Party Wall Surveyor", "Rural Surveyor", "Property Surveyor", "Commercial Surveyor", "Pest Surveyor",
+    "Survey Researcher", "Survey Interviewer", "Survey Methodologist", "Survey Statistician", "Survey Programmer",
+    "Market Research", "Customer Survey", "Employee Survey", "Process Mapping", "Data Mapping", "Journey Mapping",
+    "Métreur", "Métreuse", "Économiste de la construction",
     # French
     "Directeur", "Directrice", "Directeur Général", "Commercial", "Commerciale", "Responsable Commercial",
     "Comptable", "Infirmier", "Infirmière", "Avocat", "Architecte", "Ingénieur Électrique", "Ingénieur Mécanique",
@@ -147,14 +176,16 @@ TECH_SKILLS = [
 # variants spell out their accented letters as character classes.
 DOMAIN_TERMS = [
     Term("GIS", 4, (r"\bgis\b", r"\bgeographic(?:al)?\s+information\s+systems?\b", r"\bsig\b",
-                    r"\bsyst[èe]mes?\s+d.information\s+g[ée]ographique"), family="gis"),
+                    r"\bsyst[èe]mes?\s+d.information\s+g[ée]ographique",
+                    r"نظم\s+(?:ال)?معلومات\s+(?:ال)?جغرافية"), family="gis"),
     Term("Geospatial", 4, (r"\bg[ée]o-?spatial\w*",), family="gis"),
     Term("Geomatics", 5, (r"\bg[ée]omatics?\b", r"\bg[ée]omatique\b", r"\bg[ée]omaticien\w*"), family="geomatics"),
-    Term("Cartography", 5, (r"\bcartograph\w*",), family="cartography"),
+    Term("Cartography", 5, (r"\bcartograph\w*", r"خرائط"), family="cartography"),
     Term("Surveying", 4, (r"\b(?:land|topographic|cadastral|geodetic|construction|hydrographic|boundary)\s+survey\w*",
                           r"\bsurveying\b", r"\bsurveyors?\b", r"\bgnss\b", r"\btotal\s+stations?\b",
                           r"\barpentage\b", r"\barpenteur\w*", r"\bg[ée]om[èe]tres?\b",
-                          r"\blev[ée]s?\s+topographiques?\b", r"\bstations?\s+totales?\b"), family="surveying"),
+                          r"\blev[ée]s?\s+topographiques?\b", r"\bstations?\s+totales?\b", r"المساحة|مساح"),
+         family="surveying"),
     Term("Topography", 3, (r"\btopograph\w*",), family="surveying"),
     Term("Cadastral", 5, (r"\bcadastr\w*",), family="land_admin"),
     Term("Land administration", 5, (r"\bland\s+administration\b", r"\bland\s+regist\w*", r"\bland\s+records?\b",
@@ -177,7 +208,7 @@ DOMAIN_TERMS = [
     Term("Remote sensing", 5, (r"\bremote\s+sensing\b", r"\bsatellite\s+(?:imagery|images|data)\b",
                                r"\bearth\s+observation\b", r"\bmultispectral\b", r"\bhyperspectral\b",
                                r"\bt[ée]l[ée]d[ée]tection\b", r"\bimage(?:s|rie)?\s+satellit\w*",
-                               r"\bobservation\s+de\s+la\s+terre\b"), family="remote_sensing"),
+                               r"\bobservation\s+de\s+la\s+terre\b", r"استشعار\s+عن\s+بعد"), family="remote_sensing"),
     Term("UAV", 4, (r"\buavs?\b", r"\bdrones?\b", r"\bunmanned\s+aerial\b", r"\brpas\b", r"\bsuas\b")),
     Term("Utility mapping", 5, (r"\butility\s+(?:mapping|gis|network\s+(?:data|model)|records|locat\w+)\b",
                                 r"\bsubsurface\s+utilit\w+", r"\bcartographie\s+des?\s+r[ée]seaux\b",

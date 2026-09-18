@@ -88,6 +88,22 @@ def _compiled_negatives(extra: tuple[str, ...]):
 
 
 @lru_cache(maxsize=None)
+def _compiled_weak():
+    weak_sources = set(P.WEAK_GEO_TITLE_TERMS)
+    strong = [re.compile(p) for p in P.GEO_TITLE_TERMS if p not in weak_sources
+              and not p.startswith(r"\bsurvey")]  # "survey technician" style terms are weak as well
+    weak = [re.compile(p) for p in P.WEAK_GEO_TITLE_TERMS]
+    return strong, weak, re.compile(P.SURVEY_EVIDENCE, re.IGNORECASE)
+
+
+def weak_only_title(title: str) -> bool:
+    """True when the title's only geospatial signal is a weak word such as "surveyor" or "mapping"."""
+    t = fold(title)
+    strong, weak, _ = _compiled_weak()
+    return any(rx.search(t) for rx in weak) and not any(rx.search(t) for rx in strong)
+
+
+@lru_cache(maxsize=None)
 def _compiled_work_auth():
     return tuple([re.compile(p) for p in group]
                  for group in (P.WORK_AUTH_REQUIRED, P.SPONSORSHIP_OFFERED, P.WORK_AUTH_COMPATIBLE))
@@ -256,11 +272,22 @@ def score_job(title: str, description: str, location: dict, cfg: P.MatchConfig |
     auth_required, sponsorship = work_authorization(full_text, location or {}, cfg)
     if auth_required and cfg.exclude_work_auth_required:
         rejections.append(WORK_AUTHORIZATION_REQUIRED)
+    if sponsorship:  # an employer that sponsors makes any location reachable
+        loc_points, loc_mismatch = P.CATEGORY_CAPS["location"], False
 
     score = title_points + tech_points + domain_points + resp_points + loc_points
     title_only = False
     has_description = len(description.strip()) >= 300
-    if not has_description and not rejections and title_points >= cfg.title_only_min_points:
+    weak_title = kind != "none" and weak_only_title(title or "")
+    if weak_title and has_description:
+        # "Surveyor" / "Mapping" titles need geomatics evidence in the body: another geospatial family, a
+        # geospatial tool, or concrete land-survey vocabulary (GNSS, total station, cadastral survey...).
+        body_hits = extract_terms(description, "tech") + extract_terms(description, "domain") + extract_terms(description, "resp")
+        body_families = {h.family for h in body_hits if h.family and h.family != "surveying"}
+        if not body_families and not _compiled_weak()[2].search(description):
+            rejections.append(INSUFFICIENT_GEOSPATIAL_SIGNALS)
+    floor_allowed = not weak_title or kind in ("direct", "adjacent")
+    if not has_description and not rejections and floor_allowed and title_points >= cfg.title_only_min_points:
         if score < cfg.medium_threshold:
             score = cfg.medium_threshold
             title_only = True

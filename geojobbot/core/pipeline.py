@@ -21,12 +21,13 @@ from datetime import timedelta
 from ..models import SourceResult
 from ..notifications.commands import CommandProcessor
 from ..notifications.telegram import TelegramNotifier, format_digest, format_job_message
+from ..notifications.weekly import format_weekly
 from ..scrapers.ats.base import ATSBackend
 from ..scrapers.ats.more_ats import all_adapters
 from ..scrapers.base import Backend, RunContext
 from ..scrapers.feeds import (AdzunaBackend, ArbeitnowBackend, HimalayasBackend, JobicyBackend, JobSpyBackend,
-                              JoobleBackend, JSearchBackend, RemoteOKBackend, RemotiveBackend, RssFeedBackend,
-                              UsaJobsBackend)
+                              JoobleBackend, JSearchBackend, ReliefWebBackend, RemoteOKBackend, RemotiveBackend,
+                              RssFeedBackend, UsaJobsBackend)
 from ..scrapers.pages import CareerSitesBackend, GenericPagesBackend
 from ..scrapers.search import CommonCrawlBackend, DuckDuckGoBackend, SearxngBackend
 from ..storage.base import LocalStore, ObjectStore, StorageError
@@ -86,6 +87,7 @@ def build_backends(settings) -> list[Backend]:
         AdzunaBackend(),
         JoobleBackend(),
         JSearchBackend(),
+        ReliefWebBackend(),
         JobSpyBackend(),
     ]
     return backends
@@ -272,6 +274,7 @@ class Pipeline:
                 log.warning("telegram delivery failed for %s: %s", ", ".join(r["canonical_id"] for r in batch), error)
         if notifier is None and selected and not settings.dry_run:
             log.warning("Telegram is not configured: %d alerts left pending", len(selected))
+        counts["weekly_summary_sent"] = int(self._weekly_summary(manager, state, notifier))
 
         counts["jobs_in_state"] = len(state["jobs"])
         counts["boards_known"] = len(state["boards"])
@@ -303,17 +306,41 @@ class Pipeline:
         """
         settings = self.settings
         handled: dict = {}
-        try:
-            if settings.telegram_configured and not settings.dry_run and self.notifier is None:
+        if settings.telegram_configured and not settings.dry_run and self.notifier is None:
+            try:
                 notifier = TelegramNotifier(settings.telegram_bot_token, settings.telegram_chat_id,
                                             delay_s=settings.telegram_delay_s, sleep=self.sleep)
                 handled = dict(CommandProcessor(settings, manager, notifier, state=state, now=self.now,
                                                 in_scraper_run=True).run())
+            except Exception as exc:  # e.g. HTTP 409 when a webhook (Cloudflare Worker) owns the updates
+                log.info("telegram polling skipped: %s", type(exc).__name__)
+                handled["polling"] = f"skipped ({type(exc).__name__})"
+        try:
             apply_prefs(settings, load_prefs(manager))
         except Exception as exc:
-            log.warning("telegram commands/preferences skipped: %s", type(exc).__name__)
-            handled["error"] = type(exc).__name__
+            log.warning("stored preferences not applied: %s", type(exc).__name__)
+            handled["prefs"] = f"not applied ({type(exc).__name__})"
         return handled
+
+    def _weekly_summary(self, manager: StateManager, state: dict, notifier) -> bool:
+        """Send the weekly summary once every 7 days (tracked in state.maintenance)."""
+        if not self.settings.weekly_summary or notifier is None or self.settings.dry_run:
+            return False
+        maintenance = state.setdefault("maintenance", {})
+        last = parse_datetime(maintenance.get("last_weekly"))
+        if last is not None and self.now - last < timedelta(days=7):
+            return False
+        try:
+            text = format_weekly(state, load_prefs(manager), self.settings, self.now)
+        except Exception as exc:
+            log.warning("weekly summary skipped: %s", type(exc).__name__)
+            return False
+        if text is None:
+            return False
+        ok, _ = notifier.send(text)
+        if ok:
+            maintenance["last_weekly"] = to_iso(self.now)
+        return ok
 
     def _alert_messages(self, selected: list[dict]) -> list[tuple[str, list[dict]]]:
         """Messages to send this run, each with the records it covers (marked notified only on delivery)."""

@@ -18,6 +18,7 @@ from ..models import TIER_HIGH, TIER_POSSIBLE
 from ..utils.dates import parse_datetime, to_iso, utcnow
 from ..utils.text import fold, job_code
 from .telegram import _esc, format_digest
+from .weekly import format_weekly
 
 log = logging.getLogger(__name__)
 
@@ -43,6 +44,7 @@ HELP = """🗺️ <b>Geospatial job bot — commands</b>
 
 <b>Run</b>
 /status — last run and current settings
+/weekly — applications and open matches summary
 /run — start a scraper run now
 
 The <code>code</code> is the 5-character tag shown next to each job."""
@@ -103,6 +105,20 @@ class CommandProcessor:
             self._api("getUpdates", offset=int(last) + 1, limit=1, timeout=0)
         return counts
 
+    def run_text(self, text: str) -> Counter:
+        """Execute one message handed over directly (the Cloudflare Worker webhook path, where Telegram
+        no longer serves getUpdates). The caller has already verified the chat."""
+        try:
+            replies = self.handle(text.strip())
+        except Exception as exc:
+            log.exception("command failed")
+            replies = [f"⚠️ That command failed ({type(exc).__name__}). /help lists what I understand."]
+        for reply in replies:
+            self.notifier.send(reply)
+        if self._dirty:
+            save_prefs(self.manager, self.prefs)
+        return Counter(commands=1)
+
     # ------------------------------------------------------------------ data helpers
     @property
     def state(self) -> dict:
@@ -159,7 +175,7 @@ class CommandProcessor:
             "/hide": self.cmd_hide, "/unhide": self.cmd_unhide, "/mute": self.cmd_mute, "/unmute": self.cmd_unmute,
             "/muted": self.cmd_muted, "/threshold": self.cmd_threshold, "/locations": self.cmd_locations,
             "/interns": self.cmd_interns, "/pause": self.cmd_pause, "/resume": self.cmd_resume,
-            "/status": self.cmd_status, "/run": self.cmd_run,
+            "/status": self.cmd_status, "/run": self.cmd_run, "/weekly": self.cmd_weekly,
         }.get(command)
         if handler is None:
             return [f"I don't know <code>{_esc(command)}</code>. Send /help for the list."]
@@ -333,6 +349,10 @@ class CommandProcessor:
                  f"Muted: {_esc(', '.join(self.prefs['muted'])) or 'nothing'} · applied: {len(self.prefs['applied'])} · "
                  f"hidden: {len(self.prefs['hidden'])}"]
         return ["\n".join(lines)]
+
+    def cmd_weekly(self, arg: str) -> list[str]:
+        return [format_weekly(self.state, self.prefs, self.settings, self.now)
+                or "Nothing to summarise yet: no alerts, applications or open High matches."]
 
     def cmd_run(self, arg: str) -> list[str]:
         if self.in_scraper_run:
