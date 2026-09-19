@@ -301,3 +301,37 @@ test("watchdog: silent scraper is restarted once per interval, announced once, a
   assert.match(h.sent[1].text, /running again/);
   assert.deepEqual(h.stored("state/watchdog.json"), {});
 });
+
+function mail({ from, subject, body }) {
+  const boundary = "b0undary";
+  const raw = [`From: ${from}`, "To: jobs@example.test", `Subject: ${subject}`, `Content-Type: multipart/alternative; boundary="${boundary}"`, "",
+    `--${boundary}`, "Content-Type: text/plain; charset=utf-8", "Content-Transfer-Encoding: quoted-printable", "", body.replace(/é/g, "=C3=A9").replace(/à/g, "=C3=A0"),
+    `--${boundary}`, "Content-Type: text/html; charset=utf-8", "", `<p>${body}</p>`, `--${boundary}--`, ""].join("\r\n");
+  return { from, headers: new Map([["subject", subject]]), raw: new Response(raw).body };
+}
+
+test("email replies are matched to applications, classified and recorded", async () => {
+  const applied = { "gh:acme:1": { title: "GIS Analyst", company: "Acme Geospatial Ltd", at: iso(100), status: "applied" },
+    "lever:old:9": { title: "Cartographer", company: "MapCo", at: iso(200), status: "applied" } };
+  const h = harness({ index: makeIndex([]), prefs: { applied } });
+  const run = async (m) => { const pending = []; await worker.email(m, h.env, { waitUntil: (p) => pending.push(p) }); await Promise.all(pending); };
+  await run(mail({ from: "Recruiting Team <talent@acmegeospatial.com>", subject: "Your application to Acme Geospatial",
+    body: "Bonjour, malheureusement nous ne pouvons pas donner suite à votre candidature." }));
+  let prefs = h.stored("state/prefs.json");
+  assert.equal(prefs.applied["gh:acme:1"].status, "rejected");
+  assert.equal(prefs.applied["gh:acme:1"].history.at(-1).source, "email");
+  assert.match(h.sent[0].text, /reads like a rejection for <b>GIS Analyst<\/b> — Acme Geospatial Ltd — recorded as <b>rejected<\/b>/);
+  assert.doesNotMatch(h.sent[0].text, /malheureusement/);  // the body never reaches the chat
+  await run(mail({ from: "hr@mapco.example", subject: "Interview: Cartographer role",
+    body: "We would like to invite you to an interview next week. What is your availability for a call?" }));
+  prefs = h.stored("state/prefs.json");
+  assert.equal(prefs.applied["lever:old:9"].status, "interview");
+  assert.match(h.sent[1].text, /an interview invitation/);
+  assert.ok([...h.objects.keys()].some((k) => k.startsWith("inbox/")));  // the interview sheet was requested from Python
+  await run(mail({ from: "newsletter@unknown.example", subject: "Weekly digest", body: "Lots of jobs this week." }));
+  assert.match(h.sent.at(-1).text, /is not one I can classify/);
+  assert.equal(h.stored("state/prefs.json").applied["gh:acme:1"].status, "rejected");  // untouched
+  await run(mail({ from: "jobs@acmegeospatial.com", subject: "Thank you for applying", body: "We have received your application and will be in touch." }));
+  assert.match(h.sent.at(-1).text, /an acknowledgement.*probably about/);
+  assert.equal(h.stored("state/prefs.json").applied["gh:acme:1"].status, "rejected");  // an acknowledgement changes nothing
+});

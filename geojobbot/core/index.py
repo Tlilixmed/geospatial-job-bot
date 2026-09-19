@@ -7,7 +7,7 @@ codes, scores, tiers, AI notes, sponsor hits, the run status and even the help t
 """
 from __future__ import annotations
 
-from ..insights import timing, visa
+from ..insights import radar, timing, visa
 from ..utils.dates import to_iso
 from ..utils.location import ParsedLocation
 from ..utils.text import job_code
@@ -17,7 +17,7 @@ SCHEMA = 1
 MAX_JOBS = 900
 
 
-def _entry(cid: str, rec: dict) -> dict:
+def _entry(cid: str, rec: dict, skills: list[str] | None = None) -> dict:
     loc = ParsedLocation(raw=rec.get("location_raw") or "", city=rec.get("city"), region=rec.get("region"),
                          country=rec.get("country"), remote=rec.get("remote"), remote_scope=rec.get("remote_scope"),
                          work_mode=rec.get("work_mode"))
@@ -41,6 +41,10 @@ def _entry(cid: str, rec: dict) -> dict:
                        for h in rec["sponsor"][:3]]
     if rec.get("deadline"):
         entry["dl"] = rec["deadline"]
+    if skills is not None and rec.get("tier") in ("high", "possible"):
+        line = radar.gap_line(rec, skills)
+        if line:
+            entry["gap"] = line
     if timing.repost_badge(rec):
         entry["rp"] = timing.repost_badge(rec)
     if rec.get("watched"):
@@ -54,14 +58,15 @@ def _entry(cid: str, rec: dict) -> dict:
     return entry
 
 
-def build_index(state: dict, settings, report: dict, now, help_text: str, views: dict | None = None) -> dict:
+def build_index(state: dict, settings, report: dict, now, help_text: str, views: dict | None = None,
+                skills: list[str] | None = None) -> dict:
     """`views` are replies Python formatted in advance ({command: html}); the Worker sends them as they are."""
     rows = []
     for cid, rec in state.get("jobs", {}).items():
         accepted = rec.get("tier") in ("high", "possible")
         near_miss = set(rec.get("rejection_reasons") or []) <= {"LOW_SCORE"} and int(rec.get("score") or 0) >= 35
         if accepted or near_miss:
-            rows.append(_entry(cid, rec))
+            rows.append(_entry(cid, rec, skills))
     rows.sort(key=lambda e: (e["tier"] != "high", -e["s"]))
     counts = report.get("counts") or {}
     return {

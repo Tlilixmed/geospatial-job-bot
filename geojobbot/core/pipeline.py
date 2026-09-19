@@ -30,6 +30,7 @@ from ..notifications.telegram import TelegramNotifier, format_digest, format_job
 from ..notifications.weekly import format_follow_ups, format_weekly
 from ..scrapers.ats.base import ATSBackend
 from ..scrapers.ats.more_ats import all_adapters
+from ..scrapers.community import HackerNewsHiringBackend
 from ..scrapers.official import BundesagenturBackend, FranceTravailBackend
 from ..scrapers.base import Backend, RunContext
 from ..scrapers.feeds import (AdzunaBackend, ArbeitnowBackend, HimalayasBackend, JobicyBackend, JobSpyBackend,
@@ -107,6 +108,7 @@ def build_backends(settings, sponsor_data=None) -> list[Backend]:
         ReliefWebBackend(),
         BundesagenturBackend(),
         FranceTravailBackend(),
+        HackerNewsHiringBackend(),
         JobSpyBackend(),
     ]
     return backends
@@ -623,8 +625,9 @@ class Pipeline:
             manager.write_json(f"runs/{day}/{self.run_id}.json.gz", full, compress=True)
             manager.write_json("runs/latest.json", dict(report, counts=dict(report["counts"])), compress=False)
             # read model for the Cloudflare Worker's instant replies
-            manager.write_json(INDEX_SUFFIX, build_index(state, self.settings, report, self.now, HELP,
-                                                         views=self._views(manager, state)), compress=False)
+            prefs = load_prefs(manager)
+            manager.write_json(INDEX_SUFFIX, build_index(state, self.settings, report, self.now, HELP, views=self._views(manager, state, prefs),
+                                                         skills=radar.my_skills(self.settings, prefs)), compress=False)
             maintenance = state.setdefault("maintenance", {})
             last = parse_datetime(maintenance.get("last_cleanup"))
             if last is None or self.now - last > timedelta(hours=24):
@@ -638,11 +641,11 @@ class Pipeline:
             log.warning("writing run artifacts failed: %s", exc)
             report["artifact_error"] = str(exc)
 
-    def _views(self, manager: StateManager, state: dict) -> dict:
+    def _views(self, manager: StateManager, state: dict, prefs: dict | None = None) -> dict:
         """Replies formatted here so the Worker can send them instantly ({command: html})."""
         views = {}
         try:
-            prefs = load_prefs(manager)
+            prefs = prefs if prefs is not None else load_prefs(manager)
             views["sources"] = yields.format_yield(yields.compute(state, prefs, self.now))
             processor = CommandProcessor(self.settings, manager, None, state=state, now=self.now, prefs=prefs)
             views["visa"] = processor.cmd_visa("")[0]

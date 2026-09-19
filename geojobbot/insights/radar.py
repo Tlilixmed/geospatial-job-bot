@@ -68,3 +68,30 @@ def format_radar(data: dict) -> str:
         lines += ["", "<b>Domains</b>: " + " · ".join(f"{name} {pct}%" for name, pct in data["domains"])]
     lines += ["", "/skills shows or edits the list I compare against."]
     return "\n".join(lines)
+
+
+def gap(rec: dict, have: list[str]) -> dict:
+    """Per job: which of its skills you have and which are not on your list (the AI's requirements count too)."""
+    owned = {fold(s) for s in have}
+    asked: list[str] = []
+    for skill in rec.get("matched_skills") or []:
+        name = str(skill).partition(" (")[0].strip()
+        if name and name not in asked:
+            asked.append(name)
+    for req in ((rec.get("ai") or {}).get("requirements") or []):
+        for name in DEFAULT_SKILLS + list(have):  # a requirement sentence that names a known skill
+            if fold(name) in fold(str(req)) and name not in asked:
+                asked.append(name)
+    return {"have": [n for n in asked if fold(n) in owned], "lack": [n for n in asked if fold(n) not in owned]}
+
+
+def gap_line(rec: dict, have: list[str]) -> str | None:
+    data = gap(rec, have)
+    if not data["have"] and not data["lack"]:
+        return None
+    parts = []
+    if data["have"]:
+        parts.append("✅ you have " + ", ".join(data["have"][:6]))
+    if data["lack"]:
+        parts.append("❌ not on your list: " + ", ".join(data["lack"][:6]))
+    return " · ".join(parts)

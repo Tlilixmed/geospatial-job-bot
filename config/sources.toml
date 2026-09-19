@@ -123,6 +123,17 @@ job_url_pattern = 'keejob\.com/offres-emploi/\d+/'
 use_robots_sitemaps = false
 max_pages = 20
 
+# GEO CAREERS: the largest geospatial-only board (700+ postings, JSON-LD on every page, robots.txt allows it).
+# Its sitemap lists every job with a lastmod, so only new or changed postings are fetched, newest first.
+[[career_sites]]
+name = "GEO CAREERS"
+url = "https://www.geo-careers.com/search/"
+source_type = "feed"
+geospatial = true
+sitemap = "https://www.geo-careers.com/sitemap.xml"
+job_url_pattern = 'geo-careers\.com/jobs/[^/]+/'
+max_pages = 60
+
 # Company career pages without a supported ATS API use the same table without source_type:
 # [[career_sites]]
 # name = "Example Surveying Ltd"

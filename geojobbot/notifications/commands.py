@@ -362,6 +362,9 @@ class CommandProcessor:
                 note += " (name variant)"
             lines += ([""] if hit is (rec.get("sponsor") or [None])[0] else []) + [note]
         facts = [f for f in (timing.deadline_badge(rec, self.now), timing.repost_badge(rec)) if f]
+        skills_line = radar.gap_line(rec, radar.my_skills(self.settings, self.prefs))
+        if skills_line:
+            facts.insert(0, skills_line)
         if rec.get("deadline") and timing.deadline_passed(rec, self.now):
             facts.append(f"⌛ the application deadline passed on {rec['deadline']}")
         if facts:
@@ -430,6 +433,9 @@ class CommandProcessor:
         route = rec.get("visa") or {}
         if route.get("line"):
             facts.append(f"Visa route ({route.get('country')}): {route['line']}")
+        skills = radar.gap(rec, radar.my_skills(self.settings, self.prefs))
+        if skills["lack"]:
+            facts.append("Skills the posting names that the candidate does not list: " + ", ".join(skills["lack"][:6]))
         closes, again = timing.deadline_badge(rec, self.now), timing.repost_badge(rec)
         if closes:
             facts.append(closes.replace("⏳ ", "Application "))

@@ -100,6 +100,20 @@ re-enables the workflow, starts a run, and tells you once (`🛟 No scraper run 
 3 hours, at most 4 times, and reports `✅ The scraper is running again` afterwards. It uses the `GITHUB_TOKEN` and
 `INBOX` binding you already have; free plan Cron Triggers cost nothing.
 
+## 10. Optional: employer replies by email become outcomes
+If your domain is on Cloudflare (a portfolio site is enough), **Email Routing** can hand mail to this Worker:
+
+1. Cloudflare dashboard → your domain → **Email → Email Routing → Enable** (it adds the MX records).
+2. **Custom addresses → Create address**: e.g. `jobs@yourdomain`, action **Send to a Worker** → `geojobbot-telegram`.
+3. Use that address on your applications (or forward employer mail to it).
+
+Each mail is matched to one of your applications by the sender's domain or the company name, read for its meaning
+(rejection, interview invitation, offer, acknowledgement; English and French wording) and, when the reading is clear
+and the application is known, recorded as an outcome, with a Telegram line such as *📧 Mail from talent@acme.com reads
+like an interview invitation for GIS Analyst — Acme — recorded as interview* (subject and verdict only; the body never
+reaches the chat). An interview invitation also triggers the interview sheet. `/outcome code applied` undoes a wrong
+reading. Mail that matches nothing is only announced.
+
 ## Which chat? Getting TELEGRAM_CHAT_ID right
 Send `/id` in the chat you want to use. The bot answers there with the chat id, the chat type, your user id, and
 whether that chat is the configured one. Then:

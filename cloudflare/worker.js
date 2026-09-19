@@ -264,6 +264,7 @@ function viewWhy(index, arg) {
     if (i === 0) lines.push("");
     lines.push(note);
   });
+  if (job.gap) lines.push("", esc(job.gap));
   if (job.visa && (job.visa.d || []).length) lines.push("", ...job.visa.d);  // formatted by Python (HTML)
   if (job.ai) {
     lines.push("", `<b>AI second opinion</b> · fit ${job.ai.fit}/10`);
@@ -734,7 +735,110 @@ async function watchdog(env) {
   return started.ok ? "kicked" : "kick failed";
 }
 
+// ---------------------------------------------------------------------------- application replies by email (optional)
+// Cloudflare Email Routing can hand mail for an address on your domain (say jobs@yourdomain) to this Worker. Apply
+// with that address, and the answers come back through here: the mail is matched to one of your applications by the
+// sender's domain or the company name, classified from the subject and the text, recorded as an outcome when the
+// reading is clear, and summarised in Telegram (subject and verdict only, never the body). It is a reading, not a
+// judgement: /outcome code <status> overrides it.
+const MAIL_KINDS = [
+  ["rejected", /\b(unfortunately|regret|regrettably|not (?:been )?(?:selected|successful|shortlisted|retained)|decided (?:not )?to (?:move|go|proceed) (?:forward|ahead) with other|not (?:be )?moving forward|other candidates|will not be (?:progressing|proceeding)|position has been filled|malheureusement|ne (?:pouvons|pourrons) pas donner suite|ne donnerons pas suite|n'?(?:a|avons) pas (?:été )?retenu|candidature n'?a pas été retenue|pas été sélectionn)/i],
+  ["offer", /\b(offer letter|pleased to (?:offer|extend)|job offer|formal offer|proposition d'?embauche|offre d'?emploi ferme|heureux de vous proposer)\b/i],
+  ["interview", /\b(interview|entretien|phone screen|screening call|video call|schedule a (?:call|conversation|chat|meeting)|availability (?:for|to)|book a time|invite you to|would like to (?:meet|speak|talk)|next (?:step|stage|round)|technical (?:test|assessment|exercise)|take-?home)\b/i],
+  ["received", /\b(thank you for (?:applying|your application|your interest)|application (?:has been )?received|we have received your application|accusé de réception|nous avons bien reçu|merci (?:pour|de) votre candidature)\b/i],
+];
+const MAIL_STATUS_TEXT = { rejected: "a rejection", offer: "an offer", interview: "an interview invitation", received: "an acknowledgement" };
+
+function decodeMailPart(body, encoding) {
+  const enc = String(encoding || "").toLowerCase();
+  if (enc.includes("base64")) {
+    try { return new TextDecoder().decode(Uint8Array.from(atob(body.replace(/\s+/g, "")), (c) => c.charCodeAt(0))); } catch { return body; }
+  }
+  if (enc.includes("quoted-printable")) {
+    const bytes = body.replace(/=\r?\n/g, "").replace(/=([0-9A-Fa-f]{2})/g, (_, h) => String.fromCharCode(parseInt(h, 16)));
+    try { return new TextDecoder().decode(Uint8Array.from(bytes, (c) => c.charCodeAt(0))); } catch { return bytes; }
+  }
+  return body;
+}
+
+/** Best-effort text of an email from its raw MIME: the first text/plain part, else the stripped text/html one. */
+function mailText(raw) {
+  const head = raw.slice(0, raw.search(/\r?\n\r?\n/) + 1);
+  const boundary = (head.match(/boundary="?([^";\r\n]+)"?/i) || [])[1];
+  const parts = boundary ? raw.split(new RegExp(`--${boundary.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?:--)?`)) : [raw];
+  const pick = (type) => {
+    for (const part of parts) {
+      const split = part.search(/\r?\n\r?\n/);
+      if (split === -1) continue;
+      const headers = part.slice(0, split);
+      if (!new RegExp(`content-type:\\s*${type}`, "i").test(headers)) continue;
+      const encoding = (headers.match(/content-transfer-encoding:\s*([^\r\n]+)/i) || [])[1];
+      return decodeMailPart(part.slice(split).trim(), encoding);
+    }
+    return "";
+  };
+  const plain = pick("text/plain");
+  if (plain) return plain;
+  const page = pick("text/html");
+  return page ? page.replace(/<style[\s\S]*?<\/style>/gi, " ").replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/\s+/g, " ") : "";
+}
+
+function classifyMail(subject, text) {
+  const haystack = `${subject}\n${text.slice(0, 4000)}`;
+  for (const [kind, pattern] of MAIL_KINDS) if (pattern.test(haystack)) return kind;
+  return "";
+}
+
+function matchApplication(prefs, fromAddress, subject, text) {
+  const domain = (String(fromAddress).split("@")[1] || "").toLowerCase().replace(/^(mail|jobs|careers|recruiting|hr|noreply|no-reply|talent)\./, "");
+  const domainCore = domain.split(".")[0];
+  const haystack = fold(`${subject} ${text.slice(0, 3000)}`);
+  let best = null;
+  for (const [id, a] of Object.entries(prefs.applied)) {
+    const company = fold(a.company || "");
+    const words = company.split(/[^a-z0-9]+/).filter((w) => w.length >= 3 && !["the", "inc", "ltd", "llc", "gmbh", "corp", "group", "company"].includes(w));
+    let score = 0;
+    if (words.length && domainCore.length >= 3 && words.some((w) => domainCore.includes(w) || w.includes(domainCore))) score += 3;
+    if (company && haystack.includes(company)) score += 2;
+    if (a.title && haystack.includes(fold(a.title))) score += 2;
+    if (score > (best ? best.score : 1)) best = { id, score, application: a };
+  }
+  return best;
+}
+
+async function handleMail(message, env) {
+  if (!env.INBOX) return;
+  const subject = message.headers.get("subject") || "(no subject)";
+  const raw = await new Response(message.raw).text();
+  const text = mailText(raw);
+  const kind = classifyMail(subject, text);
+  const prefs = await loadPrefs(env);
+  const found = matchApplication(prefs, message.from, subject, text);
+  const sender = String(message.from).replace(/^[^<]*<|>.*$/g, "");
+  const about = found ? `<b>${esc(found.application.title)}</b>${found.application.company ? ` — ${esc(found.application.company)}` : ""}` : "";
+  if (found && (kind === "rejected" || kind === "interview" || kind === "offer")) {
+    const now = new Date().toISOString();
+    const info = found.application;
+    info.status = kind;
+    (info.history = info.history || []).push({ at: now, status: kind, source: "email" });
+    await savePrefs(env, prefs);
+    const code = await codeOf(found.id);
+    await reply(env, [`📧 Mail from ${esc(sender)} reads like ${MAIL_STATUS_TEXT[kind]} for ${about} — recorded as <b>${kind}</b>.\n`
+      + `<i>${esc(subject.slice(0, 120))}</i>\nWrong? /outcome ${code} applied${kind === "interview" ? " · /prep " + code + " for the interview sheet" : ""}`]);
+    if (kind === "interview") await dispatchToPython(env, { update_id: Date.now() }, `/prep ${code}`, "", "🎤 Preparing your interview sheet, about a minute.");
+    return;
+  }
+  const verdict = kind ? `reads like ${MAIL_STATUS_TEXT[kind]}` : "is not one I can classify";
+  await reply(env, [`📧 Mail from ${esc(sender)} ${verdict}${found ? ` (probably about ${about})` : ""}.\n<i>${esc(subject.slice(0, 120))}</i>`
+    + (found && kind ? "" : "\nTell me what it was: /outcome code interview|rejected|offer")]);
+}
+
 export default {
+  async email(message, env, ctx) {
+    ctx.waitUntil(handleMail(message, env).catch((error) =>
+      tell(env, `⚠️ Could not read an email: ${String(error && error.message ? error.message : error).slice(0, 200)}`)));
+  },
+
   async scheduled(event, env, ctx) {
     ctx.waitUntil(watchdog(env).catch((error) => console.log("watchdog error", String(error && error.message ? error.message : error))));
   },

@@ -31,6 +31,9 @@ Finds relevant GIS / geospatial / surveying / LiDAR / remote-sensing jobs from l
 | Board discovery | `commoncrawl`, search backends, career pages, generic pages | Discovers *new* company boards and adds them to a persistent registry. |
 | Career pages + sitemaps | `career_sites` | Configured company pages: JSON-LD jobs, embedded ATS boards, job links, job sitemaps. |
 | Generic extraction | `generic_pages` | Any queued public job page: JSON-LD `JobPosting` → embedded JSON → structured HTML. ATS URLs are fetched through the ATS API instead. |
+| Geospatial boards | `career_sites` (GEO CAREERS), `rss_feeds` (GoGeomatics, GISjobs.com) | GEO CAREERS is the largest geospatial-only board: 700+ postings with structured data, read through its sitemap newest-first. |
+| Official employment services | `bundesagentur`, `francetravail` | Germany's public job API (no key; German-language postings skipped) and France Travail (free key). |
+| Community | `hn_hiring` | Hacker News "Who is hiring?" monthly thread through the free Algolia API, once a day, strict geospatial filter. |
 | Public feeds | `remotive`, `jobicy`, `himalayas`, `arbeitnow`, `remoteok`, `rss_feeds`, `usajobs` | Rate-respecting JSON/RSS feeds (each has a minimum interval). `rss_feeds` ships with GoGeomatics (Canada), GISjobs.com, Government of Canada Job Bank searches and Tunisie Travail searches. |
 | Job boards without feeds | `career_sites` with `source_type = "feed"` | Keyword search pages of boards such as Keejob (Tunisia): job links are followed and each posting's JSON-LD is read. |
 | Aggregator APIs (optional) | `adzuna`, `jooble`, `jsearch` | Free API keys. Adzuna covers Canada, UK, US and more; Jooble covers Tunisia, the Maghreb and Canada; JSearch returns Google for Jobs results (LinkedIn, Indeed, Glassdoor, employer sites) with full descriptions. |
@@ -133,6 +136,17 @@ Registers and signals are also a *source*. Each run the prospector takes a few e
 - **Reposts.** The same title at the same employer seen again three weeks or more after an earlier posting shows `♻️ posted 2× again since Jun 2026`: a role that is hard to fill (a better starting point for sponsorship) or an evergreen advert. Worth knowing before writing.
 - **`/prep code`**: an interview sheet. What the bot established (salary, sponsor record, visa route, deadline), then five likely questions with a hint from your own experience, two weak points, three questions to ask, a one-line introduction. Sent by itself when `/outcome code interview` is recorded.
 - **`/approach firm`**: a short unsolicited application (*candidature spontanée*, in French for francophone firms) that opens with the reason to write now, such as the contract the firm just won according to `/signals`. `/approach` alone lists those firms.
+
+### What the job bots on GitHub and Reddit do, and what this one does instead
+
+A comparison with the popular open-source job bots (ApplyPilot, job-digest, opportunity-crawler, the LinkedIn Easy-Apply bots) shaped this round:
+
+- **Auto-apply is deliberately absent.** The auto-appliers submit hundreds of applications a day through browser automation, CAPTCHA solvers and your LinkedIn account. That violates the sites' terms, gets accounts banned, and produces applications recruiters recognise and bin. This bot automates *finding* and *deciding*; it drafts (`/pitch`, `/approach`, `/prep`) and you send.
+- **Closing the loop.** The bots stop at the alert. Here an application has a life: outcomes (`/outcome`), follow-up reminders, an interview sheet, and, with Cloudflare Email Routing, employer replies that record themselves (`cloudflare/README.md`, step 10).
+- **Skills gap per job.** `/why code` and `/prep code` show which of the posting's skills you have and which are not on your list (`/skills`), the deterministic part of what the resume-tailoring bots do with an LLM.
+- **Sources they use that were missing here:** GEO CAREERS (sitemap), the Hacker News "Who is hiring?" thread, Germany's public job API. Conservation Job Board and the Geospatial Jobs newsletter were checked and left out: 5 of 181 feed items were geospatial, and the newsletter links to LinkedIn postings that cannot be read.
+- **Their good ideas already here:** LLM enrichment with a validated schema, content-hash dedup, a capped digest against decision fatigue, GitHub Actions scheduling, resume-profile scoring.
+- **Worth doing by hand:** the monthly Hacker News "Who wants to be hired?" thread (a post there is read by the same companies that post in "Who is hiring?"), and the weekly Geospatial Jobs newsletter (geospatial.substack.com).
 
 ### Knowing which sources earn their keep
 
@@ -539,6 +553,7 @@ geojobbot/
   scrapers/search.py     SearXNG, DuckDuckGo, Common Crawl
   scrapers/feeds.py      public feeds, RSS, USAJOBS, JobSpy
   scrapers/official.py   Bundesagentur (Germany, no key), France Travail (free key)
+  scrapers/community.py  Hacker News "Who is hiring?"
   storage/               ObjectStore, R2Store, LocalStore, StateManager
   notifications/         telegram.py (digest), commands.py, intents.py (plain language), weekly.py
   utils/                 http (retries/rate limits), robots, urls, location, dates, text
