@@ -260,6 +260,7 @@ class Pipeline:
         counts.update(self._sponsors(manager, ctx, outcome, state, writes_allowed, report))
         counts.update(self._learning(manager, outcome, state))
         counts.update(self._ai_review(outcome, state))
+        counts.update(self._recheck_sponsorship(outcome, state))
         counts.update(self._visa(state, outcome.seen_ids))
         counts.update(self._timing(outcome, state))
 
@@ -461,6 +462,33 @@ class Pipeline:
                 counts["ai_vetoed"] += 1
                 counts["tier_possible"] -= 1
                 counts["tier_rejected"] += 1
+        return counts
+
+    def _recheck_sponsorship(self, outcome, state: dict) -> Counter:
+        """Re-read stored postings that claim sponsorship with the current wording rules (their text is kept), so a
+        claim made by an older, laxer version does not survive just because the posting was not seen again."""
+        counts = Counter()
+        if self.descriptions is None:
+            return counts
+        try:
+            from ..matching.matcher import SPONSORSHIP_EVIDENCE, WORK_AUTHORIZATION_REQUIRED, work_authorization
+
+            cfg = self.settings.match_config()
+            seen = {rec.canonical_id for _, _, rec in outcome.evaluated}  # rescored this run already
+            for cid, text in self.descriptions.data.items():
+                stored = state["jobs"].get(cid)
+                if not stored or cid in seen or SPONSORSHIP_EVIDENCE not in (stored.get("why_matched") or []):
+                    continue
+                required, offered = work_authorization("\n".join((stored.get("title") or "", text)), stored, cfg)
+                if offered:
+                    continue
+                stored["why_matched"] = [w for w in stored["why_matched"] if w != SPONSORSHIP_EVIDENCE]
+                counts["sponsorship_claims_withdrawn"] += 1
+                if required and stored.get("tier") in ("high", "possible"):
+                    stored["tier"] = "rejected"
+                    stored["rejection_reasons"] = list(dict.fromkeys((stored.get("rejection_reasons") or []) + [WORK_AUTHORIZATION_REQUIRED]))
+        except Exception as exc:
+            log.warning("sponsorship recheck skipped: %s", type(exc).__name__)
         return counts
 
     def _timing(self, outcome, state: dict) -> Counter:

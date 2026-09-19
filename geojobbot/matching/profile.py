@@ -280,6 +280,10 @@ WORK_AUTH_REQUIRED = [
     r"(?:currently |be able to |offer |provide |consider )?(?:any |visa |immigration |employment |work )?sponsor",
     r"\bwithout (?:the need for |need of |requiring |current or future )?(?:visa |employer )?sponsorship\b",
     r"\bsponsorship (?:is|will) (?:not|unavailable)|\bsponsorship (?:is )?not (?:available|offered|provided|possible)\b",
+    r"\bnot eligible for (?:any )?(?:visa|immigration|employment|work)? ?(?:visa )?(?:support|sponsorship|assistance)\b",
+    r"\bno (?:visa|immigration|work permit) (?:support|assistance|sponsorship)\b",
+    r"\b(?:visa|immigration) (?:support|assistance|sponsorship) (?:is |will be |are )?(?:not|unavailable)\b",
+    r"\b(?:unable|not able|not in a position) to (?:provide|offer|support|assist with) (?:any )?(?:visa|immigration|work permit)\b",
     r"\b(?:u\.?s\.?a?\.?|american|canadian|british|uk|australian|eu|german|french|dutch) (?:citizens?|citizenship|nationals?)\b",
     # jobs reserved for a country's own nationals (Gulf nationalisation programmes)
     r"\b(?:saudi|emirati|uae|qatari|kuwaiti|omani|bahraini|gcc) nationals?\b", r"\bnationals? only\b",

@@ -117,14 +117,34 @@ def work_authorization(text: str, location: dict, cfg: P.MatchConfig) -> tuple[b
     """
     required_rx, offered_rx, compatible_rx = _compiled_work_auth()
     folded = fold(text)
-    offered = any(rx.search(folded) for rx in offered_rx)
+    offered, refused = False, False
+    for rx in offered_rx:
+        for found in rx.finditer(folded):
+            if _negated(folded, found.start(), found.end()):
+                refused = True  # "not eligible for visa support", "sponsorship is not available": the opposite of an offer
+            else:
+                offered = True
+    if refused and offered:  # a posting that says both is not an offer one can count on
+        offered = False
     compatible = any(rx.search(folded) for rx in compatible_rx)
     country = fold(location.get("country") or "")
     scope = fold(location.get("remote_scope") or "")
     homes = [fold(c) for c in cfg.home_countries if c.strip()]
     at_home = bool(homes) and (country in homes or scope in homes)
-    required = not (at_home or offered or compatible) and any(rx.search(folded) for rx in required_rx)
+    required = not (at_home or offered or compatible) and (refused or any(rx.search(folded) for rx in required_rx))
     return required, offered
+
+
+NEGATION_BEFORE_RE = re.compile(r"\b(?:no|not|non|never|without|unable|cannot|can not|won.?t|will not|does not|do not|don.?t|doesn.?t|"
+                                r"isn.?t|aren.?t|ineligible|neither|nor|unfortunately|pas|sans|aucun|aucune|ne)\b")
+NEGATION_AFTER_RE = re.compile(r"^\W*(?:is |are |will be |can ?)?(?:not\b|unavailable|n.?est pas|non disponible)")
+
+
+def _negated(folded: str, start: int, end: int) -> bool:
+    """Is the phrase at [start, end) denied in its own sentence? ('this position is not eligible for visa support')"""
+    sentence_start = max(folded.rfind(".", 0, start), folded.rfind("\n", 0, start), folded.rfind(";", 0, start), start - 70) + 1
+    before = folded[max(sentence_start, 0):start]
+    return bool(NEGATION_BEFORE_RE.search(before) or NEGATION_AFTER_RE.search(folded[end:end + 40]))
 
 
 @lru_cache(maxsize=None)
