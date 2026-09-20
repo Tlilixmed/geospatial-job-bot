@@ -11,6 +11,7 @@ from ..insights import fx, radar, timing, visa
 from ..utils.dates import to_iso
 from ..utils.location import ParsedLocation
 from ..utils.text import job_code
+from .jobs import is_listed, listed_days
 
 SUFFIX = "state/index.json"
 SCHEMA = 1
@@ -26,7 +27,7 @@ def _entry(cid: str, rec: dict, skills: list[str] | None = None) -> dict:
         "id": cid, "code": job_code(cid), "t": rec.get("title"), "c": rec.get("company"), "loc": loc.display(),
         "country": rec.get("country"), "s": int(rec.get("score") or 0), "tier": rec.get("tier"),
         "p": rec.get("posted_at"), "rel": bool(rec.get("posted_at_reliable")), "seen": rec.get("last_seen"),
-        "rot": bool(rec.get("from_rotation")), "url": rec.get("apply_url") or rec.get("url"),
+        "rot": bool(rec.get("from_rotation")), "ttl": listed_days(rec), "url": rec.get("apply_url") or rec.get("url"),
         "sal": rec.get("salary"), "sk": [str(s) for s in (rec.get("matched_skills") or [])[:8]],
         "dom": list((rec.get("matched_domains") or [])[:8]), "why": why[:12], "bd": rec.get("score_breakdown") or {},
         "rej": rec.get("rejection_reasons") or [], "offered": "Visa sponsorship offered" in why,
@@ -36,6 +37,7 @@ def _entry(cid: str, rec: dict, skills: list[str] | None = None) -> dict:
     if review.get("fit") is not None:
         entry["ai"] = {k: review.get(k) for k in ("fit", "summary", "concerns", "years", "sponsorship", "languages",
                                                   "requirements")}
+        entry["ai"].update({k: review[k] for k in ("model", "lift", "restricted") if review.get(k)})
     if rec.get("sponsor"):
         entry["sp"] = [{k: h.get(k) for k in ("label", "icon", "country", "name", "match", "positions", "occupations", "geo")}
                        for h in rec["sponsor"][:3]]
@@ -65,6 +67,8 @@ def build_index(state: dict, settings, report: dict, now, help_text: str, views:
     """`views` are replies Python formatted in advance ({command: html}); the Worker sends them as they are."""
     rows = []
     for cid, rec in state.get("jobs", {}).items():
+        if not is_listed(rec, now):
+            continue  # gone from its source: it would only push a fresh job past MAX_JOBS; /why on an old code goes to Python
         accepted = rec.get("tier") in ("high", "possible")
         near_miss = set(rec.get("rejection_reasons") or []) <= {"LOW_SCORE"} and int(rec.get("score") or 0) >= 35
         if accepted or near_miss:

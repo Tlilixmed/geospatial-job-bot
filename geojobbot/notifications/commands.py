@@ -8,14 +8,17 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from collections import Counter
+from datetime import timedelta
 
 import requests
 
+from ..ai import ask
 from ..ai.client import WorkersAI
 from ..ai.review import write_approach, write_pitch, write_prep
 from ..core.descriptions import DescriptionStore
-from ..core.jobs import APPLICATION_STATUSES, alert_block_reason, is_listed
+from ..core.jobs import APPLICATION_STATUSES, alert_block_reason, is_listed, is_muted
 from ..core.prefs import load_prefs, save_prefs
 from ..insights import prospects, radar, signals, timing, visa, yields
 from ..insights.learning import MIN_LABELS, build_model, describe_model, snapshot
@@ -39,6 +42,7 @@ HELP = """🗺️ <b>Geospatial job bot — commands</b>
 /sponsors [n] — matches from employers on official visa-sponsor registers (UK, Canada, NL)
 /visa — is a work visa realistic? licence, legal salary minimum, occupation · /visa code · /visa france
 /ai [n] — what the AI thinks of current matches: fit /10, summary, concerns
+/ask question — ask about your matches: “which pay best?”, “compare a3f9c and b2c1d”, “which close this week?”
 /pitch code — AI drafts a short application note for that job
 /prep code — interview sheet: likely questions, weak points, what to ask (sent by itself when you record an interview)
 /approach firm — AI drafts a speculative application to a firm that just won geospatial work · /approach lists them
@@ -91,6 +95,7 @@ class CommandProcessor:
         self.ai = ai
         self._state = state
         self.prefs = prefs if prefs is not None else load_prefs(manager)
+        self._own_prefs = prefs is None  # loaded here: re-read before each message, the Worker may have written meanwhile
         self._dirty = False
 
     # ------------------------------------------------------------------ telegram plumbing
@@ -124,23 +129,36 @@ class CommandProcessor:
             if not text:
                 continue
             try:
+                self._fresh_prefs()
                 replies = self.handle(text)
             except Exception as exc:  # one bad command must not block the rest
                 log.exception("command failed")
                 replies = [f"⚠️ That command failed ({type(exc).__name__}). /help lists what I understand."]
+            counts["prefs_saved"] += self._save_if_changed()  # before the (slow) replies: the window for a lost update stays small
             for reply in replies:
                 ok, error = self.notifier.send(reply)
                 if not ok:
                     log.warning("reply not delivered: %s", error)
             counts["commands"] += 1
-        if self._dirty:
-            save_prefs(self.manager, self.prefs)
-            counts["prefs_saved"] += 1
         if last is not None:  # confirm, so no poller sees these updates again
             self._api("getUpdates", offset=int(last) + 1, limit=1, timeout=0)
         return counts
 
+    def _fresh_prefs(self) -> None:
+        """Read the stored preferences again before a message is handled: the Worker writes them at any moment, and a
+        copy loaded minutes ago (an AI draft takes a while) must never be what gets saved."""
+        if self._own_prefs and not self._dirty:
+            self.prefs = load_prefs(self.manager)
+
+    def _save_if_changed(self) -> int:
+        if not self._dirty:
+            return 0
+        save_prefs(self.manager, self.prefs)
+        self._dirty = False  # a later read-only command must not save this copy again over newer writes
+        return 1
+
     INBOX_SUFFIX = "inbox/"
+    INBOX_MAX_AGE_HOURS = 6
 
     def run_inbox(self) -> Counter:
         """Execute the messages the Cloudflare Worker left in R2 (inbox/<update id>.json), oldest first.
@@ -161,6 +179,13 @@ class CommandProcessor:
                 counts["unreadable"] += 1
                 continue
             text = str(item.get("text") or "").strip()
+            sent = parse_datetime(item.get("at"))
+            if text and sent is not None and self.now - sent > timedelta(hours=self.INBOX_MAX_AGE_HOURS):
+                # left behind by a failed hand-over: running "/pause" or "/run" days later would only surprise
+                counts["expired"] += 1
+                self.notifier.send(f"⌛ I did not run a message from {_esc(to_iso(sent)[:16].replace('T', ' '))} UTC that reached me "
+                                   f"only now: <code>{_esc(text[:80])}</code>. Send it again if you still want it.")
+                continue
             if text:
                 counts += self.run_text(text, str(item.get("hint") or ""))
         return counts
@@ -170,18 +195,18 @@ class CommandProcessor:
         no longer serves getUpdates). The caller has already verified the chat. `hint` is the Worker's
         optional AI reading of a free-text message."""
         try:
+            self._fresh_prefs()
             replies = self.handle(text.strip(), hint)
         except Exception as exc:
             log.exception("command failed")
             replies = [f"⚠️ That command failed ({type(exc).__name__}). /help lists what I understand."]
         counts = Counter(commands=1)
+        counts["prefs_saved"] += self._save_if_changed()
         for reply in replies:
             ok, error = self.notifier.send(reply)
             if not ok:
                 counts["replies_failed"] += 1
                 log.warning("reply not delivered: %s", error)
-        if self._dirty:
-            save_prefs(self.manager, self.prefs)
         return counts
 
     # ------------------------------------------------------------------ data helpers
@@ -198,8 +223,7 @@ class CommandProcessor:
         return set(self.prefs["hidden"]) | set(self.prefs["applied"])
 
     def _is_muted(self, rec: dict) -> bool:
-        haystack = fold(f"{rec.get('title') or ''} {rec.get('company') or ''}")
-        return any(fold(term) in haystack for term in self.prefs["muted"] if term.strip())
+        return is_muted(rec, self.prefs["muted"])
 
     def _current_matches(self, only_high: bool = False) -> list[dict]:
         tiers = {TIER_HIGH} if only_high else {TIER_HIGH, TIER_POSSIBLE}
@@ -212,7 +236,7 @@ class CommandProcessor:
         return rows
 
     def _by_code(self, code: str) -> dict | None:
-        code = code.strip().lower().strip("<>[]#")
+        code = code.strip().lower().strip("<>[]#.,")
         if not code:
             return None
         for cid, rec in self.state.get("jobs", {}).items():
@@ -283,6 +307,7 @@ class CommandProcessor:
             "/signals": self.cmd_signals, "/sources": self.cmd_sources, "/yield": self.cmd_sources,
             "/visa": self.cmd_visa, "/watch": self.cmd_watch, "/unwatch": self.cmd_unwatch,
             "/prospects": self.cmd_prospects, "/prep": self.cmd_prep, "/approach": self.cmd_approach,
+            "/ask": self.cmd_ask,
         }
 
     # ------------------------------------------------------------------ find
@@ -412,6 +437,25 @@ class CommandProcessor:
             lines += ["", f'<a href="{_esc(link)}">Open posting</a>']
         return ["\n".join(lines)]
 
+    def cmd_ask(self, arg: str) -> list[str]:
+        """A free question about the current matches, answered by Workers AI from the bot's own facts and nothing else."""
+        question = arg.strip()
+        if len(question) < 4:
+            return ["Usage: /ask your question — “which of these pay best?”, “compare a3f9c and b2c1d”, “which close this week?”"]
+        ai = self.ai if self.ai is not None else WorkersAI.from_settings(self.settings, budget=2)
+        if ai is None:
+            return ["Questions need Workers AI: add the CLOUDFLARE_AI_TOKEN secret (see README). /search words works without it."]
+        rows = self._current_matches()
+        named = [rec for rec in (self._by_code(tok) for tok in re.findall(r"\b[0-9a-f]{5}\b", question.lower())) if rec is not None]
+        rows = named + [rec for rec in rows if all(rec is not n for n in named)]  # jobs named in the question are always in view
+        if not rows:
+            return ["There is no current match to ask about yet. /status shows the last run."]
+        reply = ask.answer(ai, self.settings.candidate_profile, question, rows, self.now.date().isoformat())
+        if not reply:
+            return ["The AI service did not answer just now. Try again in a minute."]
+        shown = min(len(rows), ask.MAX_JOBS)
+        return [f"🤖 {reply}\n\n<i>From the {shown} best current match{'es' if shown != 1 else ''} · /why code shows the facts behind any of them.</i>"]
+
     def cmd_pitch(self, arg: str) -> list[str]:
         """Draft a short tailored application note with Workers AI."""
         rec = self._by_code(arg)
@@ -527,6 +571,10 @@ class CommandProcessor:
         rec = self._by_code(arg)
         if rec is None:
             return ["I can't find that code. /jobs lists current codes."]
+        known = self.prefs["applied"].get(rec["canonical_id"])
+        if known:  # saying it twice must not wipe an interview already recorded
+            return [f"Already recorded: <b>{_esc(rec.get('title'))}</b> · {_esc(known.get('status') or 'applied')} since "
+                    f"{_esc((known.get('at') or '')[:10])}. /outcome {job_code(rec['canonical_id'])} interview|offer|rejected updates it."]
         self.prefs["applied"][rec["canonical_id"]] = {
             **snapshot(rec), "url": rec.get("apply_url") or rec.get("url"),
             "at": to_iso(self.now), "status": "applied", "history": [{"at": to_iso(self.now), "status": "applied"}]}
@@ -543,9 +591,9 @@ class CommandProcessor:
 
     def cmd_outcome(self, arg: str) -> list[str]:
         """/outcome code interview|offer|rejected|withdrawn|ghosted|applied"""
-        words = arg.split()
+        words = [w.strip("<>[]#.,") for w in arg.split()]  # "/outcome [a3f9c] interview", as the help text is sometimes copied
         status = next((w.lower() for w in words if w.lower() in APPLICATION_STATUSES), None)
-        code = next((w for w in words if w.lower() not in APPLICATION_STATUSES), "")
+        code = next((w for w in words if w and w.lower() not in APPLICATION_STATUSES), "")
         cid, info = self._applied_by_code(code)
         if cid is None:  # an outcome for a job never marked as applied: record the application too
             rec = self._by_code(code)
@@ -605,7 +653,7 @@ class CommandProcessor:
         return ["Muted: " + (_esc(", ".join(self.prefs["muted"])) or "nothing")]
 
     def cmd_threshold(self, arg: str) -> list[str]:
-        numbers = [int(x) for x in arg.replace(",", " ").split() if x.isdigit()]
+        numbers = [int(round(float(x))) for x in re.findall(r"\d+(?:\.\d+)?", arg)]  # "75.5" is one number, not 75 and 5
         if not numbers or not all(0 < n <= 100 for n in numbers):
             return [f"Usage: /threshold 70 55 (now High ≥ {self.settings.high_threshold}, "
                     f"Possible ≥ {self.settings.medium_threshold})"]

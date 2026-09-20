@@ -203,3 +203,87 @@ def test_listings_drop_postings_no_source_has_seen_lately():
     proc, replies, _, _ = setup([], [gone, rotated])
     proc.run_text("/jobs")
     assert "LiDAR Technician" in replies.sent[-1] and "GIS Analyst" not in replies.sent[-1]
+
+
+# ------------------------------------------------------------------ review round (docs/REVIEW.md F58-F65)
+def test_muting_matches_whole_words_everywhere():
+    from geojobbot.core.jobs import is_muted
+
+    assert is_muted({"title": "GIS Analyst (US)", "company": "Other"}, ["US"])
+    assert not is_muted({"title": "GIS Analyst", "company": "Geo Industry Partners"}, ["US"])  # "indUStry"
+    assert is_muted({"title": "Ingénieur SIG", "company": "Société Générale"}, ["societe generale"])
+    jobs = [job("a:1", "GIS Analyst", company="Geo Industry Partners"), job("a:2", "GIS Analyst (US)", company="Other")]
+    proc, replies, _, _ = setup([(CHAT, "/mute US"), (CHAT, "/jobs")], jobs)
+    proc.run()
+    assert "Top 1 of 1 current matches" in replies.sent[-1] and "Geo Industry Partners" in replies.sent[-1]
+
+
+def test_saying_applied_twice_keeps_the_outcome_and_codes_may_come_in_brackets():
+    code = job_code("a:1")
+    proc, replies, _, manager = setup([(CHAT, f"/applied {code}"), (CHAT, f"/outcome [{code}] rejected"), (CHAT, f"/applied {code}")],
+                                      [job("a:1", "GIS Analyst")])
+    proc.ai = None
+    proc.run()
+    application = load_prefs(manager)["applied"]["a:1"]
+    assert application["status"] == "rejected" and [h["status"] for h in application["history"]] == ["applied", "rejected"]
+    assert "Already recorded" in replies.sent[-1] and "rejected since" in replies.sent[-1]
+
+
+def test_a_decimal_threshold_is_one_number():
+    proc, replies, _, manager = setup([(CHAT, "/threshold 75.5")])
+    proc.run()
+    prefs = load_prefs(manager)
+    assert prefs["high_threshold"] == 76 and prefs["medium_threshold"] == 55
+
+
+def test_a_read_only_command_never_saves_a_stale_copy_over_the_workers_write():
+    from geojobbot.core.prefs import save_prefs
+
+    proc, replies, _, manager = setup([], [job("a:1", "GIS Analyst")])
+    proc.run_text("/mute leidos")                        # a write: saved at once, and the dirty flag is cleared
+    theirs = load_prefs(manager)
+    theirs["hidden"] = ["a:1"]
+    theirs["from_a_newer_version"] = {"kept": True}
+    save_prefs(manager, theirs)                          # the Worker hides a job in the meantime
+    proc.run_text("/jobs")                               # read-only: must not write the older copy back
+    stored = load_prefs(manager)
+    assert stored["hidden"] == ["a:1"] and stored["muted"] == ["leidos"] and stored["from_a_newer_version"] == {"kept": True}
+    assert "Nothing relevant" in replies.sent[-1]        # and it saw the Worker's write
+    proc.run_text("/mute esri")                          # a later write builds on the fresh copy and keeps the unknown key
+    stored = load_prefs(manager)
+    assert stored["hidden"] == ["a:1"] and stored["muted"] == ["leidos", "esri"] and stored["from_a_newer_version"] == {"kept": True}
+
+
+def test_a_message_left_in_the_inbox_for_days_is_not_run():
+    import json
+
+    proc, replies, _, manager = setup([])
+    store = manager.store
+    store.put_bytes(manager.key("inbox/000000000001.json"), json.dumps({"text": "/pause", "at": (NOW - timedelta(days=2)).isoformat()}).encode())
+    store.put_bytes(manager.key("inbox/000000000002.json"), json.dumps({"text": "/mute leidos", "at": (NOW - timedelta(minutes=2)).isoformat()}).encode())
+    counts = proc.run_inbox()
+    prefs = load_prefs(manager)
+    assert counts["expired"] == 1 and prefs["paused"] is False and prefs["muted"] == ["leidos"]
+    assert "I did not run a message" in replies.sent[0] and "/pause" in replies.sent[0]
+    assert store.list_keys(manager.key("inbox/")) == []
+
+
+def test_ask_answers_from_the_matches_and_flags_invented_codes():
+    from test_ai import ai_with
+
+    jobs = [job("a:1", "GIS Analyst", salary="EUR 52000", salary_eur=[52000, 52000], deadline="2026-09-30"),
+            job("a:2", "LiDAR Technician", company="ScanCo", score=71)]
+    one, two = job_code("a:1"), job_code("a:2")
+    proc, replies, _, _ = setup([], jobs)
+    proc.ai, session = ai_with([f"[{one}] pays best (about EUR 52000) and closes on 30 September. [{two}] states no salary. [fffff] is <great>."])
+    proc.run_text(f"compare {one} and {two}")
+    answer = replies.sent[-1]
+    assert answer.startswith("↪ <i>/ask") and f"<code>{one}</code> pays best" in answer and "&lt;great&gt;" in answer
+    assert "cites codes I do not have (fffff)" in answer and "From the 2 best current matches" in answer
+    prompt = session.calls[0][2]["messages"][0]["content"]
+    assert f"{one} | 80 | high | GIS Analyst" in prompt and "closes 2026-09-30" in prompt and "EUR 52000" in prompt
+    proc.ai = None
+    proc.run_text("/ask which pay best?")
+    assert "CLOUDFLARE_AI_TOKEN" in replies.sent[-1]
+    proc.run_text("/ask")
+    assert "Usage: /ask" in replies.sent[-1]

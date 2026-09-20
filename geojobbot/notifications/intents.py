@@ -7,6 +7,12 @@ interpret("lidar jobs in montreal")           -> ("search", "lidar montreal")
 
 Deterministic rules only: intent keywords are matched on an accent-folded, typo-corrected copy of the
 message, while free-text arguments (a company to mute, search words) are taken from the original words.
+
+Two safeguards keep a sentence from changing something the user never asked to change:
+* typo repair opens views, never writes: "is a3f9c remote?" must not become "remove a3f9c". Anything that records an
+  application, hides, mutes, pauses or changes a setting is matched on the words as typed;
+* a question is never a write: "should I apply to a3f9c?", "does a3f9c offer sponsorship" explain the job instead.
+  A polite request ("can you hide a3f9c?") is not a question.
 """
 from __future__ import annotations
 
@@ -61,6 +67,26 @@ BELOW_RE = re.compile(r"\b(?:below|under|at most|maximum|max|less than|lower tha
 SCORE_WORDS_RE = re.compile(r"\b(?:threshold|seuil|scores?|scored|scoring|rated|rating|points?|range|percent|%|notes?)\b")
 
 
+INTERROGATIVES = {"is", "are", "was", "does", "do", "did", "should", "shall", "what", "whats", "which", "who", "where", "when",
+                  "why", "how", "has", "have", "will", "would", "could", "can", "may", "any", "est", "est-ce", "quel", "quelle", "quels",
+                  "quelles", "pourquoi", "comment", "combien", "ou", "qui", "dois-je", "puis-je", "faut-il", "y"}
+POLITE_RE = re.compile(r"^(?:please\b|pls\b|(?:can|could|would|will) you\b|(?:peux|pourrais|veux)[ -]tu\b|"
+                       r"(?:pouvez|pourriez|voulez)[ -]vous\b|merci de\b|svp\b|stp\b)")
+# Questions that need reading across jobs rather than a list: they go to /ask (answered from the matches, codes cited).
+ANALYTIC_RE = re.compile(r"\b(compare\w*|comparer|versus|vs|which (?:one|of)|better|worth|recommend\w*|should i|pays? (?:more|most|best|over)|"
+                         r"highest (?:pay|salary)|best paid|closing|closes?|deadlines?|this week|cette semaine|lequel|laquelle|lesquels|"
+                         r"vaut|conseille\w*|mieux|realistic|chances?)\b")
+
+
+def is_question(text: str) -> bool:
+    """A real question, which must never change anything. "Can you hide a3f9c?" is a request, not a question."""
+    folded = fold(text).strip()
+    if not folded or POLITE_RE.search(folded):
+        return False
+    first = re.split(r"[\s']+", folded, maxsplit=1)[0]
+    return text.strip().endswith("?") or first in INTERROGATIVES
+
+
 def _tokens(text: str) -> tuple[list[str], list[str]]:
     """Return (original tokens, intent tokens): same length, the second folded and typo-corrected."""
     cleaned = re.sub(r"[“”\"`´«»!?;()\[\]{}]", " ", text.replace("’", "'"))
@@ -113,11 +139,18 @@ def interpret(text: str, is_code: Callable[[str], bool] = lambda token: False) -
     """Map a free-text message to (command, argument). Always returns something: search is the fallback."""
     original, fixed = _tokens(text)
     t = " ".join(fixed)
-    codes = [tok for tok in fixed if re.fullmatch(r"[0-9a-f]{5}", tok) and is_code(tok)]
+    typed = " ".join(fold(tok.strip(",")) for tok in original)  # as typed: the only text a write is ever read from
+    question = is_question(text)
+    codes = list(dict.fromkeys(tok for tok in fixed if re.fullmatch(r"[0-9a-f]{5}", tok) and is_code(tok)))
     code = codes[0] if codes else ""
 
     if not fixed:
         return "help", ""
+    # "ask which of these pay over 50k", a comparison of two jobs, or a question that needs reading across the matches
+    if fixed[0] in ("ask", "demande", "question") and len(fixed) > 1:
+        return "ask", " ".join(original[1:]).strip(" :,")
+    if len(codes) >= 2 and (question or _has(t, r"\b(compare\w*|comparer|versus|vs|or|ou|better|mieux)\b")):
+        return "ask", " ".join(original)
     # "ai summary", "what does the AI think of the top 5", "second opinion": before help/weekly, which share words
     if not code and (_has(t, r"\b(ai|ia|a\.i\.?|artificial intelligence|second opinion|deuxieme avis|avis de l ia)\b")
                      or _has(t, r"\b(fit|fits)\b.*\b(me|best|profile)\b")):
@@ -149,9 +182,9 @@ def interpret(text: str, is_code: Callable[[str], bool] = lambda token: False) -
                         r"which|quelles?|meilleures?|utiles?|rendement)\b"):
             return "sources", ""
         if _has(t, r"\b(learn(?:ed|ing|t)?|appris|apprentissage)\b"):
-            if _has(t, r"\b(forget|reset|wipe|clear|oublie\w*|efface\w*)\b"):
+            if not question and _has(typed, r"\b(forget|reset|wipe|clear|oublie\w*|efface\w*)\b"):
                 return "learning", "reset"
-            if _has(t, r"\b(stop|off|disable|arrete\w*|desactive\w*)\b"):
+            if not question and _has(typed, r"\b(stop|off|disable|arrete\w*|desactive\w*)\b"):
                 return "learning", "off"
             return "learning", ""
 
@@ -168,8 +201,8 @@ def interpret(text: str, is_code: Callable[[str], bool] = lambda token: False) -
         return "visa", country or ""
 
     # which tiers are alerted: "only alert me on high matches", "also send possible matches"
-    if _has(t, r"\b(alert\w*|notif\w*|send\w*|envoie\w*|envoy\w*|previens)\b") and \
-            _has(t, r"\b(possible|possibles|high|hautes?|strong|best)\b") and _number(fixed, 1, 100) is None:
+    if not question and _has(typed, r"\b(alert\w*|notif\w*|send\w*|envoie\w*|envoy\w*|previens)\b") and \
+            _has(typed, r"\b(possible|possibles|high|hautes?|strong|best)\b") and _number(fixed, 1, 100) is None:
         if _has(t, r"\b(only|just|seulement|uniquement|que)\b.*\b(high|hautes?|strong|best)\b") or \
                 _has(t, r"\b(no|not|without|stop|sans|pas)\b.*\bpossibles?\b"):
             return "possible", "off"
@@ -177,33 +210,42 @@ def interpret(text: str, is_code: Callable[[str], bool] = lambda token: False) -
             return "possible", "on"
 
     # internships on/off
-    if _has(t, r"\b(intern|interns|internships?|stages?|stagiaires?|trainees?|alternances?)\b"):
+    if not question and _has(typed, r"\b(intern|interns|internships?|stages?|stagiaires?|trainees?|alternances?)\b"):
         if _has(t, r"\b(exclude|excluding|without|no|hide|disable|remove|skip|stop|sans|exclu\w*|enleve\w*|retire\w*|off|non|pas)\b"):
             return "interns", "off"
         if _has(t, r"\b(include|including|with|show|allow|enable|add|avec|inclu\w*|ajoute\w*|accepte\w*|on|oui)\b"):
             return "interns", "on"
 
     # things that need a job code
+    if code and question:  # "is a3f9c remote?", "should I apply to a3f9c?", "does a3f9c offer sponsorship": explain, change nothing
+        if _has(t, r"\b(visas?|work permits?|permis de travail)\b"):
+            return "visa", code
+        return "why", code
     if code:
-        if _has(t, r"\b(unhide|restore|bring back|reaffiche\w*|remets?)\b"):
+        if _has(typed, r"\b(unhide|restore|bring back|reaffiche\w*|remets?)\b"):
             return "unhide", code
         if _has(t, r"\b(prep|prepare\w*|preparation|rehearse|practice|interview questions?)\b"):  # "prepare me for the interview a3f9c"
             return "prep", code
         if _has(t, r"\b(pitch|draft|cover ?letter|letter|motivation|lettre|write|redige\w*|ecris)\b"):
             return "pitch", code
         # what happened to an application: "got an interview for a3f9c", "they rejected me a3f9c", "offer a3f9c"
+        # an offer is something the user received ("got an offer for a3f9c", "offer a3f9c"), never something a posting
+        # offers ("a3f9c offer looks good", "a3f9c offers relocation")
+        bare = [f for f in fixed if f != code] if len(fixed) == 2 else []  # "offer a3f9c", "apply a3f9c": a terse order
+        got_offer = bare in (["offer"], ["offre"]) or _has(typed, r"\b(got|received|have|accepted|made me|gave me|recu|j ai)\b.*\b(offer|offre)\b")
         for status, pattern in (("interview", r"\b(interview\w*|entretien\w*|call back|screening|phone screen)\b"),
-                                ("offer", r"\b(offer|offered|offre d emploi|proposition|hired|embauche\w*|got the job)\b"),
+                                ("offer", r"\b(offered me|offre d emploi|hired|embauche\w*|got the job)\b" if not got_offer else r"\b(offer|offre)\b"),
                                 ("rejected", r"\b(reject\w*|declined|turned down|refus\w*|not selected|no luck|unsuccessful)\b"),
                                 ("ghosted", r"\b(ghost\w*|no (?:reply|answer|response|news)|never (?:replied|answered)|"
                                             r"pas de (?:reponse|nouvelles?)|sans reponse)\b"),
                                 ("withdrawn", r"\b(withdr[ae]w\w*|pulled out|retire ma candidature|changed my mind)\b")):
-            if _has(t, pattern):
+            if _has(typed, pattern):
                 return "outcome", f"{code} {status}"
-        if _has(t, r"\b(appl(?:y|ied|ying|ication)|postule\w*|candidat\w*|sent my cv|envoye\w*)\b"):
+        # "applied to a3f9c", "j'ai postulé", the bare "apply a3f9c"; not "I want to apply to a3f9c" (that is still to come)
+        if _has(typed, r"\b(applied|postule|candidate|sent my cv|envoye\w*|mark\w*)\b") or bare in (["apply"], ["application"], ["postuler"]):
             return "applied", code
-        if _has(t, r"\b(hide|remove|dismiss|discard|drop|delete|skip|not interested|pas interesse\w*|cache\w*|supprime\w*|"
-                   r"enleve\w*|retire\w*|ignore)\b"):
+        if _has(typed, r"\b(hide|remove|dismiss|discard|drop|delete|skip|not interested|pas interesse\w*|cache\w*|supprime\w*|"
+                       r"enleve\w*|retire\w*|ignore)\b"):
             return "hide", code
         return "why", code  # "why a3f9c", "explain a3f9c", "tell me about a3f9c" or the bare code
     if _has(t, r"\b(applications?|candidatures?|applied|apply|applying|postule\w*)\b"):
@@ -229,17 +271,36 @@ def interpret(text: str, is_code: Callable[[str], bool] = lambda token: False) -
         if below and int(below.group(1)) <= 100 and (SCORE_WORDS_RE.search(t) or int(below.group(1)) >= 41):
             return "range", f"0 {int(below.group(1))}"
     if _has(t, r"\b(threshold|seuil|cut ?off|minimum score|score minimum)\b"):
-        numbers = [tok for tok in re.findall(r"\d{1,3}", t) if 0 < int(tok) <= 100]
-        return "threshold", " ".join(numbers[:2])  # no number -> the command answers with the current values
+        numbers = [tok for tok in re.findall(r"(?<![\d.,])\d{1,3}(?![\d.,]*\d)", t) if 0 < int(tok) <= 100]
+        return "threshold", "" if question else " ".join(numbers[:2])  # no number -> the command shows the current values
+
+    # From here on, everything changes something: a question changes nothing. It is answered from the matches (/ask) when
+    # it needs reading across them, and otherwise falls through to the list and search rules at the end.
+    if question and not code and ANALYTIC_RE.search(t):
+        return "ask", " ".join(original)
+    if question:
+        if _has(t, r"\b(muted|mutes|mute)\b"):
+            return "muted", ""
+        if _has(t, r"\b(prospects?|sponsoring employers?)\b"):
+            return "prospects", ""
+        if _has(t, r"\b(watch\w*|follow\w*|surveill\w*)\b"):
+            return "watch", ""
+        return _list_or_search(original, fixed, t)
 
     # pause / resume / run
-    if _has(t, r"\b(pause|quiet|shut up|tais|silence)\b") or fixed == ["stop"] or \
-            _has(t, r"\b(stop|arrete\w*|suspend\w*|halt|hold)\b.*\b(alerts?|alertes?|notifications?|notifs?|messages?|sending|"
-                    r"bot|envoi\w*|everything|tout)\b"):
-        return "pause", ""
+    pause_words = {"stop", "arrete", "arreter", "suspend", "suspends", "halt", "hold", "pause", "quiet", "shut", "up", "tais", "toi",
+                   "silence", "alert", "alerts", "alerte", "alertes", "notification", "notifications", "notifs", "message", "messages",
+                   "sending", "send", "bot", "envoi", "envois", "everything", "tout"}
+    if _has(typed, r"\b(pause|quiet|shut up|tais|silence)\b") or fixed == ["stop"] or \
+            _has(typed, r"\b(stop|arrete\w*|suspend\w*|halt|hold)\b.*\b(alerts?|alertes?|notifications?|notifs?|messages?|sending|"
+                        r"bot|envoi\w*|everything|tout)\b"):
+        about = _content(original, [fold(o.strip(",")) for o in original], pause_words)
+        if not about:
+            return "pause", ""
+        return "mute", about  # "stop sending me US jobs" silences those jobs, not the whole bot
     # watch list: "watch fugro", "follow esri closely", "surveille hexagon", "stop watching fugro", "who am i watching"
     watch_words = {"watch", "watching", "follow", "following", "track", "surveille", "surveiller", "suivre"}
-    if not code and any(f in watch_words for f in fixed) and not _has(t, r"\b(jobs?|offers?|offres?|applications?)\b"):
+    if not code and any(f in watch_words for f in typed.split()) and not _has(t, r"\b(jobs?|offers?|offres?|applications?)\b"):
         target = _after(original, fixed, watch_words | {"unwatch", "stop"},
                         {"the", "company", "employer", "entreprise", "closely", "on", "de", "la", "le", "am", "i", "who", "list"})
         target = re.sub(r"\s+(closely|please|pls|svp|stp)$", "", target, flags=re.I)
@@ -250,34 +311,46 @@ def interpret(text: str, is_code: Callable[[str], bool] = lambda token: False) -
         return "unwatch", _after(original, fixed, {"unwatch", "unfollow"}, {"the", "company"})
     if _has(t, r"\b(prospects?|employers? (?:you )?(?:found|looked|went)|sponsoring employers?)\b"):
         return "prospects", ""
-    if _has(t, r"\b(unmuted?|reactive\w*)\b") or _has(t, r"\bshow\b.*\bagain\b"):
+    if _has(typed, r"\b(unmuted?|reactive\w*)\b") or _has(typed, r"\bshow\b.*\bagain\b"):
         return "unmute", _after(original, fixed, {"unmute", "unmuted", "show", "reactive", "reactiver"}, {"again"}).replace(" again", "")
     if _has(t, r"\b(muted|mutes)\b") or _has(t, r"\bwhat\b.*\bmute"):
         return "muted", ""
     mute_words = {"mute", "block", "ignore", "bloque", "bloquer", "silence", "exclude", "exclus", "exclure"}
-    if any(f in mute_words for f in fixed) or _has(t, r"\b(stop showing|no more|do not show|don't show|dont show|"
-                                                      r"ne (?:plus )?montre\w*(?: plus| pas)?|plus d[e']? ?offres? de)\b"):
+    if any(f in mute_words for f in typed.split()) or _has(typed, r"\b(stop showing|no more|do not show|don't show|dont show|"
+                                                                   r"ne (?:plus )?montre\w*(?: plus| pas)?|plus d[e']? ?offres? de)\b"):
         target = _after(original, fixed, mute_words | {"showing", "more", "show", "montre", "montrer", "plus", "de"},
                         {"jobs", "offers", "offres", "from", "at", "by", "de", "chez", "company", "entreprise", "the"})
         return "mute", target
-    if _has(t, r"\b(resume|unpause|continue|restart|reprends?|reprendre|relance\w*|reactive\w*|wake up|go on|start again)\b"):
+    # "resume" is also a CV, "continue" and "restart" are ordinary words: they release the alerts only as a short order
+    # or next to what is released ("resume alerts"). "Here is my resume" changes nothing.
+    alerts_word = _has(typed, r"\b(alerts?|alertes?|notifications?|notifs?|messages?|sending|bot|envois?)\b")
+    if _has(typed, r"\b(unpause|reprends?|reprendre|relance\w*|reactive\w*|wake up|go on|start again)\b") or \
+            (_has(typed, r"\b(resume|continue|restart)\b") and (len([f for f in fixed if f not in FILLER]) <= 1 or alerts_word) and not _has(typed, r"\b(my|mon|cv)\b")):
         return "resume", ""
-    if _has(t, r"\b(run|scan|refresh|crawl|check|search|update|lance\w*|actualise\w*|cherche)\b.*\b(now|again|maintenant|"
-               r"tout de suite|right away)\b") or _has(t, r"\b(start|launch|trigger|do|lance\w*)\s+(a |an |une |un )?(new )?"
-                                                          r"(run|scan|search|crawl|recherche)\b"):
-        return "run", ""
+    run_words = {"run", "scan", "refresh", "crawl", "check", "search", "update", "lance", "lancer", "actualise", "cherche", "now", "again",
+                 "maintenant", "tout", "suite", "right", "away", "start", "launch", "trigger", "do", "new", "recherche", "une", "un"}
+    if _has(typed, r"\b(run|scan|refresh|crawl|check|search|update|lance\w*|actualise\w*|cherche)\b.*\b(now|again|maintenant|"
+                   r"tout de suite|right away)\b") or _has(typed, r"\b(start|launch|trigger|do|lance\w*)\s+(a |an |une |un )?(new )?"
+                                                                  r"(run|scan|search|crawl|recherche)\b"):
+        if not _content(original, [fold(o.strip(",")) for o in original], run_words):
+            return "run", ""  # "check lidar jobs now" is a search, not a 45-minute run
 
     # preferred locations
     place_word = _has(t, r"\b(locations?|countr(?:y|ies)|pays|lieux?|places?|regions?)\b")
     if place_word and _has(t, r"\b(reset|default|clear|anywhere|partout|reinitialise\w*)\b"):
         return "locations", "reset"
-    if (setting and place_word) or _has(t, r"\bprefer\w*\b"):
+    # "I prefer remote jobs" is a wish about the work mode, not a list of countries
+    if (setting and place_word) or (_has(typed, r"\bprefer\w*\b") and not _has(typed, r"\b(remote|remotely|hybrid|onsite|on-site|teletravail|full|part|time|temps)\b")):
         target = _after(original, fixed, {"locations", "location", "countries", "country", "pays", "lieux", "places",
                                           "prefer", "preferred", "prefere"}, {"to", "as", "are", "is", "a", ":"})
         return "locations", ", ".join(p.strip() for p in re.split(r",| and | et |/", target) if p.strip())
 
-    # listing versus searching
-    drop = {"high", "haute", "hautes", "strong", "excellent", "tier"}
+    return _list_or_search(original, fixed, t)
+
+
+def _list_or_search(original: list[str], fixed: list[str], t: str) -> tuple[str, str]:
+    """The read-only ending of every sentence: a list of matches, or a search for the words that carry meaning."""
+    drop = {"high", "haute", "hautes", "strong", "excellent", "tier", "prefer", "prefere", "preferred"}
     content = _content(original, fixed, drop)
     wants_list = _has(t, r"\b(top|best|latest|newest|recent|new|current|meilleure?s?|dernier\w*|nouve\w*|show|give|send|"
                          r"list|want|need|montre\w*|donne\w*|envoie\w*|affiche\w*|veux|voudrais|iwant|select|display)\b") or \

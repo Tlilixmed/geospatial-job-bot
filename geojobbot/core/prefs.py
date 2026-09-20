@@ -32,8 +32,11 @@ def default_prefs() -> dict:
 def load_prefs(manager) -> dict:
     prefs = default_prefs()
     stored = manager.read_json(PREFS_SUFFIX)
-    if isinstance(stored, dict):
-        prefs.update({k: v for k, v in stored.items() if k in prefs})
+    if isinstance(stored, dict):  # keys this version does not know (the Worker or a newer version wrote them) are kept
+        prefs.update({k: v for k, v in stored.items() if v is not None or k not in prefs})
+    for key, kind in (("muted", list), ("hidden", list), ("watch", list), ("applied", dict), ("hidden_info", dict)):
+        if not isinstance(prefs.get(key), kind):
+            prefs[key] = kind()
     return prefs
 
 

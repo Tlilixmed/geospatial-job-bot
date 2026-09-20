@@ -45,7 +45,7 @@ from ..storage.state import ConcurrentModificationError, StateCorruptError, Stat
 from ..utils.dates import parse_datetime, to_iso, utcnow
 from ..utils.http import HttpClient
 from ..utils.robots import RobotsCache
-from ..utils.text import fold, job_code
+from ..utils.text import job_code
 from .boards import BoardRegistry
 from .descriptions import DescriptionStore
 from .fusion import fuse
@@ -53,7 +53,7 @@ from .health import format_health, health_messages
 from .index import SUFFIX as INDEX_SUFFIX
 from .index import build_index
 from .jobs import (AI_LIFT_MIN_FIT, AI_VETO_MAX_FIT, SCORER_VERSION, alert_block_reason, apply_ai_lift, apply_ai_veto, due_follow_ups, held_back_by_visa,
-                   is_listed, mark_failed, mark_notified, near_miss, process_fused, prune_state, rescore_stored, select_alerts)
+                   is_listed, is_muted, mark_failed, mark_notified, near_miss, process_fused, prune_state, rescore_stored, select_alerts)
 from .prefs import apply_prefs, load_prefs
 from .report import build_markdown, build_summary, diagnostics_rows
 
@@ -588,12 +588,10 @@ class Pipeline:
             return 0
         try:
             prefs = load_prefs(manager)
-            muted = [fold(t) for t in prefs.get("muted") or [] if t.strip()]
+            muted = prefs.get("muted") or []
 
             def is_open(rec):
-                label = fold(f"{rec.get('title') or ''} {rec.get('company') or ''}")
-                return (alert_block_reason(rec, self.settings, self.now) is None and is_listed(rec, self.now)
-                        and not any(term in label for term in muted))
+                return alert_block_reason(rec, self.settings, self.now) is None and is_listed(rec, self.now) and not is_muted(rec, muted)
 
             due = timing.due_reminders(state, prefs, self.now, is_open)
             text = timing.format_reminders(due, self.now, lambda rec: job_code(rec.get("canonical_id")))

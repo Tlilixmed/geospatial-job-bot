@@ -335,3 +335,116 @@ test("email replies are matched to applications, classified and recorded", async
   assert.match(h.sent.at(-1).text, /an acknowledgement.*probably about/);
   assert.equal(h.stored("state/prefs.json").applied["gh:acme:1"].status, "rejected");  // an acknowledgement changes nothing
 });
+
+// ---------------------------------------------------------------------------- review round (docs/REVIEW.md F58-F67)
+test("muting matches whole words: US does not silence Industry", async () => {
+  const jobs = [job("gh:acme:1", { c: "Geo Industry Partners" }), job("gh:acme:2", { t: "GIS Analyst (US)", c: "Other" })];
+  const h = harness({ index: makeIndex(jobs), prefs: { muted: ["US"] } });
+  await h.say("/jobs");
+  assert.match(h.sent[0].text, /Top 1 of 1 current matches/);
+  assert.match(h.sent[0].text, /Geo Industry Partners/);
+});
+
+test("saying /applied twice keeps the recorded outcome, and unknown codes go to Python", async () => {
+  const h = harness({ index: makeIndex([job("gh:acme:1")]) });
+  await h.say("/applied 419b7");
+  await h.say("/outcome 419b7 interview");
+  await h.say("/applied 419b7");
+  assert.match(h.sent.at(-1).text, /Already recorded: <b>GIS Analyst<\/b> · interview/);
+  assert.equal(h.stored("state/prefs.json").applied["gh:acme:1"].status, "interview");
+  const before = h.dispatched.length;
+  await h.say("/why 0abcd");  // not in the index (an older job): the full state is Python's
+  assert.equal(h.dispatched.length, before + 1);
+  await h.say("/outcome constructor 419b7");  // a prototype key is not a status
+  assert.match(h.sent.at(-1).text, /Usage: \/outcome/);
+});
+
+test("a decimal threshold is one number, and an edited message never writes", async () => {
+  const h = harness({ index: makeIndex([job("gh:acme:1")]) });
+  await h.say("/threshold 75.5");
+  let prefs = h.stored("state/prefs.json");
+  assert.equal(prefs.high_threshold, 76);
+  assert.equal(prefs.medium_threshold, 55);
+  const edited = async (text) => {
+    const pending = [];
+    await worker.fetch(new Request("https://worker.example/", { method: "POST", headers: { "X-Telegram-Bot-Api-Secret-Token": "s3cret" },
+      body: JSON.stringify({ update_id: 900, edited_message: { text, chat: { id: 42, type: "private" }, from: { id: 42, is_bot: false } } }) }),
+    h.env, { waitUntil: (p) => pending.push(p) });
+    await Promise.all(pending);
+  };
+  await edited("/hide 419b7");
+  assert.match(h.sent.at(-1).text, /edited messages are not run again/);
+  assert.deepEqual(h.stored("state/prefs.json").hidden, []);
+  const dispatchedBefore = h.dispatched.length;
+  await edited("/run");
+  assert.equal(h.dispatched.length, dispatchedBefore);
+  await edited("/jobs");
+  assert.match(h.sent.at(-1).text, /Top 1 of 1 current matches/);  // a view may be opened again
+});
+
+test("preferences are never written blind: unreadable file, and a write that lost a race", async () => {
+  const h = harness({ index: makeIndex([job("gh:acme:1")]), prefs: { applied: { x: { title: "Kept" } } } });
+  h.objects.set("state/prefs.json", "{ not json");
+  await h.say("/pause");
+  assert.match(h.sent.at(-1).text, /could not be read, so nothing was changed/);
+  assert.equal(h.objects.get("state/prefs.json"), "{ not json");
+  // conditional put: the first attempt loses against a write from the Python side, the second is made on the fresh copy
+  h.objects.set("state/prefs.json", JSON.stringify({ muted: [], hidden: [], applied: {} }));
+  let version = 1;
+  let refused = 0;
+  h.env.INBOX.get = async (key) => (h.objects.has(key) ? { etag: `v${version}`, json: async () => JSON.parse(h.objects.get(key)) } : null);
+  h.env.INBOX.put = async (key, value, options) => {
+    if (key === "state/prefs.json" && refused === 0) {  // Python wrote /watch in between
+      refused += 1; version += 1;
+      h.objects.set(key, JSON.stringify({ muted: [], hidden: [], applied: {}, watch: [{ name: "Fugro" }] }));
+      assert.deepEqual(options.onlyIf, { etagMatches: "v1" });
+      return null;
+    }
+    h.objects.set(key, value); return {};
+  };
+  await h.say("/mute leidos");
+  const prefs = h.stored("state/prefs.json");
+  assert.deepEqual(prefs.muted, ["leidos"]);
+  assert.deepEqual(prefs.watch, [{ name: "Fugro" }]);  // the other side's write survived
+});
+
+test("long replies are cut between blocks, never through a tag", async () => {
+  const many = Array.from({ length: 60 }, (_, i) => job(`gh:bulk:${i}`, { code: `c${String(i).padStart(4, "0")}`, t: `GIS Analyst ${i}`, c: `Firm ${i}`,
+    ai: { fit: 7, summary: "A long summary of the role and why it fits the candidate rather well. ".repeat(3) } }));
+  const h = harness({ index: makeIndex(many) });
+  await h.say("/ai 25");
+  assert.ok(h.sent.length >= 2);
+  for (const message of h.sent) {
+    assert.ok(message.text.length <= 4096);
+    assert.equal((message.text.match(/<a /g) || []).length, (message.text.match(/<\/a>/g) || []).length);
+    assert.equal(message.parse_mode, "HTML");
+  }
+});
+
+test("mail: newsletters, acknowledgements that mention interviews, and outcomes already recorded", async () => {
+  const applied = { "gh:acme:1": { title: "GIS Analyst", company: "Acme Geospatial Ltd", at: iso(100), status: "offer" },
+    "lever:old:9": { title: "Cartographer", company: "MapCo", at: iso(200), status: "applied" } };
+  const h = harness({ index: makeIndex([]), prefs: { applied } });
+  const run = async (m) => { const pending = []; await worker.email(m, h.env, { waitUntil: (p) => pending.push(p) }); await Promise.all(pending); };
+  // an offer on record is not overwritten by a later mail that reads like a rejection
+  await run(mail({ from: "talent@acmegeospatial.com", subject: "Update", body: "Unfortunately the other position has been filled." }));
+  assert.equal(h.stored("state/prefs.json").applied["gh:acme:1"].status, "offer");
+  assert.match(h.sent.at(-1).text, /Not recorded \(it is already 'offer'\)/);
+  // "if selected for an interview" in an acknowledgement is not an invitation
+  await run(mail({ from: "hr@mapco.example", subject: "Thank you for applying", body: "We have received your application. If you are selected for an interview we will contact you." }));
+  assert.equal(h.stored("state/prefs.json").applied["lever:old:9"].status, "applied");
+  assert.match(h.sent.at(-1).text, /an acknowledgement/);
+  // a newsletter that only names the employer is a weak link: reported, not recorded
+  const news = mail({ from: "digest@jobboard.example", subject: "This week", body: "MapCo and others: unfortunately many roles closed. Other candidates were faster." });
+  await run(news);
+  assert.equal(h.stored("state/prefs.json").applied["lever:old:9"].status, "applied");
+  assert.match(h.sent.at(-1).text, /Not recorded \(the link to that application is weak\)/);
+  // nested multipart (mixed > alternative) is read
+  const b = "outer", inner = "inner";
+  const raw = ["From: hr@mapco.example", "Subject: Cartographer", `Content-Type: multipart/mixed; boundary="${b}"`, "", `--${b}`,
+    `Content-Type: multipart/alternative; boundary="${inner}"`, "", `--${inner}`, "Content-Type: text/plain; charset=utf-8", "",
+    "We would like to invite you to an interview. What is your availability for a call?", `--${inner}--`, `--${b}`,
+    "Content-Type: application/pdf", "Content-Transfer-Encoding: base64", "", "JVBERi0=", `--${b}--`, ""].join("\r\n");
+  await run({ from: "hr@mapco.example", headers: new Map([["subject", "Cartographer"]]), raw: new Response(raw).body });
+  assert.equal(h.stored("state/prefs.json").applied["lever:old:9"].status, "interview");
+});

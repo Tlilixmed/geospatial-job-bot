@@ -7,6 +7,7 @@
 """
 from __future__ import annotations
 
+import re
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import timedelta
@@ -14,7 +15,6 @@ from datetime import timedelta
 from ..matching.matcher import MatchResult, score_job
 from ..models import TIER_HIGH, TIER_POSSIBLE, TIER_REJECTED, JobRecord
 from ..utils.dates import age_hours, parse_datetime, to_iso
-from ..insights.sponsors import retier
 from ..insights.timing import deadline_passed
 from ..utils.text import fold, normalize_company, normalize_title
 from .fusion import FusedJob
@@ -236,15 +236,27 @@ LISTED_DAYS_PAGES = 35     # pages and sitemaps: a cached page is not fetched ag
 PAGE_METHODS = {"jsonld", "html", "embedded_json"}  # read from a fetched page, not from a feed or an API
 
 
+def listed_days(rec: dict) -> int:
+    """How long after it was last seen a posting still counts as open (the Worker reads this as `ttl` in the index)."""
+    sources = rec.get("sources") or []
+    from_pages = bool(sources) and all((s.get("method") or "") in PAGE_METHODS or s.get("source_type") == "employer_page" for s in sources)
+    return LISTED_DAYS_PAGES if from_pages else LISTED_DAYS_ROTATION if rec.get("from_rotation") else LISTED_DAYS
+
+
 def is_listed(rec: dict, now) -> bool:
     """Was the posting still seen recently? Used for lists and summaries shown after the alert went out."""
     seen = parse_datetime(rec.get("last_seen"))
-    if seen is None:
-        return True
-    sources = rec.get("sources") or []
-    from_pages = bool(sources) and all((s.get("method") or "") in PAGE_METHODS or s.get("source_type") == "employer_page" for s in sources)
-    days = LISTED_DAYS_PAGES if from_pages else LISTED_DAYS_ROTATION if rec.get("from_rotation") else LISTED_DAYS
-    return now - seen <= timedelta(days=days)
+    return seen is None or now - seen <= timedelta(days=listed_days(rec))
+
+
+def is_muted(rec: dict, terms) -> bool:
+    """Whole words of "title company": muting "US" must not silence "Industry" (cloudflare/worker.js mutedBy is the same rule)."""
+    haystack = fold(f"{rec.get('title') or ''} {rec.get('company') or ''}")
+    for term in terms or []:
+        wanted = fold(term)
+        if wanted and re.search(r"(?<![a-z0-9])" + re.escape(wanted) + r"(?![a-z0-9])", haystack):
+            return True
+    return False
 
 
 # ---------------------------------------------------------------------------- applications (stored in prefs)
@@ -289,7 +301,7 @@ def select_alerts(state: dict, seen_ids: set, settings, now) -> tuple[list[dict]
     candidates = []
     accepted = {TIER_HIGH, TIER_POSSIBLE} if settings.notify_possible else {TIER_HIGH}
     hidden = set(getattr(settings, "hidden_ids", None) or [])
-    muted = [fold(t) for t in (getattr(settings, "muted_terms", None) or []) if t and t.strip()]
+    muted = [t for t in (getattr(settings, "muted_terms", None) or []) if t and t.strip()]
     # Not only this run's jobs: a match held back by the cap, by /pause or by a failed send may sit on a source that is
     # read once a week. Anything accepted, never notified, still listed and found within the alert age is a candidate.
     young = now - timedelta(hours=settings.max_job_age_hours)
@@ -311,7 +323,7 @@ def select_alerts(state: dict, seen_ids: set, settings, now) -> tuple[list[dict]
         if cid in hidden:
             counts["hidden"] += 1
             continue
-        if muted and any(term in fold(f"{rec.get('title') or ''} {rec.get('company') or ''}") for term in muted):
+        if is_muted(rec, muted):
             counts["muted"] += 1
             continue
         if rec.get("notified") and not rec.get("pending_update_alert"):

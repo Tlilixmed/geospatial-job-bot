@@ -156,7 +156,7 @@ Findings are numbered `F1, F2…` and carry their evidence, so a fix can be trac
 - **F39 · alerts only selected from jobs seen this run: a job deferred by the cap, /pause or a failed send on a slow-rotation source was never alerted · [fixed]**
 - **F40 · `_recheck_sponsorship` withdrew the claim but left its score effect; skipped jobs observed but not rescored · [fixed]**
 - **F41 · AI review ignored the time budget and ran before the checkpoint save (a kill loses the run) · [fixed]**
-- **F42 · a transient read error wiped the description store; the same shape for prefs · [fixed for descriptions; prefs with F58]**
+- **F42 · a transient read error wiped the description store; the same shape for prefs · [fixed]**
 - **F43 · eviction order bugs: Bundesagentur `german_refs` and signals `seen` trimmed by sort order / set order, not age; board registration O(n²) · [fixed]**
 - **F44 · `/pause`, `/mute`, `/hide`, `/applied` sent during a run were ignored by that run's digest · [fixed]**
 
@@ -187,16 +187,26 @@ just before the digest. Descriptions follow an edited posting, survive a failed 
 
 ### Telegram, Worker, index (`notifications/`, `cloudflare/worker.js`, `core/index.py`)
 
-- **F58 · prefs.json lost updates: Python's `_dirty` flag never reset, so a later read-only command re-saved a stale copy over the Worker's writes; no conditional put on either side · [ ]**
-- **F59 · plain-language rules turned questions into writes: the typo corrector rewrote real words ("remote"→"remove": "is a3f9c remote?" hid the job); "does a3f9c offer sponsorship" recorded an offer; "should I apply to a3f9c?" recorded an application; "my resume" un-paused alerts; "I prefer remote jobs" replaced preferred locations; "no more US jobs" muted 37 of 160 matches; "stop sending me US jobs" paused everything; "check lidar jobs now" started a 45-minute run · [ ]**
-- **F60 · muting was a substring match ("US" silenced "Industry") · [ ]**
-- **F61 · email handler: a newsletter mentioning an employer overwrote an "offer" with "rejected"; an acknowledgement mentioning "interview" recorded an interview; nested MIME bodies never read; no limits · [ ]**
-- **F62 · `/outcome [code]` with brackets re-created the application (Python); `/applied` on an existing application reset it (both); edited Telegram messages re-executed writes (Worker) · [ ]**
-- **F63 · the index kept stale accepted jobs and cut fresh ones at 900; unknown codes answered "Usage" instead of handing over to Python · [ ]**
-- **F64 · long replies cut through the HTML: Python lost the reply entirely (no plain-text retry), the Worker truncated silently · [ ]**
-- **F65 · `/threshold 75.5` stored Possible ≥ 5 in the Worker; `/range` parity; a message left in the inbox after a failed dispatch executed days later · [ ]**
-- **F66 · dashboard: malformed percent-encoding in the key threw (HTTP 500 reveals the dashboard is on); view anchors not restricted to http(s); `/outcome code constructor` accepted a prototype key · [ ]**
-- **F67 · Worker `/why` lacked the deadline/repost/skills line; tie order, signals selection and snapshot sizes differed slightly between the two sides · [ ]**
+- **F58 · prefs.json lost updates: Python's `_dirty` flag never reset, so a later read-only command re-saved a stale copy over the Worker's writes; no conditional put on either side · [fixed]**
+- **F59 · plain-language rules turned questions into writes: the typo corrector rewrote real words ("remote"→"remove": "is a3f9c remote?" hid the job); "does a3f9c offer sponsorship" recorded an offer; "should I apply to a3f9c?" recorded an application; "my resume" un-paused alerts; "I prefer remote jobs" replaced preferred locations; "no more US jobs" muted 37 of 160 matches; "stop sending me US jobs" paused everything; "check lidar jobs now" started a 45-minute run · [fixed]**
+- **F60 · muting was a substring match ("US" silenced "Industry") · [fixed]**
+- **F61 · email handler: a newsletter mentioning an employer overwrote an "offer" with "rejected"; an acknowledgement mentioning "interview" recorded an interview; nested MIME bodies never read; no limits · [fixed]**
+- **F62 · `/outcome [code]` with brackets re-created the application (Python); `/applied` on an existing application reset it (both); edited Telegram messages re-executed writes (Worker) · [fixed]**
+- **F63 · the index kept stale accepted jobs and cut fresh ones at 900; unknown codes answered "Usage" instead of handing over to Python · [fixed]**
+- **F64 · long replies cut through the HTML: Python lost the reply entirely (no plain-text retry), the Worker truncated silently · [fixed]**
+- **F65 · `/threshold 75.5` stored Possible ≥ 5 in the Worker; `/range` parity; a message left in the inbox after a failed dispatch executed days later · [fixed]**
+- **F66 · dashboard: malformed percent-encoding in the key threw (HTTP 500 reveals the dashboard is on); view anchors not restricted to http(s); `/outcome code constructor` accepted a prototype key · [fixed]**
+- **F67 · Worker `/why` lacked the deadline/repost/skills line; tie order, signals selection and snapshot sizes differed slightly between the two sides · [fixed]**
+
+**How the Telegram batch was fixed (F58–F67).** Free text: typo repair opens views but never writes (writes are matched on
+the words as typed), and a question never writes ("can you hide a3f9c?" is a request, not a question); "resume", "prefer",
+"stop sending me X jobs" and "check X jobs now" mean what they say. Preferences: the Worker writes with an R2 conditional
+put and retries once on the fresh copy, refuses to write when the stored file cannot be read, and Python re-reads before
+every message, saves right after the command and clears its dirty flag; both sides keep keys they do not know. Muting
+matches whole words on both sides. `/applied` twice keeps the recorded outcome; edited messages open views but never
+write or start a workflow; codes missing from the index go to Python; long replies are cut between blocks and a refused
+markup is sent again as plain text; mail is recorded only when it is clearly about that application, is not bulk mail,
+and the step follows from the status on record. `/ask` is wired on both sides.
 
 ### Opportunities recorded (not bugs)
 

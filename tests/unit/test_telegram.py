@@ -101,3 +101,22 @@ def test_digest_collapses_the_same_posting_and_covers_every_record():
     assert covered == recs and text.count("GIS Data Analyst") == 1 and "×2" in text
     assert "Montreal | Quebec" in text and "2. <b>LiDAR Technician</b>" in text and "3. <b>" not in text
     assert "3 new matches" in text  # the header still counts jobs, not lines
+
+
+def test_long_replies_are_split_between_blocks_and_bad_markup_is_sent_plain():
+    from geojobbot.notifications.telegram import split_message
+
+    blocks = [f'{i}. <a href="https://x.example/{i}">GIS Analyst {i}</a> — Firm {i}\n   ' + "detail " * 40 for i in range(40)]
+    parts = split_message("\n\n".join(blocks))
+    assert len(parts) > 1 and all(len(p) <= MAX_MESSAGE for p in parts)
+    assert all(p.count("<a ") == p.count("</a>") for p in parts)  # never cut through a tag
+    assert "\n\n".join(parts) == "\n\n".join(blocks)  # nothing lost
+    s = FakeSession({URL: [FakeResponse(200, {"ok": True})] * len(parts)})
+    assert TelegramNotifier(TOKEN, "1", session=s, sleep=lambda x: None, delay_s=0).send("\n\n".join(blocks)) == (True, None)
+    assert len(s.calls) == len(parts)
+    # Telegram refuses the markup: the same text goes out again without it, instead of being lost
+    s = FakeSession({URL: [FakeResponse(400, {"ok": False, "description": "Bad Request: can't parse entities: unsupported start tag"}),
+                           FakeResponse(200, {"ok": True})]})
+    assert TelegramNotifier(TOKEN, "1", session=s, sleep=lambda x: None, delay_s=0).send("<b>Esri</b> pays <50k &amp; more")[0]
+    plain = s.calls[1][2]
+    assert "parse_mode" not in plain and plain["text"] == "Esri pays <50k & more"

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import html
 import logging
+import re
 import time
 from datetime import datetime, timezone
 from typing import Callable
@@ -196,6 +197,31 @@ def format_job_message(rec: dict, *, update: bool = False) -> str:
     return text if len(text) <= MAX_MESSAGE else text[: MAX_MESSAGE - 1] + "…"
 
 
+def split_message(text: str, limit: int = MAX_MESSAGE) -> list[str]:
+    """Parts of at most `limit` characters, cut at blank lines, then at line ends; only a single line longer than the
+    limit is cut hard, and then without its tags."""
+    if len(text) <= limit:
+        return [text]
+    parts, current = [], ""
+
+    def push(block: str, glue: str) -> None:
+        nonlocal current
+        if current and len(current) + len(glue) + len(block) > limit:
+            parts.append(current)
+            current = ""
+        current += (glue if current else "") + block
+
+    for block in text.split("\n\n"):
+        if len(block) <= limit:
+            push(block, "\n\n")
+            continue
+        for line in block.split("\n"):
+            push(line if len(line) <= limit else re.sub(r"<[^>]+>", "", line)[: limit - 1] + "…", "\n")
+    if current:
+        parts.append(current)
+    return parts
+
+
 class TelegramNotifier:
     def __init__(self, token: str, chat_id: str, *, session: requests.Session | None = None,
                  delay_s: float = 1.2, sleep: Callable[[float], None] = time.sleep, max_retries: int = 2,
@@ -213,8 +239,21 @@ class TelegramNotifier:
         return text.replace(self.token, "***") if self.token else text
 
     def send(self, text: str) -> tuple[bool, str | None]:
+        """Send one reply. A text over Telegram's limit goes out in parts cut between blocks, never through a tag; a
+        part whose markup Telegram refuses is sent again as plain text, so a reply is never lost to a stray '<'."""
+        for part in split_message(text):
+            ok, error = self._send_part(part, as_html=True)
+            if not ok and error and "parse entities" in error.lower():
+                ok, error = self._send_part(html.unescape(re.sub(r"<[^>]+>", "", part)), as_html=False)
+            if not ok:
+                return False, error
+        return True, None
+
+    def _send_part(self, text: str, as_html: bool) -> tuple[bool, str | None]:
         url = f"https://api.telegram.org/bot{self.token}/sendMessage"
-        payload = {"chat_id": self.chat_id, "text": text, "parse_mode": "HTML", "disable_web_page_preview": True}
+        payload = {"chat_id": self.chat_id, "text": text, "disable_web_page_preview": True}
+        if as_html:
+            payload["parse_mode"] = "HTML"
         attempt = 0
         while True:
             wait = self.delay_s - (time.monotonic() - self._last_sent)

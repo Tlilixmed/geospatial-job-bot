@@ -28,8 +28,8 @@
  */
 const COMMANDS = ["jobs", "high", "range", "search", "why", "applied", "hide", "unhide", "mute", "unmute", "muted",
   "threshold", "locations", "interns", "pause", "resume", "status", "weekly", "run", "help", "pitch", "ai", "sponsors",
-  "outcome", "possible", "radar", "skills", "signals", "learning", "sources", "visa", "watch", "unwatch", "prospects", "prep", "approach"];
-const HINT_RE = new RegExp(`^/(${COMMANDS.join("|")})(\\s[^\\n]{0,100})?$`);
+  "outcome", "possible", "radar", "skills", "signals", "learning", "sources", "visa", "watch", "unwatch", "prospects", "prep", "approach", "ask"];
+const HINT_RE = new RegExp(`^/(${COMMANDS.join("|")})(\\s[^\\n]{0,200})?$`);
 const FAST_READ = new Set(["jobs", "top", "high", "range", "search", "why", "ai", "sponsors", "sponsor", "status", "help",
   "start", "muted", "signals", "sources", "yield", "visa", "prospects"]);
 const VIEW_ALIASES = { yield: "sources" };  // replies Python formatted in advance: index.views[command]
@@ -52,6 +52,8 @@ Commands:
 /pitch CODE          write a cover letter / application note for that job
 /prep CODE           prepare for an interview for that job: likely questions, weak points
 /approach FIRM       write an unsolicited application to a firm (no job posted)
+/ask QUESTION        a question that needs comparing or reasoning over the matches ("which pay best", "compare a and b",
+                     "which close this week", "which suit me if I only speak French") - repeat the question after /ask
 /ai [n]              show the AI's opinion (fit, summary, concerns) of the current matches
 /sponsors [n]        jobs from employers on official visa-sponsor registers, or that offer sponsorship
 /visa [CODE|COUNTRY] is a work visa realistic: salary minimum, licence, occupation; or a country's visa rules
@@ -74,13 +76,15 @@ Commands:
 /learning            what the bot learned from the user's applications and hidden jobs
 /run                 search for new jobs right now
 /help                what the bot can do
-If the message is a question about jobs of some kind, use /search. If nothing fits, answer /help.`;
+If the message simply looks for jobs of some kind, use /search. If nothing fits, answer /help.`;
 
 // ---------------------------------------------------------------------------- small helpers
 const esc = (value) => String(value == null ? "" : value)
   .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 const fold = (value) => String(value || "").normalize("NFKD").replace(/\p{M}/gu, "").toLowerCase()
   .replace(/\s+/g, " ").trim();
+/** "75.5 60" -> [76, 60]: a decimal is one number, not two ("75.5" once stored Possible >= 5). */
+const wholeNumbers = (text) => (String(text || "").match(/\d+(?:\.\d+)?/g) || []).map((n) => Math.round(parseFloat(n)));
 const clampInt = (value, fallback, low, high) => {
   const n = parseInt(String(value || "").trim().split(/\s+/)[0], 10);
   return Number.isFinite(n) ? Math.max(low, Math.min(high, n)) : fallback;
@@ -103,8 +107,10 @@ const tell = (env, text) => telegram(env, env.TELEGRAM_CHAT_ID, text, false);
 
 async function reply(env, messages) {
   for (const message of messages) {
-    const response = await telegram(env, env.TELEGRAM_CHAT_ID, message.slice(0, 4096), true);
-    if (!response.ok) await tell(env, message.replace(/<[^>]+>/g, "").slice(0, 4000));  // bad markup: send it plain
+    for (const part of splitMessage(message)) {
+      const response = await telegram(env, env.TELEGRAM_CHAT_ID, part, true);
+      if (!response.ok) await tell(env, part.replace(/<[^>]+>/g, "").slice(0, 4000));  // bad markup: send it plain
+    }
   }
 }
 
@@ -113,6 +119,37 @@ const keyOf = (env, suffix) => {
   const prefix = String(env.STATE_PREFIX || "").replace(/^[/]+|[/]+$/g, "");
   return prefix ? `${prefix}/${suffix}` : suffix;
 };
+
+/** Whole words only: muting "US" must not silence "Industry" (same rule as geojobbot.core.jobs.is_muted). */
+function mutedBy(haystack, term) {
+  const wanted = fold(term);
+  if (!wanted) return false;
+  for (let from = 0; ;) {
+    const at = haystack.indexOf(wanted, from);
+    if (at === -1) return false;
+    const before = at === 0 ? " " : haystack[at - 1];
+    const after = haystack[at + wanted.length] || " ";
+    if (!/[a-z0-9]/.test(before) && !/[a-z0-9]/.test(after)) return true;
+    from = at + 1;
+  }
+}
+
+/** Long replies are cut between blocks (blank lines), never through a tag: a broken tag makes Telegram refuse the message. */
+function splitMessage(text) {
+  if (text.length <= MAX_MESSAGE) return [text];
+  const parts = [];
+  let current = "";
+  const push = (block, glue) => {
+    if (current && current.length + glue.length + block.length > MAX_MESSAGE) { parts.push(current); current = ""; }
+    current += (current ? glue : "") + block;
+  };
+  for (const block of text.split("\n\n")) {
+    if (block.length <= MAX_MESSAGE) { push(block, "\n\n"); continue; }
+    for (const line of block.split("\n")) push(line.length <= MAX_MESSAGE ? line : `${line.replace(/<[^>]+>/g, "").slice(0, MAX_MESSAGE - 1)}…`, "\n");
+  }
+  if (current) parts.push(current);
+  return parts;
+}
 
 async function readJson(env, key) {
   const object = await env.INBOX.get(keyOf(env, key));
@@ -126,16 +163,29 @@ function defaultPrefs() {
     learning_since: null, my_skills: null };
 }
 async function loadPrefs(env) {
-  const stored = await readJson(env, PREFS_KEY);
+  const object = await env.INBOX.get(keyOf(env, PREFS_KEY));
+  let stored = null;
+  if (object) {
+    // a file that exists but cannot be read must never be replaced by defaults: that would erase every application
+    try { stored = await object.json(); } catch { throw new Error("your preferences could not be read, so nothing was changed"); }
+  }
   const prefs = defaultPrefs();
+  // the version this copy was read at: saving is refused when someone else (the Python side) wrote in between
+  Object.defineProperty(prefs, "_etag", { value: object && object.etag ? object.etag : null, enumerable: false });
   // keep keys this Worker does not know (newer Python versions add some): saving must never drop them
   if (stored && typeof stored === "object") for (const key of Object.keys(stored)) if (stored[key] !== undefined) prefs[key] = stored[key];
   for (const key of ["muted", "hidden"]) if (!Array.isArray(prefs[key])) prefs[key] = [];
   for (const key of ["applied", "hidden_info"]) if (!prefs[key] || typeof prefs[key] !== "object") prefs[key] = {};
   return prefs;
 }
-const savePrefs = (env, prefs) => env.INBOX.put(keyOf(env, PREFS_KEY),
-  JSON.stringify({ ...prefs, updated_at: new Date().toISOString() }, null, 2), { httpMetadata: { contentType: "application/json" } });
+/** false when the stored file changed since it was read (R2 conditional put): the caller reloads and tries again. */
+async function savePrefs(env, prefs) {
+  const options = { httpMetadata: { contentType: "application/json" } };
+  if (prefs._etag) options.onlyIf = { etagMatches: prefs._etag };
+  const saved = await env.INBOX.put(keyOf(env, PREFS_KEY), JSON.stringify({ ...prefs, updated_at: new Date().toISOString() }, null, 2), options);
+  return saved !== null;
+}
+const CONFLICT = Symbol("preferences changed meanwhile");
 
 async function aiHint(env, text) {
   const result = await env.AI.run("@cf/meta/llama-3.1-8b-instruct", {
@@ -154,11 +204,11 @@ function isCurrent(job, index, prefs, now) {
     const limit = job.rot ? settings.rotation_max_age_h : settings.max_age_h;
     if (limit && (now - Date.parse(job.p)) / 36e5 > limit) return false;
   }
-  if (job.seen && now - Date.parse(job.seen) > (job.rot ? 21 : 5) * 864e5) return false;
+  if (job.seen && now - Date.parse(job.seen) > (job.ttl || (job.rot ? 21 : 5)) * 864e5) return false;
   if (job.dl && Date.parse(job.dl) + 864e5 < now) return false;  // the application deadline has passed
-  if (prefs.hidden.includes(job.id) || job.id in prefs.applied) return false;
+  if (prefs.hidden.includes(job.id) || Object.hasOwn(prefs.applied, job.id)) return false;
   const haystack = fold(`${job.t || ""} ${job.c || ""}`);
-  return !prefs.muted.some((term) => term.trim() && haystack.includes(fold(term)));
+  return !prefs.muted.some((term) => mutedBy(haystack, term));
 }
 
 function currentMatches(index, prefs, onlyHigh) {
@@ -185,6 +235,13 @@ function sponsorBadge(job) {
   if (hit.geo) text += ` (hired ${(hit.occupations || ["geomatics staff"]).join(", ").slice(0, 40)})`;
   if (job.country && hit.country !== job.country) text += " — not this country";
   return text;
+}
+
+function deadlineFact(job) {
+  if (!job.dl) return "";
+  const days = Math.floor((Date.parse(job.dl) + 864e5 - Date.now()) / 864e5);
+  if (days < 0) return `⌛ the application deadline passed on ${job.dl}`;
+  return `⏳ closes ${days === 0 ? "today" : days === 1 ? "tomorrow" : days <= 10 ? `in ${days} days` : job.dl}`;
 }
 
 function entry(same, number) {
@@ -250,24 +307,29 @@ const snapshot = (job) => ({ title: job.t, company: job.c, country: job.country,
 // ---------------------------------------------------------------------------- commands answered here
 function viewWhy(index, arg) {
   const job = findByCode(index, arg);
-  if (!job) return ["Usage: /why code — the 5-character tag next to a job."];
+  if (!job) return arg.trim() ? null : ["Usage: /why code — the 5-character tag next to a job."];  // older job: Python has the full state
   const bd = job.bd || {};
   const lines = [`<b>${esc(job.t)}</b>${job.c ? ` — ${esc(job.c)}` : ""}`, `Score ${job.s}/100 · ${esc(job.tier)}`,
-    `Title ${bd.title || 0} · skills ${bd.tech || 0} · domain ${bd.domain || 0} · tasks ${bd.responsibilities || 0} · location ${bd.location || 0}`
-    + (bd.sponsor ? ` · sponsor +${bd.sponsor}` : "")];
+    `Title ${bd.title || 0} · skills ${bd.tech || 0} · domain ${bd.domain || 0} · tasks ${bd.responsibilities || 0} · location ${bd.location || 0}`];
+  const extras = [["sponsor", "sponsor register"], ["learned", "learned"], ["visa", "visa route"], ["ai", "AI reading"]]
+    .filter(([key]) => bd[key]).map(([key, label]) => `${label} ${bd[key] > 0 ? "+" : ""}${bd[key]}`);
+  if (extras.length) lines.push(`Adjustments: ${extras.join(" · ")}`);
   if ((job.why || []).length) lines.push("", "<b>Evidence</b>", ...job.why.map((w) => `• ${esc(w)}`));
   (job.sp || []).forEach((hit, i) => {
     let note = `${hit.icon || "🛂"} ${esc(hit.label)}: ${esc(hit.name)}`;
     if (hit.positions) note += ` · ${hit.positions} foreign hires approved`;
     if ((hit.occupations || []).length) note += ` · hired ${esc(hit.occupations.join(", "))}`;
-    if (hit.match === "variant") note += " (name variant)";
+    if (hit.match === "variant") note += " (a similar name: check the register)";
     if (i === 0) lines.push("");
     lines.push(note);
   });
-  if (job.gap) lines.push("", esc(job.gap));
+  const facts = [job.gap, deadlineFact(job), job.rp].filter(Boolean);  // skills gap, deadline, reposts: the same line Python shows
+  if (facts.length) lines.push("", esc(facts.join(" · ")));
   if (job.visa && (job.visa.d || []).length) lines.push("", ...job.visa.d);  // formatted by Python (HTML)
   if (job.ai) {
-    lines.push("", `<b>AI second opinion</b> · fit ${job.ai.fit}/10`);
+    lines.push("", `<b>AI second opinion</b> · fit ${job.ai.fit}/10${job.ai.model ? ` · ${esc(job.ai.model)}` : ""}`);
+    if (job.ai.lift) lines.push("⤴️ The rules had passed on this one; the reading brought it back.");
+    if (job.ai.restricted) lines.push("🚫 The reading found a citizenship, clearance or work-rights restriction.");
     if (job.ai.summary) lines.push(`💡 ${esc(job.ai.summary)}`);
     if (job.ai.concerns) lines.push(`⚠️ ${esc(job.ai.concerns)}`);
     const facts = [];
@@ -303,7 +365,7 @@ function viewAi(index, prefs, arg) {
     if (job.ai.concerns) lines.push(`   ⚠️ ${esc(job.ai.concerns)}`);
   });
   lines.push("", "/why code shows the full review · /pitch code drafts an application");
-  return [lines.join("\n").slice(0, 4090)];
+  return [lines.join("\n")];
 }
 
 function viewSponsors(index, prefs, arg) {
@@ -329,7 +391,7 @@ function viewSponsors(index, prefs, arg) {
       lines.push(detail);
     });
   });
-  return [lines.join("\n").slice(0, 4090)];
+  return [lines.join("\n")];
 }
 
 function viewStatus(index, prefs) {
@@ -382,7 +444,7 @@ function viewSignals(index, arg) {
     if (s.winner) line += `\n   won by <b>${esc(s.winner)}</b>${s.winner_country ? ` (${esc(s.winner_country)})` : ""}${s.value ? ` · ${esc(s.value)}` : ""}`;
     lines.push(line);
   });
-  return [lines.join("\n").slice(0, 4090)];
+  return [lines.join("\n")];
 }
 
 /** Commands that change preferences. Returns the reply, or null to let Python handle the message. */
@@ -407,7 +469,7 @@ async function mutate(env, index, prefs, command, arg) {
     if (prefs.muted.length === before) return [`“${esc(arg)}” wasn't muted.`];
     answer = `🔊 Unmuted “${esc(arg)}”.`;
   } else if (command === "threshold") {
-    const numbers = (arg.match(/\d{1,3}/g) || []).map(Number).filter((n) => n > 0 && n <= 100);
+    const numbers = wholeNumbers(arg).filter((n) => n > 0 && n <= 100);
     if (!numbers.length) return [`Usage: /threshold 70 55 (now High ≥ ${prefs.high_threshold || index.settings.high}, Possible ≥ ${prefs.medium_threshold || index.settings.medium})`];
     prefs.high_threshold = numbers[0];
     prefs.medium_threshold = Math.min(numbers.length > 1 ? numbers[1] : (prefs.medium_threshold || index.settings.medium), numbers[0]);
@@ -417,7 +479,7 @@ async function mutate(env, index, prefs, command, arg) {
     answer = onOff === "reset" ? "Preferred locations reset to the default." : `Preferred locations set to ${esc(prefs.preferred_locations.join(", "))}.`;
   } else if (command === "hide" || command === "unhide") {
     const job = findByCode(index, arg);
-    if (!job) return [`Usage: /${command} code`];
+    if (!job) return arg ? null : [`Usage: /${command} code`];  // not in the index: Python looks in the full state
     if (command === "hide") {
       if (!prefs.hidden.includes(job.id)) { prefs.hidden.push(job.id); prefs.hidden_info[job.id] = { ...snapshot(job), at: now }; }
       answer = `🙈 Hidden: ${esc(job.t)}. /unhide ${job.code} restores it.`;
@@ -429,13 +491,17 @@ async function mutate(env, index, prefs, command, arg) {
     }
   } else if (command === "applied" && arg) {
     const job = findByCode(index, arg);
-    if (!job) return ["I can't find that code. /jobs lists current codes."];
+    if (!job) return null;  // not in the index: Python looks in the full state
+    if (Object.hasOwn(prefs.applied, job.id)) {  // saying it twice must not wipe an interview already recorded
+      const known = prefs.applied[job.id];
+      return [`Already recorded: <b>${esc(job.t)}</b> · ${esc(known.status || "applied")} since ${esc(String(known.at || "").slice(0, 10))}. /outcome ${job.code} interview|offer|rejected updates it.`];
+    }
     prefs.applied[job.id] = { ...snapshot(job), url: job.url, at: now, status: "applied", history: [{ at: now, status: "applied" }] };
     answer = `✅ Marked as applied: <b>${esc(job.t)}</b>. Good luck! I'll check in with you in a week; tell me how it goes with /outcome ${job.code} interview|rejected|offer.`;
   } else if (command === "outcome") {
     const words = arg.split(/\s+/).filter(Boolean);
-    const status = words.map((w) => w.toLowerCase()).find((w) => w in STATUSES);
-    const code = words.find((w) => !(w.toLowerCase() in STATUSES)) || "";
+    const status = words.map((w) => w.toLowerCase()).find((w) => Object.hasOwn(STATUSES, w));  // "constructor" is not a status
+    const code = words.find((w) => !Object.hasOwn(STATUSES, w.toLowerCase())) || "";
     const job = findByCode(index, code);
     let id = job ? job.id : undefined;
     if (!id) {  // applied long ago and no longer in the index: match the code Python derives from the id
@@ -444,7 +510,7 @@ async function mutate(env, index, prefs, command, arg) {
       }
     }
     if (!status || !id) return ["Usage: /outcome code interview|offer|rejected|withdrawn|ghosted — /applied lists your codes."];
-    if (!(id in prefs.applied) && job) prefs.applied[id] = { ...snapshot(job), url: job.url, at: now, status: "applied", history: [{ at: now, status: "applied" }] };
+    if (!Object.hasOwn(prefs.applied, id) && job) prefs.applied[id] = { ...snapshot(job), url: job.url, at: now, status: "applied", history: [{ at: now, status: "applied" }] };
     const info = prefs.applied[id];
     info.status = status;
     (info.history = info.history || []).push({ at: now, status });
@@ -453,7 +519,7 @@ async function mutate(env, index, prefs, command, arg) {
     answer = `${cheer}\n<b>${esc(info.title)}</b>${info.company ? ` — ${esc(info.company)}` : ""}`;
   }
   if (answer === null) return null;
-  await savePrefs(env, prefs);
+  if (!(await savePrefs(env, prefs))) return CONFLICT;
   return [answer];
 }
 
@@ -471,7 +537,7 @@ async function answerFast(env, command, arg, echo, update) {
     messages = listing(rows.slice(0, limit), `Top ${Math.min(limit, rows.length)} of ${rows.length} ${command === "high" ? "High matches" : "current matches"}`,
       "Nothing relevant and fresh is stored right now. /status shows the last run.");
   } else if (command === "range") {
-    const numbers = (arg.match(/\d{1,3}/g) || []).map(Number).filter((n) => n <= 100);
+    const numbers = wholeNumbers(arg).filter((n) => n <= 100);
     if (!numbers.length) messages = ["Usage: /range 60 70 — or just say “jobs between 60 and 70”, “jobs above 80”."];
     else {
       const low = numbers.length > 1 ? Math.min(numbers[0], numbers[1]) : numbers[0];
@@ -504,12 +570,16 @@ async function answerFast(env, command, arg, echo, update) {
   }
   else if ((index.views || {})[VIEW_ALIASES[command] || command]) messages = [index.views[VIEW_ALIASES[command] || command]];
   else if (command === "applied" && !arg.trim()) messages = await viewApplied(prefs);
-  else messages = await mutate(env, index, prefs, command, arg.trim());
+  else {
+    messages = await mutate(env, index, prefs, command, arg.trim());
+    if (messages === CONFLICT) messages = await mutate(env, index, await loadPrefs(env), command, arg.trim());  // once more, on the fresh copy
+    if (messages === CONFLICT) messages = ["⚠️ Your preferences were being changed at the same moment. Nothing was lost; please send that again."];
+  }
   if (!messages) return false;
   if (echo) messages[0] = `${echo}\n\n${messages[0]}`;
   await reply(env, messages);
   // an interview was just recorded: the interview sheet needs the AI and the stored description, so Python writes it
-  if (command === "outcome" && update && /\binterview\b/i.test(arg) && /^[🎤]/u.test(messages[0].replace(/^↪[^\n]*\n\n/, ""))) {
+  if (command === "outcome" && update && !update.edited && /\binterview\b/i.test(arg) && /^[🎤]/u.test(messages[0].replace(/^↪[^\n]*\n\n/, ""))) {
     const code = arg.split(/\s+/).find((w) => /^[0-9a-f]{5}$/i.test(w));
     if (code) await dispatchToPython(env, update, `/prep ${code.toLowerCase()}`, "", "🎤 Preparing your interview sheet, about a minute.");
   }
@@ -564,6 +634,13 @@ async function dispatchToPython(env, update, text, hint, notice) {
 }
 
 async function handleMessage(env, update, text) {
+  // 0. an edited message may open a view again, but it never changes anything twice and never starts a workflow
+  if (update.edited) {
+    const [head, ...rest] = text.split(/\s+/);
+    const command = text.startsWith("/") ? head.slice(1).split("@")[0].toLowerCase() : "";
+    if (FAST_READ.has(command) && await answerFast(env, command, rest.join(" "), "", update)) return;
+    return tell(env, "✏️ I saw the edit, but edited messages are not run again. Send it as a new message.");
+  }
   // 1. explicit commands
   if (text.startsWith("/")) {
     const [head, ...rest] = text.split(/\s+/);
@@ -624,7 +701,7 @@ var D=JSON.parse(document.getElementById("data").textContent),I=D.index||{},P=D.
 var hidden={},applied=P.applied||{};(P.hidden||[]).forEach(function(id){hidden[id]=1});
 function el(tag,cls,text){var e=document.createElement(tag);if(cls)e.className=cls;if(text!=null)e.textContent=text;return e}
 function current(j){var s=I.settings||{};if(j.rel&&j.p){var lim=j.rot?s.rotation_max_age_h:s.max_age_h;if(lim&&(now-Date.parse(j.p))/36e5>lim)return false}
- if(j.seen&&now-Date.parse(j.seen)>(j.rot?21:5)*864e5)return false;if(j.dl&&Date.parse(j.dl)+864e5<now)return false;return !hidden[j.id]&&!applied[j.id]}
+ if(j.seen&&now-Date.parse(j.seen)>(j.ttl||(j.rot?21:5))*864e5)return false;if(j.dl&&Date.parse(j.dl)+864e5<now)return false;return !hidden[j.id]&&!applied[j.id]}
 function safe(url){return /^https?:/i.test(url||"")?url:"#"}
 function chip(text,kind){return el("span","chip"+(kind?" "+kind:""),text)}
 function jobCard(j){var c=el("div","job"),h=el("h3");c.appendChild(el("span","score"+(j.tier==="high"?" high":""),String(j.s)));
@@ -653,7 +730,7 @@ function applications(root){var order=["applied","interview","offer","rejected",
  order.forEach(function(s){if(!by[s])return;var col=el("div","card");col.appendChild(el("h4",null,s+" ("+by[s].length+")"));
   by[s].sort(function(a,b){return String(b.at||"").localeCompare(String(a.at||""))}).forEach(function(a){var d=el("div","note"),l=el("a",null,a.title||"?");l.href=safe(a.url);l.target="_blank";l.rel="noopener noreferrer";
    d.appendChild(l);d.appendChild(document.createTextNode(" — "+(a.company||"?")+" · "+String(a.at||"").slice(0,10)));col.appendChild(d)});cols.appendChild(col)});root.appendChild(cols)}
-function view(name){return function(root){var box=el("div","card view"),html=(I.views||{})[name];if(html){box.innerHTML=html}else{box.textContent="Nothing yet: this view is published by the next scraper run."}root.appendChild(box)}}
+function view(name){return function(root){var box=el("div","card view"),html=(I.views||{})[name];if(html){box.innerHTML=html;Array.prototype.forEach.call(box.querySelectorAll("a"),function(a){if(!/^https?:/i.test(a.getAttribute("href")||""))a.removeAttribute("href");a.target="_blank";a.rel="noopener noreferrer"})}else{box.textContent="Nothing yet: this view is published by the next scraper run."}root.appendChild(box)}}
 function watch(root){var w=P.watch||[],box=el("div","card");box.appendChild(el("h4",null,"Employers you watch"));
  if(!w.length)box.appendChild(el("div","mute","None. In Telegram: /watch company"));w.forEach(function(x){box.appendChild(el("div","note",x.name+(x.url?" — "+x.url:"")))});root.appendChild(box);view("prospects")(root)}
 var tabs=[["Matches",matches],["Applications",applications],["Visa routes",view("visa")],["Employers",watch],["Sources",view("sources")]],nav=document.getElementById("nav"),main=document.getElementById("main");
@@ -674,8 +751,10 @@ async function dashboard(request, env) {
   const parts = new URL(request.url).pathname.split("/").filter(Boolean);
   if (parts[0] !== "dash") return null;
   const key = String(env.DASHBOARD_KEY || "");
-  if (key.length < 16 || !env.INBOX || !sameKey(decodeURIComponent(parts[1] || ""), key)) return new Response("not found", { status: 404 });
-  const [index, prefs] = await Promise.all([readJson(env, INDEX_KEY), loadPrefs(env)]);
+  let given = "";
+  try { given = decodeURIComponent(parts[1] || ""); } catch { given = ""; }  // "%zz" must look like any other wrong key
+  if (key.length < 16 || !env.INBOX || !sameKey(given, key)) return new Response("not found", { status: 404 });
+  const [index, prefs] = await Promise.all([readJson(env, INDEX_KEY), loadPrefs(env).catch(() => defaultPrefs())]);
   const data = JSON.stringify({ index: index || {}, prefs: { applied: prefs.applied, hidden: prefs.hidden, watch: prefs.watch || [] } })
     .replace(/</g, "\\u003c").replace(/[\u2028\u2029]/g, " ");
   return new Response(DASHBOARD_PAGE.replace("__DATA__", () => data), {
@@ -747,6 +826,13 @@ const MAIL_KINDS = [
   ["interview", /\b(interview|entretien|phone screen|screening call|video call|schedule a (?:call|conversation|chat|meeting)|availability (?:for|to)|book a time|invite you to|would like to (?:meet|speak|talk)|next (?:step|stage|round)|technical (?:test|assessment|exercise)|take-?home)\b/i],
   ["received", /\b(thank you for (?:applying|your application|your interest)|application (?:has been )?received|we have received your application|accusé de réception|nous avons bien reçu|merci (?:pour|de) votre candidature)\b/i],
 ];
+// An acknowledgement often mentions a possible interview ("if selected for an interview, we will contact you"): only a
+// mail that actually arranges something counts as an invitation when it also reads like an acknowledgement.
+const MAIL_ARRANGES = /\b(schedule a (?:call|conversation|chat|meeting)|availability (?:for|to)|book a time|invite you to|would like to (?:meet|speak|talk)|vos disponibilit|convenir d'?un)/i;
+// What a mail may change by itself. An offer or a rejection already recorded is never overwritten by a later mail
+// (a newsletter from the same employer reads like anything): it is reported, and /outcome decides.
+const MAIL_MAY_FOLLOW = { applied: ["interview", "rejected", "offer"], ghosted: ["interview", "rejected", "offer"], interview: ["interview", "rejected", "offer"] };
+const MAIL_MAX_BYTES = 1024 * 1024;
 const MAIL_STATUS_TEXT = { rejected: "a rejection", offer: "an offer", interview: "an interview invitation", received: "an acknowledgement" };
 
 function decodeMailPart(body, encoding) {
@@ -762,7 +848,7 @@ function decodeMailPart(body, encoding) {
 }
 
 /** Best-effort text of an email from its raw MIME: the first text/plain part, else the stripped text/html one. */
-function mailText(raw) {
+function mailText(raw, depth = 0) {
   const head = raw.slice(0, raw.search(/\r?\n\r?\n/) + 1);
   const boundary = (head.match(/boundary="?([^";\r\n]+)"?/i) || [])[1];
   const parts = boundary ? raw.split(new RegExp(`--${boundary.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?:--)?`)) : [raw];
@@ -771,6 +857,11 @@ function mailText(raw) {
       const split = part.search(/\r?\n\r?\n/);
       if (split === -1) continue;
       const headers = part.slice(0, split);
+      if (depth < 3 && part !== raw && /content-type:\s*multipart\//i.test(headers)) {  // multipart/alternative inside multipart/mixed
+        const nested = mailText(part.replace(/^\s+/, ""), depth + 1);
+        if (nested) return nested;
+        continue;
+      }
       if (!new RegExp(`content-type:\\s*${type}`, "i").test(headers)) continue;
       const encoding = (headers.match(/content-transfer-encoding:\s*([^\r\n]+)/i) || [])[1];
       return decodeMailPart(part.slice(split).trim(), encoding);
@@ -785,7 +876,11 @@ function mailText(raw) {
 
 function classifyMail(subject, text) {
   const haystack = `${subject}\n${text.slice(0, 4000)}`;
-  for (const [kind, pattern] of MAIL_KINDS) if (pattern.test(haystack)) return kind;
+  for (const [kind, pattern] of MAIL_KINDS) {
+    if (!pattern.test(haystack)) continue;
+    if (kind === "interview" && MAIL_KINDS[3][1].test(haystack) && !MAIL_ARRANGES.test(haystack)) return "received";
+    return kind;
+  }
   return "";
 }
 
@@ -809,27 +904,41 @@ function matchApplication(prefs, fromAddress, subject, text) {
 async function handleMail(message, env) {
   if (!env.INBOX) return;
   const subject = message.headers.get("subject") || "(no subject)";
-  const raw = await new Response(message.raw).text();
-  const text = mailText(raw);
+  // a huge mail (attachments) is judged by its subject alone; bulk mail is not an answer to an application
+  const raw = Number(message.rawSize || 0) > MAIL_MAX_BYTES ? "" : await new Response(message.raw).text();
+  const bulk = /^(bulk|list|junk)$/i.test(message.headers.get("precedence") || "") || Boolean(message.headers.get("list-unsubscribe"));
+  const text = raw ? mailText(raw) : "";
   const kind = classifyMail(subject, text);
-  const prefs = await loadPrefs(env);
-  const found = matchApplication(prefs, message.from, subject, text);
+  let prefs = await loadPrefs(env);
+  let found = matchApplication(prefs, message.from, subject, text);
   const sender = String(message.from).replace(/^[^<]*<|>.*$/g, "");
   const about = found ? `<b>${esc(found.application.title)}</b>${found.application.company ? ` — ${esc(found.application.company)}` : ""}` : "";
-  if (found && (kind === "rejected" || kind === "interview" || kind === "offer")) {
+  // recorded only when the mail is clearly about that application (the sender's domain, or the employer and the title
+  // together), is not bulk mail, and the step follows from the status on record
+  const follows = found && (MAIL_MAY_FOLLOW[found.application.status || "applied"] || []).includes(kind);
+  if (found && found.score >= 3 && !bulk && follows) {
     const now = new Date().toISOString();
-    const info = found.application;
-    info.status = kind;
-    (info.history = info.history || []).push({ at: now, status: kind, source: "email" });
-    await savePrefs(env, prefs);
+    for (let attempt = 0; attempt < 2 && found; attempt += 1) {
+      const info = found.application;
+      info.status = kind;
+      (info.history = info.history || []).push({ at: now, status: kind, source: "email" });
+      if (await savePrefs(env, prefs)) break;
+      prefs = await loadPrefs(env);  // changed meanwhile: once more on the fresh copy
+      found = matchApplication(prefs, message.from, subject, text);
+    }
+    if (!found) return;
     const code = await codeOf(found.id);
     await reply(env, [`📧 Mail from ${esc(sender)} reads like ${MAIL_STATUS_TEXT[kind]} for ${about} — recorded as <b>${kind}</b>.\n`
       + `<i>${esc(subject.slice(0, 120))}</i>\nWrong? /outcome ${code} applied${kind === "interview" ? " · /prep " + code + " for the interview sheet" : ""}`]);
     if (kind === "interview") await dispatchToPython(env, { update_id: Date.now() }, `/prep ${code}`, "", "🎤 Preparing your interview sheet, about a minute.");
     return;
   }
+  if (bulk && !found) return;  // a newsletter about nobody we applied to: not worth a message
   const verdict = kind ? `reads like ${MAIL_STATUS_TEXT[kind]}` : "is not one I can classify";
-  await reply(env, [`📧 Mail from ${esc(sender)} ${verdict}${found ? ` (probably about ${about})` : ""}.\n<i>${esc(subject.slice(0, 120))}</i>`
+  const held = found && kind && kind !== "received"
+    ? `\nNot recorded (${bulk ? "bulk mail" : found.score < 3 ? "the link to that application is weak" : `it is already '${found.application.status || "applied"}'`}): /outcome ${await codeOf(found.id)} ${kind} records it.`
+    : "";
+  await reply(env, [`📧 Mail from ${esc(sender)} ${verdict}${found ? ` (probably about ${about})` : ""}.\n<i>${esc(subject.slice(0, 120))}</i>${held}`
     + (found && kind ? "" : "\nTell me what it was: /outcome code interview|rejected|offer")]);
 }
 
@@ -858,6 +967,7 @@ export default {
     // "channel_post" (channels), "business_message", and the edited_* variants. Accept them all.
     const message = update && (update.message || update.channel_post || update.business_message
       || update.edited_message || update.edited_channel_post);
+    if (update && !(update.message || update.channel_post || update.business_message)) update.edited = Boolean(message);
     const raw = message && (typeof message.text === "string" ? message.text : message.caption);
     const text = typeof raw === "string" ? raw.trim().slice(0, 500) : "";
     // Setup helper, answered in the chat it was asked in and before any authorisation: "/id" tells you the values to

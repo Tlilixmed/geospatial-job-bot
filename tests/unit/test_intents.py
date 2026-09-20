@@ -152,3 +152,45 @@ def test_new_commands_do_not_hijack_ordinary_searches():
     assert interpret("which job boards are useful") == ("sources", "")
     assert interpret("questions about a3f9c", lambda t: t == "a3f9c") == ("why", "a3f9c")
     assert interpret("interview questions for a3f9c", lambda t: t == "a3f9c") == ("prep", "a3f9c")
+
+
+SAFE = [  # sentences that once changed something and must not (docs/REVIEW.md F59)
+    ("is a3f9c remote?", ("why", "a3f9c")),                       # the typo repair turned "remote" into "remove"
+    ("does a3f9c offer sponsorship", ("why", "a3f9c")),           # recorded an offer
+    ("a3f9c offers relocation", ("why", "a3f9c")),
+    ("should I apply to a3f9c?", ("why", "a3f9c")),               # recorded an application
+    ("I want to apply to a3f9c", ("why", "a3f9c")),               # still to come: nothing to record
+    ("how do I apply to a3f9c", ("why", "a3f9c")),
+    ("can I get a visa for a3f9c?", ("visa", "a3f9c")),
+    ("here is my resume", ("search", "resume")),                  # un-paused the alerts
+    ("I prefer remote jobs", ("search", "remote")),               # replaced the preferred locations
+    ("stop sending me US jobs", ("mute", "US")),                  # paused everything
+    ("check lidar jobs now", ("search", "lidar")),                # started a 45-minute run
+    ("are alerts paused?", ("search", "alerts paused")),          # a question never pauses
+    ("what is muted?", ("muted", "")),
+    ("who am i watching?", ("watch", "")),
+]
+STILL_WRITES = [
+    ("can you hide a3f9c?", ("hide", "a3f9c")),                   # a polite request is not a question
+    ("please pause alerts", ("pause", "")),
+    ("i applied to a3f9c", ("applied", "a3f9c")),
+    ("apply a3f9c", ("applied", "a3f9c")),
+    ("got an offer for a3f9c", ("outcome", "a3f9c offer")),
+    ("offer a3f9c", ("outcome", "a3f9c offer")),
+    ("not interested in a3f9c", ("hide", "a3f9c")),
+    ("resume", ("resume", "")),
+    ("resume alerts", ("resume", "")),
+    ("run now", ("run", "")),
+    ("stop alerts", ("pause", "")),
+]
+ASKS = [
+    ("ask which of these pay over 50k", ("ask", "which of these pay over 50k")),
+    ("compare a3f9c and b2c1d", ("ask", "compare a3f9c and b2c1d")),
+    ("which one is better for me?", ("ask", "which one is better for me")),
+    ("which jobs are closing this week?", ("ask", "which jobs are closing this week")),
+]
+
+
+@pytest.mark.parametrize("sentence,expected", SAFE + STILL_WRITES + ASKS)
+def test_questions_and_repaired_typos_never_write(sentence, expected):
+    assert interpret(sentence, lambda token: token in {"a3f9c", "b2c1d"}) == expected
