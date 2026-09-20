@@ -29,7 +29,7 @@ def ai_with(responses, budget=25):
         return FakeResponse(200, {"success": True, "result": {"response": text}})
 
     session = FakeSession({URL: handler})
-    return WorkersAI(ACCOUNT, "token", session=session, budget=budget), session
+    return WorkersAI(ACCOUNT, "token", model="@cf/meta/llama-3.1-8b-instruct", session=session, budget=budget), session
 
 
 def test_account_id_is_derived_from_the_r2_endpoint():

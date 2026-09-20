@@ -104,13 +104,24 @@ jobs:
           NOTIFY_POSSIBLE: ${{ vars.NOTIFY_POSSIBLE || 'false' }}
           DUCKDUCKGO_ENABLED: ${{ vars.DUCKDUCKGO_ENABLED || 'false' }}
           BOT_USER_AGENT: ${{ vars.BOT_USER_AGENT }}
+          # Optional tuning through repository variables; an unset variable is an empty string, which means "use the default"
+          AI_MODELS: ${{ vars.AI_MODELS }}
+          AI_REVIEWS_PER_RUN: ${{ vars.AI_REVIEWS_PER_RUN }}
+          AI_SECOND_CHANCES_PER_RUN: ${{ vars.AI_SECOND_CHANCES_PER_RUN }}
+          VISA_PENALTY: ${{ vars.VISA_PENALTY }}
+          MY_LANGUAGES: ${{ vars.MY_LANGUAGES }}
+          MY_SKILLS: ${{ vars.MY_SKILLS }}
+          HOME_COUNTRIES: ${{ vars.HOME_COUNTRIES }}
+          MAX_ALERTS_PER_RUN: ${{ vars.MAX_ALERTS_PER_RUN }}
+          PROSPECTS_PER_RUN: ${{ vars.PROSPECTS_PER_RUN }}
+          DISABLED_BACKENDS: ${{ vars.DISABLED_BACKENDS }}
           REQUIRE_R2: "true"
           DRY_RUN: ${{ inputs.dry_run && 'true' || 'false' }}
           RUN_TIME_BUDGET_MINUTES: "45"
         run: python -m geojobbot run
 
       - name: Tell Telegram the run failed
-        if: failure()
+        if: ${{ failure() || cancelled() }}   # a run killed by the time limit is cancelled, not failed
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}

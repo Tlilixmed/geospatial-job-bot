@@ -267,37 +267,64 @@ PREFERRED_HINTS = (r"\b(prefer\w*|nice[\s-]to[\s-]have|asset|desirabl\w+|bonus|p
 
 CATEGORY_CAPS = {"title": 40, "tech": 25, "domain": 20, "responsibilities": 10, "location": 5}
 
-# Work authorisation. Postings that demand an existing right to work, citizenship or a security
-# clearance, or state that no visa sponsorship is offered, are rejected unless the job is in one of
-# MatchConfig.home_countries or the posting says sponsorship is available. Patterns run on the
-# accent-folded, lowercased text.
-WORK_AUTH_REQUIRED = [
-    r"\b(?:must|need|needs|required?|expected) (?:to )?(?:be |have |hold |possess )?(?:currently |already )?(?:legally )?"
-    r"(?:authori[sz]ed|eligible|entitled|permitted|able|allowed) to (?:work|live and work)\b",
-    r"\b(?:legal |unrestricted |existing |current |valid |permanent )?(?:authori[sz]ation|right|rights|eligibility|permission|entitlement) "
-    r"to (?:work|live and work) in\b",
-    r"\b(?:no|not|unable to|cannot|can not|will not|won.t|does not|do not|don.t|isn.t able to|is not able to) "
-    r"(?:currently |be able to |offer |provide |consider )?(?:any |visa |immigration |employment |work )?sponsor",
-    r"\bwithout (?:the need for |need of |requiring |current or future )?(?:visa |employer )?sponsorship\b",
-    r"\bsponsorship (?:is|will) (?:not|unavailable)|\bsponsorship (?:is )?not (?:available|offered|provided|possible)\b",
-    r"\bnot eligible for (?:any )?(?:visa|immigration|employment|work)? ?(?:visa )?(?:support|sponsorship|assistance)\b",
+# Work authorisation. Three kinds of wording, kept apart because they behave differently (geojobbot/matching/matcher.py):
+#   SPONSORSHIP_REFUSED     the employer says it will not sponsor: rejects, and cancels any "offer" wording elsewhere
+#   WORK_AUTH_DEMANDED      an existing right to work is demanded: rejects unless sponsorship is offered
+#   CITIZENSHIP_RESTRICTED  citizenship, nationals-only, permanent residency, security clearance: rejects unless the
+#                           sentence waives it ("is not required", "desirable") or is inclusive ("and non-EU nationals")
+# None of them applies to a job in MatchConfig.home_countries. Patterns run on the accent-folded, lowercased text.
+# Every sentence that ever misled these rules is a row in tests/unit/test_wording_golden.py: add one before changing a rule.
+_PLACE = (r"(?:the |a |an |this |that |their |your |our )?(?:u\.?s\.?a?\b|u\.?k\b|eu\b|e\.u\.|united|europe\w*|canada|australia|new zealand|"
+          r"ireland|germany|france|belgium|netherlands|switzerland|denmark|sweden|norway|singapore|country|countries|uae|emirates|"
+          r"saudi|ksa|qatar|kuwait|oman|bahrain|schengen|region|location|jurisdiction)")
+SPONSORSHIP_REFUSED = [
+    r"\b(?:no|not|unable to|cannot|can not|can.?t|will not|won.?t|does not|do not|don.?t|doesn.?t|isn.?t able to|is not able to|are not able to) "
+    r"(?:currently |be able to |be providing |be offering |offer |provide |consider |support )?(?:any |visa |immigration |employment |work )?sponsor",
+    r"\bwithout (?:the need for |need of |requiring |current or future )?(?:visa |employer |employment )?sponsorship\b",
+    r"\bsponsorship (?:is|will|can|could)(?: not|n.?t)\b", r"\bsponsorship (?:is |are )?(?:not |un)(?:available|offered|provided|possible)\b",
+    r"\b(?:not eligible|ineligible) for (?:[a-z0-9-]+ ){0,3}(?:support|sponsorship|assistance)\b",
     r"\bno (?:visa|immigration|work permit) (?:support|assistance|sponsorship)\b",
-    r"\b(?:visa|immigration) (?:support|assistance|sponsorship) (?:is |will be |are )?(?:not|unavailable)\b",
+    r"\b(?:visa|immigration) (?:support|assistance|sponsorship) (?:is |will be |are |can ?)?(?:not\b|unavailable)",
     r"\b(?:unable|not able|not in a position) to (?:provide|offer|support|assist with) (?:any )?(?:visa|immigration|work permit)\b",
+    r"\b(?:require|requires|requiring|need|needs|needing) (?:visa |employer |employment )?sponsorship (?:[a-z]+ ){0,8}?(?:will|can) ?not be considered\b",
+    r"\b(?:cannot|can not|can.?t|unable to|do not|does not|don.?t|doesn.?t|will not|won.?t) (?:currently )?(?:offer|provide|support) "
+    r"(?:any )?(?:visa|immigration|work permit)\b",
+    r"\bmust not (?:require|need) (?:any )?(?:visa |immigration |employment |work )?(?:sponsorship|support)\b",
+    r"\b(?:visa|immigration) (?:support|assistance|sponsorship)\s*[:\-]\s*(?:not\b|no\b|none\b|unavailable)",
+    r"\bsponsorship (?:is )?(?:available|offered|provided)\s*[:?\-]\s*(?:no|non|none|n/a)\b",
+    r"\b(?:sans|pas de|aucun) parrainage\b", r"\bne (?:parraine|parrainons|parrainent) pas\b",
+]
+WORK_AUTH_DEMANDED = [
+    r"\b(?:must|need|needs|required?|expected) (?:to )?(?:be |have |hold |possess )?(?:currently |already )?(?:legally )?"
+    r"(?:authori[sz]ed|entitled|permitted|allowed) to (?:work|live and work)\b",
+    r"\b(?:must|need|needs|required?|expected) (?:to )?(?:be )?(?:currently |already )?(?:legally )?(?:eligible|able) to "
+    r"(?:legally |lawfully )?(?:work|live and work) (?:legally |lawfully )?in " + _PLACE,
+    # "right to work in the UK", but not the identity check every employer must run ("proof of your right to work")
+    r"(?<!proof of )(?<!evidence of )(?<!proof of your )(?<!evidence of your )(?<!confirm your )(?<!verify your )(?<!verification of )"
+    r"\b(?:legal |unrestricted |existing |current |valid |permanent )?(?:authori[sz]ation|right|rights|eligibility|permission|entitlement) "
+    r"to (?:work|live and work) in " + _PLACE,
+    r"\b(?:must|have to|need to|required to|should) (?:already )?(?:have|hold|possess) (?:a |an )?(?:valid |current |existing )?"
+    r"(?:work|employment) (?:permit|visa|authori[sz]ation)\b",
+    r"\b(?:valid|current|existing) (?:work|employment) (?:permit|visa|authori[sz]ation) (?:is |are )?(?:required|needed|essential|mandatory)\b",
+    r"\bopen work permit\b",
+    r"\b(?:autorisation|permis) de travail (?:valide |en cours de validite )?(?:exige|requis|obligatoire|indispensable)\w*",
+    r"\btitre de sejour (?:valide |en cours de validite )?(?:exige|requis|obligatoire|indispensable)\w*",
+    r"\bautorise\w* a travailler (?:en|au|aux|sur le territoire) ", r"\bresiden(?:t|ts|ce) permanent(?:s|e)?\b",
+]
+CITIZENSHIP_RESTRICTED = [
     r"\b(?:u\.?s\.?a?\.?|american|canadian|british|uk|australian|eu|german|french|dutch) (?:citizens?|citizenship|nationals?)\b",
     # jobs reserved for a country's own nationals (Gulf nationalisation programmes)
     r"\b(?:saudi|emirati|uae|qatari|kuwaiti|omani|bahraini|gcc) nationals?\b", r"\bnationals? only\b",
-    r"\b(?:saudi[sz]ation|emirati[sz]ation|omani[sz]ation|qatari[sz]ation|nitaqat|tawteen)\b",
+    r"\b(?:part of|under|in line with|as per|supports?|supporting) (?:our |the |a )?(?:saudi[sz]ation|emirati[sz]ation|omani[sz]ation|qatari[sz]ation)\b",
+    r"\b(?:saudi[sz]ation|emirati[sz]ation|omani[sz]ation|qatari[sz]ation) (?:programme|program|initiative|role|position|hire|hiring|candidate|requirement|quota|drive)\b",
     r"\b(?:for|only|open to) (?:saudis|emiratis|qataris|kuwaitis|omanis|bahrainis)\b", r"\b(?:saudis|emiratis) only\b",
-    r"\bpermanent residen(?:t|ts|cy|ce)\b", r"\bgreen card\b",
-    r"\b(?:security|secret|top secret|government|dv|sc|baseline) clearance\b", r"\bts/sci\b", r"\bclearance (?:is )?required\b",
-    r"\b(?:valid |current )?(?:work|employment) (?:permit|visa|authori[sz]ation)\b", r"\bopen work permit\b",
-    # French
-    r"\b(?:autorisation|permis) de travail\b", r"\bcitoyennete (?:canadienne|francaise|americaine)\b",
-    r"\bcitoyens? (?:canadiens?|francais)\b", r"\bresiden(?:t|ts|ce) permanent(?:s|e)?\b",
-    r"\b(?:sans|pas de|aucun) parrainage\b", r"\bne (?:parraine|parrainons|parrainent) pas\b",
+    r"لل(?:سعوديين|مواطنين|اماراتيين|قطريين|كويتيين|عمانيين) فقط", r"(?:سعودي|اماراتي|قطري|كويتي|عماني|بحريني)(?:ة)? الجنسية",
+    r"(?<!pathway to )(?<!path to )(?<!route to )(?<!leading to )(?<!towards )\bpermanent residen(?:t|ts|cy|ce)\b", r"\bgreen card\b",
+    r"\b(?:security|secret|top secret|government|dv|sc|baseline) clearance\b", r"\bts/sci\b",
+    r"\bcitoyennete (?:canadienne|francaise|americaine)\b", r"\bcitoyens? (?:canadiens?|francais)\b",
     r"\bhabilitation (?:de securite|secret)\b",
 ]
+WORK_AUTH_REQUIRED = SPONSORSHIP_REFUSED + WORK_AUTH_DEMANDED + CITIZENSHIP_RESTRICTED  # kept for callers that want them all
 # Wording that only asks for the right to work where the candidate already lives (remote-from-anywhere roles).
 WORK_AUTH_COMPATIBLE = [
     r"\b(?:authori[sz]ed|eligible|entitled|permitted|able|allowed|right) to work in (?:their|your|the|his|her) "
@@ -305,12 +332,20 @@ WORK_AUTH_COMPATIBLE = [
     r"\bwork (?:from |in )?(?:the )?country (?:where|in which) (?:you|they) (?:live|reside|are based)\b",
     r"\bautoris\w+ (?:a|de) travailler dans (?:votre|son|leur) pays de residence\b",
 ]
+# An offer needs a visa-type object: "we will sponsor your licence" and "relocation assistance" are not visa sponsorship.
 SPONSORSHIP_OFFERED = [
     r"\b(?:visa |work permit |immigration )?sponsorship (?:is |will be |can be |may be )?(?:available|offered|provided|possible|considered)\b",
-    r"\b(?:we |company |employer )?(?:will|can|able to|happy to|willing to|open to|may) (?:offer |provide |consider |assist with )?"
-    r"(?:visa |work permit |immigration )?sponsor(?:ship|ing)?\b",
-    r"\bwe sponsor\b", r"\bvisa (?:support|assistance|sponsorship and relocation)\b", r"\brelocation (?:and|&|\+) visa\b",
-    r"\b(?:relocation|immigration) (?:assistance|support|package) (?:is )?(?:available|offered|provided)\b",
+    r"\b(?:will|can|able to|happy to|willing to|open to|may) (?:offer |provide |consider |assist with )?"
+    r"(?:(?:visa |work permit |immigration )sponsor(?:ship|ing)?|sponsorship)\b",
+    r"\b(?:we |will |can |able to |happy to |willing to |may )sponsor (?:your |a |an |the |work |skilled worker |h-?1b |tier 2 )*"
+    r"(?:visas?|work permits?|international (?:candidates|applicants)|the right candidate)\b",
+    r"\bvisa (?:support|assistance|sponsorship and relocation)\b", r"\brelocation (?:and|&|\+) visa\b",
+    r"\bimmigration (?:assistance|support|package) (?:is )?(?:available|offered|provided)\b",
+    r"\b(?:work|employment|residence) (?:visa|permit)s? (?:and [a-z ]{3,30} )?(?:is |are |will be )?(?:provided|arranged|sponsored|covered)\b",
+    r"\b(?:provides?|arranges?|sponsors?|covers?) (?:a |an |the |your )?(?:work|employment|residence) (?:visa|permit)\b",
+    r"\b(?:employer[- ])?sponsored (?:[a-z0-9]+ ){0,2}visa\b",
+    r"\b(?:open to|welcome|consider(?:ed)?|accept)\b[^.;\n]{0,80}\b(?:need|require)s? (?:visa )?sponsorship\b",
+    r"\b(?:support|help|assist|accompagn\w+) (?:you )?(?:with|dans) (?:your |the |l.obtention de )?(?:votre )?(?:work permit|visa|autorisation de travail|titre de sejour)\b",
     r"\bparrainage (?:de )?visa (?:disponible|offert|possible)\b", r"\b(?:aide|soutien) (?:a l.|pour l.)?immigration\b",
 ]
 

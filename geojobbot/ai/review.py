@@ -7,6 +7,7 @@ so a confused model can at worst produce an empty review.
 from __future__ import annotations
 
 import html
+import re
 
 DEFAULT_PROFILE = (
     "Geomatics engineer, about 3 years of experience. LiDAR point-cloud processing and classification (TerraScan, "
@@ -28,7 +29,9 @@ JSON keys:
 "years": minimum years of experience required as an integer, or null
 "sponsorship": "offered", "not_offered" or "unknown" (visa / work permit sponsorship)
 "languages": list of languages the posting REQUIRES, e.g. ["English","French"]
-"requirements": up to 5 short phrases with the key technical requirements"""
+"requirements": up to 5 short phrases with the key technical requirements
+"restricted": true only if the posting REQUIRES citizenship, a security clearance, permanent residency or an existing right to work in the country, or says it does not sponsor; false otherwise. "Must be authorized to work" alone is true; equal-opportunity boilerplate is not.
+"deadline": the application closing date as YYYY-MM-DD if the posting states one, else null"""
 
 PITCH_SYSTEM = """You write a short application note for ONE candidate. Write in the language of the job title (French title -> French).
 Candidate: {profile}
@@ -60,16 +63,39 @@ def clean_review(data: dict | None) -> dict | None:
     concerns = _short(data.get("concerns"), 90)
     if concerns.lower() in {"none", "n/a", "no", "null", "-"}:
         concerns = ""
+    deadline = str(data.get("deadline") or "")[:10]
+    if not re.fullmatch(r"20\d{2}-[01]\d-[0-3]\d", deadline):
+        deadline = None
     listify = lambda v: [_short(x, 60) for x in (v if isinstance(v, list) else []) if str(x).strip()]  # noqa: E731
     return {"fit": fit, "summary": _short(data.get("summary"), 220), "concerns": concerns, "years": years,
             "sponsorship": sponsorship if sponsorship in SPONSORSHIP else "unknown",
-            "languages": listify(data.get("languages"))[:5], "requirements": listify(data.get("requirements"))[:5]}
+            "languages": listify(data.get("languages"))[:5], "requirements": listify(data.get("requirements"))[:5],
+            "restricted": data.get("restricted") is True, "deadline": deadline}
 
 
-def review_job(ai, profile: str, *, title: str, company: str | None, location: str, description: str) -> dict | None:
+def decisions_note(prefs: dict | None, limit: int = 6) -> str:
+    """The candidate's own recent decisions, as calibration for the fit score (titles and employers only)."""
+    if not prefs:
+        return ""
+    applied = sorted((prefs.get("applied") or {}).values(), key=lambda a: a.get("at") or "", reverse=True)[:limit]
+    hidden = sorted((prefs.get("hidden_info") or {}).values(), key=lambda a: a.get("at") or "", reverse=True)[:limit]
+    name = lambda a: " at ".join(x for x in (_short(a.get("title"), 60), _short(a.get("company"), 40)) if x)  # noqa: E731
+    parts = []
+    if applied:
+        parts.append("Jobs this candidate recently APPLIED to (they are a good fit): " + "; ".join(name(a) for a in applied if name(a)))
+    if hidden:
+        parts.append("Jobs this candidate DISMISSED (a poor fit for them): " + "; ".join(name(a) for a in hidden if name(a)))
+    return ("\n" + "\n".join(parts) + "\nUse these only to calibrate \"fit\"; never mention them.") if parts else ""
+
+
+def review_job(ai, profile: str, *, title: str, company: str | None, location: str, description: str,
+               decisions: str = "") -> dict | None:
     posting = (f"Title: {title}\nCompany: {company or 'unknown'}\nLocation: {location or 'unknown'}\n\n"
-               f"{(description or '')[:3500]}")
-    return clean_review(ai.chat_json(REVIEW_SYSTEM.format(profile=profile or DEFAULT_PROFILE), posting))
+               f"{(description or '')[:6000]}")
+    review = clean_review(ai.chat_json(REVIEW_SYSTEM.format(profile=(profile or DEFAULT_PROFILE) + decisions), posting, max_tokens=450))
+    if review is not None and getattr(ai, "last_model", None):
+        review["model"] = ai.last_model.rsplit("/", 1)[-1]
+    return review
 
 
 def write_pitch(ai, profile: str, rec: dict, description: str = "") -> str | None:

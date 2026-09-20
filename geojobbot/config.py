@@ -145,7 +145,10 @@ class Settings:
     # Workers AI second opinion (free daily allowance). The account id is derived from the R2 endpoint.
     cloudflare_ai_token: str | None = None
     cloudflare_account_id: str | None = None
-    ai_model: str = "@cf/meta/llama-3.1-8b-instruct"
+    ai_model: str = ""  # AI_MODEL: one model to try first; empty = the AI_MODELS chain as it is
+    # tried in order, falling back when a model cannot be used; the last one is the model this bot started with
+    ai_models: list[str] = field(default_factory=lambda: ["@cf/openai/gpt-oss-120b", "@cf/google/gemma-4-26b-a4b-it",
+                                                          "@cf/meta/llama-3.1-8b-instruct"])
     ai_reviews_per_run: int = 40  # ~35 neurons each; 6 runs a day stays inside the free 10,000/day
     ai_veto_possible: bool = True
     candidate_profile: str = ""  # empty = the built-in profile in geojobbot/ai/review.py
@@ -295,7 +298,8 @@ def load_settings() -> Settings:
     s.reliefweb_appname = env_str("RELIEFWEB_APPNAME")
     s.cloudflare_ai_token = env_str("CLOUDFLARE_AI_TOKEN")
     s.cloudflare_account_id = env_str("CLOUDFLARE_ACCOUNT_ID")
-    s.ai_model = env_str("AI_MODEL", s.ai_model)
+    s.ai_model = env_str("AI_MODEL", s.ai_model) or ""
+    s.ai_models = env_list("AI_MODELS", s.ai_models)
     s.ai_reviews_per_run = max(0, env_int("AI_REVIEWS_PER_RUN", s.ai_reviews_per_run))
     s.ai_veto_possible = env_bool("AI_VETO_POSSIBLE", s.ai_veto_possible)
     s.candidate_profile = env_str("CANDIDATE_PROFILE", s.candidate_profile) or ""

@@ -58,6 +58,10 @@ jobs:
           CLOUDFLARE_AI_TOKEN: ${{ secrets.CLOUDFLARE_AI_TOKEN }}
           CANDIDATE_PROFILE: ${{ secrets.CANDIDATE_PROFILE }}
           PREFERRED_LOCATIONS: ${{ vars.PREFERRED_LOCATIONS }}
+          AI_MODELS: ${{ vars.AI_MODELS }}
+          MY_LANGUAGES: ${{ vars.MY_LANGUAGES }}
+          MY_SKILLS: ${{ vars.MY_SKILLS }}
+          HOME_COUNTRIES: ${{ vars.HOME_COUNTRIES }}
           # passed through the environment, never interpolated into the shell
           COMMAND_INBOX: ${{ inputs.inbox }}
           COMMAND_TEXT: ${{ inputs.text }}

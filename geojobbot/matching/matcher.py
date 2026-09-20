@@ -105,46 +105,75 @@ def weak_only_title(title: str) -> bool:
 
 @lru_cache(maxsize=None)
 def _compiled_work_auth():
-    return tuple([re.compile(p) for p in group]
-                 for group in (P.WORK_AUTH_REQUIRED, P.SPONSORSHIP_OFFERED, P.WORK_AUTH_COMPATIBLE))
+    return tuple([re.compile(p) for p in group] for group in (
+        P.SPONSORSHIP_REFUSED, P.WORK_AUTH_DEMANDED, P.CITIZENSHIP_RESTRICTED, P.SPONSORSHIP_OFFERED, P.WORK_AUTH_COMPATIBLE))
+
+
+# A negation counts only when it governs the phrase: at most three plain words between them, inside one sentence or line.
+NEGATION_BEFORE_RE = re.compile(r"\b(?:no|not|never|without|unable to|cannot|can not|can.?t|won.?t|will not|does not|do not|don.?t|"
+                                r"doesn.?t|isn.?t|aren.?t|ineligible for|pas de|pas|sans|aucune?)\s+(?:[a-z']+\s+){0,3}$")
+NEGATION_AFTER_RE = re.compile(r"^\s*(?:(?:is |are |will be |can ?)?(?:not\b|unavailable|n.?est pas|non disponible)|[:?\-]\s*(?:no|non|none|n/a)\b)")
+WAIVED_AFTER_RE = re.compile(r"^[^.;!?\n]{0,40}?\b(?:(?:is |are )?not (?:required|needed|necessary|essential|mandatory)|"
+                             r"desirable|desired|preferred|advantageous|a plus|an asset|nice to have|beneficial)\b")
+INCLUSIVE_AFTER_RE = re.compile(r"^[^.;!?\n]{0,40}?\b(?:and|or|as well as|et|ou)\s+(?:non|other|all|foreign\w*|third|international|expat\w*|candidates who)\b")
+INCLUSIVE_BEFORE_RE = re.compile(r"(?:\bnon[- ]|\bregardless of [a-z ]{0,20}|\bnot an? |\bwhether you are an? )$")
+
+
+def _folded_with_marks(text: str) -> tuple[str, str]:
+    """(folded, marks): the same string twice, except that `marks` keeps line and bullet breaks as newlines, so phrase
+    patterns run on ordinary spaced text while sentence boundaries stay visible at the same positions."""
+    parts = [fold(part) for part in re.split(r"[\n\r\u2022\u25cf\u25aa]+", text or "")]
+    parts = [part for part in parts if part]
+    return " ".join(parts), "\n".join(parts)
+
+
+def _sentence_before(marks: str, start: int, span: int = 80) -> str:
+    cut = max(marks.rfind(ch, 0, start) for ch in ".;!?:\n")
+    return marks[max(cut + 1, start - span, 0):start]
+
+
+def _negated(folded: str, start: int, end: int, marks: str | None = None) -> bool:
+    """Is the phrase at [start, end) denied in its own sentence? ('this position is not eligible for visa support')"""
+    marks = marks if marks is not None else folded
+    return bool(NEGATION_BEFORE_RE.search(_sentence_before(marks, start)) or NEGATION_AFTER_RE.search(marks[end:end + 40]))
+
+
+def _waived(marks: str, start: int, end: int) -> bool:
+    """A restriction that the sentence itself lifts: 'US citizenship is not required', 'no security clearance is required',
+    'DV clearance desirable', 'EU citizens and non-EU nationals alike', 'non-EU nationals'."""
+    before = _sentence_before(marks, start)
+    after = marks[end:end + 60]
+    return bool(NEGATION_BEFORE_RE.search(before) or INCLUSIVE_BEFORE_RE.search(before)
+                or WAIVED_AFTER_RE.search(after) or INCLUSIVE_AFTER_RE.search(after))
 
 
 def work_authorization(text: str, location: dict, cfg: P.MatchConfig) -> tuple[bool, bool]:
     """Return (requires_existing_authorization, sponsorship_offered) for the posting text.
 
-    Not required when the job is in one of cfg.home_countries, when sponsorship is offered, or when the
-    posting only asks for the right to work in the candidate's own country of residence.
+    * a sponsorship refusal always wins: it rejects and cancels any offer wording elsewhere in the posting
+    * a demand for an existing right to work, or a citizenship / residency / clearance restriction, rejects unless
+      sponsorship is offered or the sentence waives the restriction
+    * nothing applies to a job in cfg.home_countries, or when the posting only asks for the right to work in the
+      candidate's own country of residence; a refusal to sponsor is irrelevant for a work-from-anywhere role
     """
-    required_rx, offered_rx, compatible_rx = _compiled_work_auth()
-    folded = fold(text)
-    offered, refused = False, False
-    for rx in offered_rx:
-        for found in rx.finditer(folded):
-            if _negated(folded, found.start(), found.end()):
-                refused = True  # "not eligible for visa support", "sponsorship is not available": the opposite of an offer
-            else:
-                offered = True
-    if refused and offered:  # a posting that says both is not an offer one can count on
-        offered = False
+    refused_rx, demanded_rx, restricted_rx, offered_rx, compatible_rx = _compiled_work_auth()
+    folded, marks = _folded_with_marks(text)
+    offered = any(not _negated(folded, m.start(), m.end(), marks) for rx in offered_rx for m in rx.finditer(folded))
+    refused = any(rx.search(folded) for rx in refused_rx)
+    demanded = any(not _waived(marks, m.start(), m.end()) for rx in demanded_rx for m in rx.finditer(folded))
+    restricted = any(not _waived(marks, m.start(), m.end()) for rx in restricted_rx for m in rx.finditer(folded))
     compatible = any(rx.search(folded) for rx in compatible_rx)
     country = fold(location.get("country") or "")
     scope = fold(location.get("remote_scope") or "")
     homes = [fold(c) for c in cfg.home_countries if c.strip()]
     at_home = bool(homes) and (country in homes or scope in homes)
-    required = not (at_home or offered or compatible) and (refused or any(rx.search(folded) for rx in required_rx))
+    anywhere = bool(location.get("remote")) and scope == "worldwide"
+    if refused:
+        offered = False
+    if at_home or compatible:
+        return False, offered
+    required = (refused and not anywhere) or ((demanded or restricted) and not offered)
     return required, offered
-
-
-NEGATION_BEFORE_RE = re.compile(r"\b(?:no|not|non|never|without|unable|cannot|can not|won.?t|will not|does not|do not|don.?t|doesn.?t|"
-                                r"isn.?t|aren.?t|ineligible|neither|nor|unfortunately|pas|sans|aucun|aucune|ne)\b")
-NEGATION_AFTER_RE = re.compile(r"^\W*(?:is |are |will be |can ?)?(?:not\b|unavailable|n.?est pas|non disponible)")
-
-
-def _negated(folded: str, start: int, end: int) -> bool:
-    """Is the phrase at [start, end) denied in its own sentence? ('this position is not eligible for visa support')"""
-    sentence_start = max(folded.rfind(".", 0, start), folded.rfind("\n", 0, start), folded.rfind(";", 0, start), start - 70) + 1
-    before = folded[max(sentence_start, 0):start]
-    return bool(NEGATION_BEFORE_RE.search(before) or NEGATION_AFTER_RE.search(folded[end:end + 40]))
 
 
 @lru_cache(maxsize=None)
