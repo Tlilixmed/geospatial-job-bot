@@ -168,6 +168,9 @@ def test_alerts_reach_back_to_matches_that_were_held_and_not_seen_again():
                       "a:4": {**base, "canonical_id": "a:4", "last_seen": (NOW - timedelta(days=30)).isoformat()}}}
     selected, counts = select_alerts(state, set(), settings, NOW)
     assert [r["canonical_id"] for r in selected] == ["a:1"] and counts["carried_over"] == 1
+    state["jobs"]["a:5"] = {**base, "canonical_id": "a:5", "tier": "possible"}
+    settings.notify_possible = False
+    assert select_alerts(state, set(), settings, NOW)[1]["carried_over"] == 1  # a Possible match that is never alerted is not "carried over"
 
 
 def test_page_jobs_stay_listed_while_their_page_is_cached():

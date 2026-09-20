@@ -314,7 +314,6 @@ def select_alerts(state: dict, seen_ids: set, settings, now) -> tuple[list[dict]
     waiting = {cid for cid, rec in state["jobs"].items()
                if cid not in seen_ids and not rec.get("notified") and rec.get("tier") in (TIER_HIGH, TIER_POSSIBLE)
                and is_listed(rec, now) and (parse_datetime(rec.get("first_seen")) or now) >= young}
-    counts["carried_over"] = len(waiting)
     names = watch_names(settings)
     for rec in state["jobs"].values():  # after /unwatch the mark must go from every job, not only from this run's
         if rec.get("watched") and not is_watched(rec, settings, names):
@@ -344,6 +343,7 @@ def select_alerts(state: dict, seen_ids: set, settings, now) -> tuple[list[dict]
             counts["blocked_stale"] += 1
             continue
         candidates.append(rec)
+        counts["carried_over"] += cid in waiting  # only what really competes for an alert: not hidden, muted, stale or the wrong tier
     candidates.sort(key=lambda r: (r.get("tier") != TIER_HIGH, -int(r.get("score") or 0),
                                    -(parse_datetime(r.get("posted_at")) or now).timestamp()))
     if getattr(settings, "alerts_paused", False):  # jobs stay un-notified and go out after /resume
