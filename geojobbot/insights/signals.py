@@ -113,7 +113,8 @@ def check(ctx, state: dict) -> list[dict]:
             signal = classify(item)
             if signal:
                 fresh[item["id"]] = signal
-    if not ok:
+    eu_ok = _eu_tenders(ctx, store, seen, fresh)
+    if not ok and not eu_ok:
         return []
     store["checked_at"] = to_iso(ctx.now)
     store["term_index"] = (start + TERMS_PER_CHECK) % len(TERMS)
@@ -121,6 +122,49 @@ def check(ctx, state: dict) -> list[dict]:
     store["seen"] = (list(seen) + [s["id"] for s in new])[-3000:]
     store["items"] = (new + list(store.get("items") or []))[:KEEP_ITEMS]
     return new
+
+
+EU_TENDERS = "https://jaydemks.github.io/bidledger/api/s/71.json"  # CPV division 71, rebuilt daily from the EU Official Journal (TED)
+EU_CPV_PREFIXES = ("71353", "71354", "71355", "713518", "38221")  # surface surveying, map-making, surveying, topographical, GIS
+EU_COUNTRIES = {"FRA": "France", "BEL": "Belgium", "LUX": "Luxembourg"}  # where the candidate's French is an asset
+EU_MAX_NEW = 6
+
+
+def _eu_tenders(ctx, store: dict, seen: set, fresh: dict) -> bool:
+    """Open surveying and mapping tenders in French-speaking EU countries (free, keyless, one file a day).
+
+    The first successful read only records what is already open, so the feature starts quietly instead of with a
+    backlog of several dozen notices; afterwards only new notices are reported, a few at a time.
+    """
+    if ctx.out_of_time(180):
+        return False
+    try:
+        notices = ctx.client.get(EU_TENDERS, respect_robots=False, detect_challenge=False, max_bytes=12 * 1024 * 1024).json()
+    except (FetchError, ValueError) as exc:
+        log.info("EU tenders: %s", getattr(exc, "kind", "non-JSON"))
+        return False
+    if not isinstance(notices, list):
+        return False
+    wanted = [n for n in notices if isinstance(n, dict) and n.get("country") in EU_COUNTRIES
+              and str(n.get("cpv_main") or "").startswith(EU_CPV_PREFIXES) and n.get("id")]
+    wanted.sort(key=lambda n: str(n.get("published") or ""), reverse=True)
+    bootstrapping = not store.get("eu_started")
+    added = 0
+    for n in wanted:
+        sid = f"ted:{n['id']}"
+        if sid in seen or sid in fresh:
+            continue
+        if bootstrapping and added >= 3 or not bootstrapping and added >= EU_MAX_NEW:
+            seen.add(sid)  # known, never announced
+            continue
+        title = str(n.get("title") or "").split(" – ", 2)[-1][:140] or str(n.get("cpv_main_label") or "tender")
+        fresh[sid] = {"id": sid, "kind": "tender", "title": title, "country": EU_COUNTRIES[n["country"]],
+                      "url": n.get("ted_url") or n.get("url") or "", "date": n.get("published"),
+                      "project": " · ".join(x for x in (n.get("buyer"), n.get("cpv_main_label"),
+                                                         ("closes " + str(n.get("deadline"))[:10]) if n.get("deadline") else None) if x)[:160]}
+        added += 1
+    store["eu_started"] = True
+    return True
 
 
 def format_signals(signals: list[dict], *, heading: str = "Market signals", limit: int = 9) -> str | None:
@@ -132,7 +176,7 @@ def format_signals(signals: list[dict], *, heading: str = "Market signals", limi
     labels = {"consultancy": "🧑‍💼 <b>Individual consultancies you could apply to</b>",
               "award": "🏆 <b>Firms that just won geospatial contracts</b> (likely to need people)",
               "tender": "📄 <b>Geospatial projects being tendered</b>"}
-    lines = [f"🛰 <b>{heading}</b>", "<i>World Bank-financed procurement, geospatial work only</i>"]
+    lines = [f"🛰 <b>{heading}</b>", "<i>World Bank-financed procurement and EU public tenders (France, Belgium, Luxembourg), geospatial work only</i>"]
     current = None
     for s in rows:
         if s["kind"] != current:

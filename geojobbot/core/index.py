@@ -7,7 +7,7 @@ codes, scores, tiers, AI notes, sponsor hits, the run status and even the help t
 """
 from __future__ import annotations
 
-from ..insights import radar, timing, visa
+from ..insights import fx, radar, timing, visa
 from ..utils.dates import to_iso
 from ..utils.location import ParsedLocation
 from ..utils.text import job_code
@@ -39,6 +39,8 @@ def _entry(cid: str, rec: dict, skills: list[str] | None = None) -> dict:
     if rec.get("sponsor"):
         entry["sp"] = [{k: h.get(k) for k in ("label", "icon", "country", "name", "match", "positions", "occupations", "geo")}
                        for h in rec["sponsor"][:3]]
+    if fx.note(rec):
+        entry["sal"] = f"{rec.get('salary')} ({fx.note(rec)})"
     if rec.get("deadline"):
         entry["dl"] = rec["deadline"]
     if skills is not None and rec.get("tier") in ("high", "possible"):

@@ -374,7 +374,7 @@ function viewSignals(index, arg) {
   if (!items.length) return ["No procurement signals stored yet. They are checked once a day during scraper runs."];
   const labels = { consultancy: "🧑‍💼 <b>Individual consultancies</b>", award: "🏆 <b>Firms that just won geospatial contracts</b>", tender: "📄 <b>Projects being tendered</b>" };
   const order = { consultancy: 0, award: 1, tender: 2 };
-  const lines = ["🛰 <b>Recent market signals</b>", "<i>World Bank-financed procurement, geospatial work only</i>"];
+  const lines = ["🛰 <b>Recent market signals</b>", "<i>World Bank-financed procurement and EU public tenders, geospatial work only</i>"];
   let kind = null;
   [...items].sort((a, b) => order[a.kind] - order[b.kind]).forEach((s) => {
     if (s.kind !== kind) { kind = s.kind; lines.push("", labels[kind] || kind); }

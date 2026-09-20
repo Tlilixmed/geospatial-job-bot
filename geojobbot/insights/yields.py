@@ -26,6 +26,8 @@ def group(source_name: str | None) -> str:
         return "career pages"
     if name.startswith("jsearch:"):
         return "jsearch"
+    if name.startswith("freehire:"):
+        return "freehire"
     return name
 
 

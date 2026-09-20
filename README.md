@@ -33,6 +33,7 @@ Finds relevant GIS / geospatial / surveying / LiDAR / remote-sensing jobs from l
 | Generic extraction | `generic_pages` | Any queued public job page: JSON-LD `JobPosting` → embedded JSON → structured HTML. ATS URLs are fetched through the ATS API instead. |
 | Geospatial boards | `career_sites` (GEO CAREERS), `rss_feeds` (GoGeomatics, GISjobs.com) | GEO CAREERS is the largest geospatial-only board: 700+ postings with structured data, read through its sitemap newest-first. |
 | Official employment services | `bundesagentur`, `francetravail` | Germany's public job API (no key; German-language postings skipped) and France Travail (free key). |
+| Keyless aggregator | `freehire` | freehire.dev: about four million open postings read from company ATS boards and partner feeds (Adzuna, WhatJobs, EURES…), with full descriptions and no key. Queried by title, newest first, four terms per run on rotation. Its own AI fields (visa sponsorship, relocation) are not trusted: the text goes through this bot's wording rules. |
 | Community | `hn_hiring` | Hacker News "Who is hiring?" monthly thread through the free Algolia API, once a day, strict geospatial filter. |
 | Public feeds | `remotive`, `jobicy`, `himalayas`, `arbeitnow`, `remoteok`, `rss_feeds`, `usajobs` | Rate-respecting JSON/RSS feeds (each has a minimum interval). `rss_feeds` ships with GoGeomatics (Canada), GISjobs.com, Government of Canada Job Bank searches and Tunisie Travail searches. |
 | Job boards without feeds | `career_sites` with `source_type = "feed"` | Keyword search pages of boards such as Keejob (Tunisia): job links are followed and each posting's JSON-LD is read. |
@@ -147,6 +148,10 @@ A comparison with the popular open-source job bots (ApplyPilot, job-digest, oppo
 - **Sources they use that were missing here:** GEO CAREERS (sitemap), the Hacker News "Who is hiring?" thread, Germany's public job API. Conservation Job Board and the Geospatial Jobs newsletter were checked and left out: 5 of 181 feed items were geospatial, and the newsletter links to LinkedIn postings that cannot be read.
 - **Their good ideas already here:** LLM enrichment with a validated schema, content-hash dedup, a capped digest against decision fatigue, GitHub Actions scheduling, resume-profile scoring.
 - **Worth doing by hand:** the monthly Hacker News "Who wants to be hired?" thread (a post there is read by the same companies that post in "Who is hiring?"), and the weekly Geospatial Jobs newsletter (geospatial.substack.com).
+
+### From the public-apis list
+
+The [public-apis](https://github.com/public-apis/public-apis) catalogue was read for anything useful here. Adopted, all without a key: **freehire** (jobs, above); the **fawazahmed0 currency API**, so every posted salary of an accepted job also appears as gross euros a year (`💰 CAD 80000–95000 (≈ €50–59k/yr)`; it covers SAR, AED, QAR and TND, which the ECB-based services lack); and **Bidledger**, the EU Official Journal's open tenders as JSON, from which `/signals` now also reports new surveying, map-making and GIS tenders in France, Belgium and Luxembourg (it starts quietly: what is already open is recorded, not announced). Already in use from that list: Adzuna, Arbeitnow, Arbeitsamt, Jooble, USAJOBS. Looked at and left out: The Muse (403 for bots), Reed and Careerjet (keys and affiliate terms for one more aggregator of what Adzuna and freehire already carry), the paid job-data APIs, company-register APIs.
 
 ### Knowing which sources earn their keep
 
@@ -554,6 +559,8 @@ geojobbot/
   scrapers/feeds.py      public feeds, RSS, USAJOBS, JobSpy
   scrapers/official.py   Bundesagentur (Germany, no key), France Travail (free key)
   scrapers/community.py  Hacker News "Who is hiring?"
+  scrapers/aggregators.py  freehire.dev (keyless)
+  insights/fx.py         posted salaries in euros a year
   storage/               ObjectStore, R2Store, LocalStore, StateManager
   notifications/         telegram.py (digest), commands.py, intents.py (plain language), weekly.py
   utils/                 http (retries/rate limits), robots, urls, location, dates, text

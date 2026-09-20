@@ -15,6 +15,7 @@ import requests
 
 from ..models import TIER_HIGH
 from ..utils.dates import parse_datetime
+from ..insights.fx import note as salary_note
 from ..insights.sponsors import sponsor_badge
 from ..insights.timing import deadline_badge, repost_badge
 from ..insights.visa import badge as visa_badge
@@ -77,7 +78,7 @@ def _digest_entry(rec: dict, index: int, same: list[dict] | None = None) -> str:
     if closes:
         facts.append(closes)
     if rec.get("salary"):
-        facts.append(f"💰 {_esc(rec['salary'])}")
+        facts.append(f"💰 {_esc(rec['salary'])}" + (f" ({salary_note(rec)})" if salary_note(rec) else ""))
     if "Visa sponsorship offered" in (rec.get("why_matched") or []):
         facts.append("🛂 sponsorship offered")
     badge = sponsor_badge(rec)

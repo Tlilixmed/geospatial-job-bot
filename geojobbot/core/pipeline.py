@@ -20,7 +20,7 @@ from datetime import timedelta
 
 from ..ai.client import WorkersAI
 from ..ai.review import review_job
-from ..insights import radar, signals, timing, visa, yields
+from ..insights import fx, radar, signals, timing, visa, yields
 from ..insights.learning import apply_learning, build_model
 from ..insights.prospects import ProspectBackend
 from ..insights.sponsors import SponsorRegistry, annotate_record
@@ -30,6 +30,7 @@ from ..notifications.telegram import TelegramNotifier, format_digest, format_job
 from ..notifications.weekly import format_follow_ups, format_weekly
 from ..scrapers.ats.base import ATSBackend
 from ..scrapers.ats.more_ats import all_adapters
+from ..scrapers.aggregators import FreehireBackend
 from ..scrapers.community import HackerNewsHiringBackend
 from ..scrapers.official import BundesagenturBackend, FranceTravailBackend
 from ..scrapers.base import Backend, RunContext
@@ -109,6 +110,7 @@ def build_backends(settings, sponsor_data=None) -> list[Backend]:
         BundesagenturBackend(),
         FranceTravailBackend(),
         HackerNewsHiringBackend(),
+        FreehireBackend(),
         JobSpyBackend(),
     ]
     return backends
@@ -263,6 +265,7 @@ class Pipeline:
         counts.update(self._recheck_sponsorship(outcome, state))
         counts.update(self._visa(state, outcome.seen_ids))
         counts.update(self._timing(outcome, state))
+        counts.update(self._salaries(ctx, state))
 
         relevant_by_board = Counter()
         for fj, result, _ in outcome.evaluated:
@@ -489,6 +492,20 @@ class Pipeline:
                     stored["rejection_reasons"] = list(dict.fromkeys((stored.get("rejection_reasons") or []) + [WORK_AUTHORIZATION_REQUIRED]))
         except Exception as exc:
             log.warning("sponsorship recheck skipped: %s", type(exc).__name__)
+        return counts
+
+    def _salaries(self, ctx: RunContext, state: dict) -> Counter:
+        """Posted salaries of accepted jobs in euros a year (daily rates; optional, never fatal)."""
+        counts = Counter()
+        try:
+            if not self.settings.dry_run or self.settings.dry_run_write_state:
+                fx.refresh(ctx, state)
+            rates = (state.get("fx") or {}).get("eur")
+            for rec in state["jobs"].values():
+                if rec.get("tier") in ("high", "possible") and rec.get("salary") and fx.annotate(rec, rates):
+                    counts["salaries_converted"] += 1
+        except Exception as exc:
+            log.warning("salary conversion skipped: %s", type(exc).__name__)
         return counts
 
     def _timing(self, outcome, state: dict) -> Counter:
