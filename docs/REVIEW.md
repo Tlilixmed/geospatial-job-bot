@@ -14,79 +14,79 @@ Findings are numbered `F1, F2…` and carry their evidence, so a fix can be trac
 
 | # | Step | Code | Status |
 |---|---|---|---|
-| 1 | Load state from R2 (backups, ETag, refusal to start fresh) | `storage/state.py` `StateManager.load` | [ ] |
-| 2 | Pending Telegram commands, then overlay preferences on settings | `_process_commands`, `core/prefs.py` | [ ] |
-| 3 | Build backends (config + watch list + sponsor data for the prospector) | `build_backends` | [ ] |
-| 4 | Discovery phase, parallel | `_run_phase("discovery")` | [ ] |
-| 5 | Extraction phase, parallel | `_run_phase("extraction")` | [ ] |
-| 6 | Raw volume per source recorded | `insights/yields.record_run` | [ ] |
-| 7 | Fusion: identity keys, grouping, field authority | `core/fusion.py` | [ ] |
-| 8 | Scoring and state merge, change detection, AI veto carried over | `core/jobs.process_fused`, `matching/` | [ ] |
-| 9 | Descriptions of accepted jobs kept | `_keep_descriptions`, `core/descriptions.py` | [ ] |
-| 10 | Sponsor registers: weekly refresh, lookup, bonus | `_sponsors`, `insights/sponsors.py` | [ ] |
-| 11 | Learning nudges | `_learning`, `insights/learning.py` | [ ] |
-| 12 | AI second opinion, veto of Possible | `_ai_review`, `ai/` | [ ] |
-| 13 | Stored sponsorship claims re-read | `_recheck_sponsorship` | [ ] |
-| 14 | Visa route per accepted job, penalty | `_visa`, `insights/visa.py` | [ ] |
-| 15 | Deadlines and reposts | `_timing`, `insights/timing.py` | [ ] |
-| 16 | Salaries in euros | `_salaries`, `insights/fx.py` | [ ] |
-| 17 | Prune state, checkpoint save | `core/jobs.prune_state`, `StateManager.save` | [ ] |
-| 18 | Alert selection (tiers, watch list, mutes, cap), digest, delivery marking | `core/jobs.select_alerts`, `notifications/telegram.py` | [ ] |
-| 19 | Weekly summary, follow-ups, deadline reminders | `_weekly_summary`, `_follow_ups`, `_deadline_reminders` | [ ] |
-| 20 | Insights: procurement signals, EU tenders, monthly radar | `_insights`, `insights/signals.py`, `insights/radar.py` | [ ] |
-| 21 | Health notices | `core/health.py` | [ ] |
-| 22 | Final save, run report, raw snapshots, Worker index, retention | `_write_artifacts`, `core/index.py`, `core/report.py` | [ ] |
+| 1 | Load state from R2 (backups, ETag, refusal to start fresh) | `storage/state.py` `StateManager.load` | [ok] HEAD diagnosis, backups, conflict file, read-back. GET and HEAD are two calls (the ETag could belong to a newer object); harmless while the scraper workflow runs one at a time |
+| 2 | Pending Telegram commands, then overlay preferences on settings | `_process_commands`, `core/prefs.py` | [fixed] F44, F58 |
+| 3 | Build backends (config + watch list + sponsor data for the prospector) | `build_backends` | [ok] |
+| 4 | Discovery phase, parallel | `_run_phase("discovery")` | [fixed] F45, F46, F48, F53, F55 |
+| 5 | Extraction phase, parallel | `_run_phase("extraction")` | [fixed] F47, F49–F52, F54, F56, F57 |
+| 6 | Raw volume per source recorded | `insights/yields.record_run` | [ok] |
+| 7 | Fusion: identity keys, grouping, field authority | `core/fusion.py` | [fixed] F31, F32, F34, F50 |
+| 8 | Scoring and state merge, change detection, AI veto carried over | `core/jobs.process_fused`, `matching/` | [fixed] F8–F17, F29, F30, F33, title-only sightings (see Sources notes) |
+| 9 | Descriptions of accepted jobs kept | `_keep_descriptions`, `core/descriptions.py` | [fixed] F36, F42 |
+| 10 | Sponsor registers: weekly refresh, lookup, bonus | `_sponsors`, `insights/sponsors.py` | [fixed] F24 |
+| 11 | Learning nudges | `_learning`, `insights/learning.py` | [fixed] F27, F38 |
+| 12 | AI second opinion, veto of Possible | `_ai_review`, `ai/` | [fixed] F1–F6, F28, F33, F41 |
+| 13 | Stored sponsorship claims re-read | `_recheck_sponsorship` | [fixed] F40: now `_rescore_stored` (also rescoring when `SCORER_VERSION` changes, O5) |
+| 14 | Visa route per accepted job, penalty | `_visa`, `insights/visa.py` | [fixed] F17, F18, F22, F23, F25, F26, F28 |
+| 15 | Deadlines and reposts | `_timing`, `insights/timing.py` | [fixed] F19–F21 |
+| 16 | Salaries in euros | `_salaries`, `insights/fx.py` | [fixed] F22, F23, F38 |
+| 17 | Prune state, checkpoint save | `core/jobs.prune_state`, `StateManager.save` | [ok] |
+| 18 | Alert selection (tiers, watch list, mutes, cap), digest, delivery marking | `core/jobs.select_alerts`, `notifications/telegram.py` | [fixed] F39, F44, F60, F64 |
+| 19 | Weekly summary, follow-ups, deadline reminders | `_weekly_summary`, `_follow_ups`, `_deadline_reminders` | [ok] reminders use the same muting rule now (F60) |
+| 20 | Insights: procurement signals, EU tenders, monthly radar | `_insights`, `insights/signals.py`, `insights/radar.py` | [fixed] F43 |
+| 21 | Health notices | `core/health.py` | [ok] |
+| 22 | Final save, run report, raw snapshots, Worker index, retention | `_write_artifacts`, `core/index.py`, `core/report.py` | [fixed] F37, F63 |
 
 ## 2. Sources
 
 | Source | Backend | Key | Min interval | Status |
 |---|---|---|---|---|
-| Greenhouse 13 · Lever 4 · Ashby 5 · SmartRecruiters 2 · Workable 3 · Recruitee 3 · Workday 10 (+ discovered boards on rotation) | `scrapers/ats/*` | none | every run | [ ] |
-| Employer prospector (watch list, award winners, LMIA geo employers, geo-named sponsors) | `insights/prospects.py` | none | 10 employers a run | [ ] |
-| Career sites and sitemaps: Keejob ×5, GEO CAREERS, watched URLs | `scrapers/pages.CareerSitesBackend` | none | every run | [ ] |
-| Generic page extraction (JSON-LD, embedded JSON, HTML) | `scrapers/pages.GenericPagesBackend`, `scrapers/generic.py` | none | budgeted | [ ] |
-| Board discovery: Common Crawl, SearXNG, DuckDuckGo | `scrapers/search.py` | none | every run | [ ] |
-| Remotive, Jobicy, Himalayas, Arbeitnow, RemoteOK | `scrapers/feeds.py` | none | 4–12 h | [ ] |
-| RSS: GoGeomatics, GISjobs, Job Bank ×3, Guichet-Emplois ×3, Tunisie Travail ×5 | `scrapers/feeds.RssFeedBackend` | none | every run | [ ] |
-| JobSpy: Indeed, LinkedIn | `scrapers/feeds.JobSpyBackend` | none | 4 h | [ ] |
-| Adzuna, Jooble, JSearch | `scrapers/feeds.py` | yes | 4 h | [ ] |
-| USAJOBS, ReliefWeb | `scrapers/feeds.py` | yes (not set) | 4–6 h | [ ] |
-| Bundesagentur, France Travail | `scrapers/official.py` | none / yes | 6 h / 4 h | [ ] |
-| freehire | `scrapers/aggregators.py` | none | 4 h | [ ] |
-| Hacker News "Who is hiring?" | `scrapers/community.py` | none | 24 h | [ ] |
-| Reference data: sponsor registers UK, CA, NL, IE, DK · World Bank procurement · EU tenders · exchange rates | `insights/` | none | weekly / daily | [ ] |
+| Greenhouse 13 · Lever 4 · Ashby 5 · SmartRecruiters 2 · Workable 3 · Recruitee 3 · Workday 10 (+ discovered boards on rotation) | `scrapers/ats/*` | none | every run | [fixed] F56: detail requests go to unread postings; Workday reads every page |
+| Employer prospector (watch list, award winners, LMIA geo employers, geo-named sponsors) | `insights/prospects.py` | none | 10 employers a run | [fixed] F45, F46 |
+| Career sites and sitemaps: Keejob ×5, GEO CAREERS, watched URLs | `scrapers/pages.CareerSitesBackend` | none | every run | [fixed] F35, F51, F52 |
+| Generic page extraction (JSON-LD, embedded JSON, HTML) | `scrapers/pages.GenericPagesBackend`, `scrapers/generic.py` | none | budgeted | [fixed] F32; RDFa postings are read now |
+| Board discovery: Common Crawl, SearXNG, DuckDuckGo | `scrapers/search.py` | none | every run | [ok] F43 (board counting); Common Crawl loop already checks the clock |
+| Remotive, Jobicy, Himalayas, Arbeitnow, RemoteOK | `scrapers/feeds.py` | none | 4–12 h | [ok] |
+| RSS: GoGeomatics, GISjobs, Job Bank ×3, Guichet-Emplois ×3, Tunisie Travail ×5 | `scrapers/feeds.RssFeedBackend` | none | every run | [fixed] F48: the six Job Bank / Guichet-Emplois feeds are empty for every query (checked live 2026-09-20) and were replaced by the `jobbank` backend; F53, F55 |
+| JobSpy: Indeed, LinkedIn | `scrapers/feeds.JobSpyBackend` | none | 4 h | [skip] not reviewed this round: a thin wrapper over a third-party scraper (python-jobspy); what it returns goes through the same title filter, fusion and scoring as everything else |
+| Adzuna, Jooble, JSearch | `scrapers/feeds.py` | yes | 4 h | [fixed] F53, F54, F57 |
+| USAJOBS, ReliefWeb | `scrapers/feeds.py` | yes (not set) | 4–6 h | [fixed] F55; ReliefWeb RSS without an appname recorded as O8 |
+| Bundesagentur, France Travail | `scrapers/official.py` | none / yes | 6 h / 4 h | [fixed] F47, F57; France Travail still unverified live (key only in GitHub) |
+| freehire | `scrapers/aggregators.py` | none | 4 h | [fixed] F50 |
+| Hacker News "Who is hiring?" | `scrapers/community.py` | none | 24 h | [fixed] F49 |
+| Reference data: sponsor registers UK, CA, NL, IE, DK · World Bank procurement · EU tenders · exchange rates | `insights/` | none | weekly / daily | [fixed] F24, F43 |
 
 ## 3. Telegram commands (`notifications/commands.py`, `notifications/intents.py`, `cloudflare/worker.js`)
 
 | Group | Commands | Python | Worker (instant) | Status |
 |---|---|---|---|---|
-| Find | `/jobs` `/top` `/high` `/range` `/search` `/why` `/ai` `/sponsors` `/visa` | yes | yes | [ ] |
-| Apply | `/pitch` `/draft` `/prep` `/approach` | yes (AI) | dispatch | [ ] |
-| Track | `/applied` `/outcome` `/hide` `/unhide` `/watch` `/unwatch` | yes | yes, except watch | [ ] |
-| Tune | `/mute` `/unmute` `/muted` `/threshold` `/locations` `/interns` `/possible` `/pause` `/resume` | yes | yes | [ ] |
-| Insight | `/status` `/weekly` `/radar` `/skills` `/signals` `/sources` `/prospects` `/learning` | yes | views for some | [ ] |
-| Control | `/run` `/help` `/start` `/id` | yes | `/id`, `/help` | [ ] |
-| Plain language (EN/FR, typo tolerant) and the Worker's AI hint | `intents.py`, Worker `aiHint` | yes | read-only only | [ ] |
+| Find | `/jobs` `/top` `/high` `/range` `/search` `/why` `/ai` `/sponsors` `/visa` | yes | yes | [fixed] F63, F64, F67 |
+| Apply | `/pitch` `/draft` `/prep` `/approach` | yes (AI) | dispatch | [ok] plus `/ask` (F5) |
+| Track | `/applied` `/outcome` `/hide` `/unhide` `/watch` `/unwatch` | yes | yes, except watch | [fixed] F62 |
+| Tune | `/mute` `/unmute` `/muted` `/threshold` `/locations` `/interns` `/possible` `/pause` `/resume` | yes | yes | [fixed] F58, F60, F65 |
+| Insight | `/status` `/weekly` `/radar` `/skills` `/signals` `/sources` `/prospects` `/learning` | yes | views for some | [ok] |
+| Control | `/run` `/help` `/start` `/id` | yes | `/id`, `/help` | [ok] |
+| Plain language (EN/FR, typo tolerant) and the Worker's AI hint | `intents.py`, Worker `aiHint` | yes | read-only only | [fixed] F59 |
 
 ## 4. Where AI is used today
 
 | Use | Model | Input | Guardrail | Status |
 |---|---|---|---|---|
-| Second opinion per accepted job (fit, summary, concerns, years, sponsorship, languages, requirements) | Workers AI `llama-3.1-8b-instruct` | title, company, place, 3,500 chars | schema validated and clamped; veto only for Possible with fit ≤ 2 | [ ] |
-| `/pitch`, `/prep`, `/approach` | same | known facts + 2,500 chars | drafts only | [ ] |
-| Free-text message → command hint | same, in the Worker | 300 chars | must be a known command; alone may only open read-only views | [ ] |
+| Second opinion per accepted job (fit, summary, concerns, years, sponsorship, languages, requirements) | Workers AI `llama-3.1-8b-instruct` | title, company, place, 3,500 chars | schema validated and clamped; veto only for Possible with fit ≤ 2 | [fixed] F1–F4, F6: model chain, 6,000 chars, `restricted`, `deadline`, decisions, second chances, clock cap |
+| `/pitch`, `/prep`, `/approach` | same | known facts + 2,500 chars | drafts only | [ok] plus `/ask` |
+| Free-text message → command hint | same, in the Worker | 300 chars | must be a known command; alone may only open read-only views | [ok] the hint may name `/ask`; alone it still only opens read-only views |
 
 ## 5. Infrastructure
 
 | Part | Where | Status |
 |---|---|---|
-| Scraper workflow (cron 2 h, push, stale-commit guard, keep-alive) | `.github/workflows/scraper.yml` | [ ] |
-| Commands workflow (webhook dispatch, private inbox) | `.github/workflows/commands.yml` | [ ] |
-| Tests workflow (pytest + node) | `.github/workflows/tests.yml` | [ ] |
-| Worker: webhook, instant replies, prefs writes, dashboard, watchdog, email | `cloudflare/worker.js` | [ ] |
-| Storage: R2, local, backups, conflicts, retention | `geojobbot/storage/` | [ ] |
-| HTTP client: delays, retries, robots, challenge detection, size limits | `geojobbot/utils/http.py`, `utils/robots.py` | [ ] |
-| Secrets and logging redaction | `config.py`, `pipeline.SecretRedactingFilter` | [ ] |
+| Scraper workflow (cron 2 h, push, stale-commit guard, keep-alive) | `.github/workflows/scraper.yml` | [ok] new variables passed through (`AI_MODELS`, `AI_SECOND_CHANCES_PER_RUN`…); `AI_TIME_BUDGET_SECONDS` added |
+| Commands workflow (webhook dispatch, private inbox) | `.github/workflows/commands.yml` | [fixed] F65: inbox items older than six hours are reported, not run |
+| Tests workflow (pytest + node) | `.github/workflows/tests.yml` | [ok] |
+| Worker: webhook, instant replies, prefs writes, dashboard, watchdog, email | `cloudflare/worker.js` | [fixed] F58, F60–F67 |
+| Storage: R2, local, backups, conflicts, retention | `geojobbot/storage/` | [ok] see step 1 |
+| HTTP client: delays, retries, robots, challenge detection, size limits | `geojobbot/utils/http.py`, `utils/robots.py` | [fixed] F51, F52 |
+| Secrets and logging redaction | `config.py`, `pipeline.SecretRedactingFilter` | [ok] no secret reaches a log line or an error text in the paths touched this round |
 
 ---
 
@@ -111,7 +111,7 @@ Findings are numbered `F1, F2…` and carry their evidence, so a fix can be trac
   (titles and employers only) as calibration.
 - **F5 · `/ask` · [fixed]** Free questions answered from the current matches only, with job codes cited and invented codes flagged.
 - **F6 · second chance for near misses · [fixed]** Jobs rejected on relevance alone (never a negative title, the wrong place, work rights or the AI's own veto) that are a few points short, or carry real geospatial content under a title the rules cannot place ("Network Planner" with QGIS and fibre routes), get one reading (`AI_SECOND_CHANCES_PER_RUN`, default 5). Fit ≥ 7 and no restriction lifts the job to Possible; the verdict is stored, so rescoring re-applies it without asking the model again. `/why` says so.
-- **F7 · semantic matching with embeddings (`bge-m3`, 1,075 neurons per million tokens) · [idea]** Would catch relevant jobs with
+- **F7 · semantic matching with embeddings (`bge-m3`, 1,075 neurons per million tokens) · [idea, partly answered by F6]** Would catch relevant jobs with
   unrecognisable titles ("Software Engineer, Maps"). Needs vectors stored per job and a threshold tuned on real data: recorded, not built.
 
 ### Wording rules: sponsorship and work authorisation (`matching/`)  — highest impact, they decide which jobs the user ever sees
@@ -171,19 +171,34 @@ just before the digest. Descriptions follow an edited posting, survive a failed 
 
 ### Sources (`scrapers/`, `insights/prospects.py`)
 
-- **F45 · prospects: `company_hint` was echoed back by Greenhouse/Lever/Ashby, so `company_matches` was always true on those ATSs (a loose slug registered an unrelated company's board) · [ ]**
-- **F46 · prospects: a failed probe still stamped the employer as checked for 120 days; UNKNOWN registry boards were skipped; known matching boards were not promoted · [ ]**
-- **F47 · Bundesagentur read 50 of 816 results in relevance order; detail budget re-spent on the same non-German postings · [ ]**
-- **F48 · Job Bank / Guichet-Emplois feeds returned zero entries and the backend reported SUCCESS; any HTML answer counted as "empty" for every feed · [ ]**
-- **F49 · Hacker News apply link taken from truncated anchor text (131 of 480 links end in "...") · [ ]**
-- **F50 · freehire re-served Adzuna adverts did not fuse with the direct Adzuna job; its parameter guard covered only `q` · [ ]**
-- **F51 · pages served without a charset header decoded as ISO-8859-1: "Ingénieur géomatique" garbled and dropped by the prefilter · [ ]**
-- **F52 · robots.txt with a UTF-8 BOM treated as allow-all · [ ]**
-- **F53 · Atom: `updated` used as the posting date and marked reliable; rel="self" link taken as the job URL; Jooble `updated` marked reliable · [ ]**
-- **F54 · quota-bound backends retried every run after a failure (min interval measured from last success) with 3 HTTP retries each; Adzuna 30 calls a run against 250/day and 25/minute · [ ]**
-- **F55 · loops without a time-budget check (RSS, USAJOBS, Common Crawl retries) could starve extraction · [ ]**
-- **F56 · ATS detail budget always spent on the same first 30 postings (Esri has 451); Workday read only the first 20 hits per term · [ ]**
-- **F57 · France Travail: 31-day window, relevance sort; JSearch `date_posted=month` · [ ]**
+- **F45 · prospects: `company_hint` was echoed back by Greenhouse/Lever/Ashby, so `company_matches` was always true on those ATSs (a loose slug registered an unrelated company's board) · [fixed]**
+- **F46 · prospects: a failed probe still stamped the employer as checked for 120 days; UNKNOWN registry boards were skipped; known matching boards were not promoted · [fixed]**
+- **F47 · Bundesagentur read 50 of 816 results in relevance order; detail budget re-spent on the same non-German postings · [fixed]**
+- **F48 · Job Bank / Guichet-Emplois feeds returned zero entries and the backend reported SUCCESS; any HTML answer counted as "empty" for every feed · [fixed]**
+- **F49 · Hacker News apply link taken from truncated anchor text (131 of 480 links end in "...") · [fixed]**
+- **F50 · freehire re-served Adzuna adverts did not fuse with the direct Adzuna job; its parameter guard covered only `q` · [fixed]**
+- **F51 · pages served without a charset header decoded as ISO-8859-1: "Ingénieur géomatique" garbled and dropped by the prefilter · [fixed]**
+- **F52 · robots.txt with a UTF-8 BOM treated as allow-all · [fixed]**
+- **F53 · Atom: `updated` used as the posting date and marked reliable; rel="self" link taken as the job URL; Jooble `updated` marked reliable · [fixed]**
+- **F54 · quota-bound backends retried every run after a failure (min interval measured from last success) with 3 HTTP retries each; Adzuna 30 calls a run against 250/day and 25/minute · [fixed]**
+- **F55 · loops without a time-budget check (RSS, USAJOBS, Common Crawl retries) could starve extraction · [fixed]**
+- **F56 · ATS detail budget always spent on the same first 30 postings (Esri has 451); Workday read only the first 20 hits per term · [fixed]**
+- **F57 · France Travail: 31-day window, relevance sort; JSearch `date_posted=month` · [fixed]**
+
+**How the sources batch was fixed (F45–F57), and one thing the review had not listed.** While checking the detail budgets
+a wider defect showed: a known job seen again *without* its text (the budget had gone to other postings) was rescored
+from the title alone, which drops a High match to the title-only floor until the text is seen again. Now such a sighting
+only says "still open" (`worse_description` in `process_fused`), records keep `text_seen`, and `RunContext.knows_text`
+lets Greenhouse, SmartRecruiters, Workday and the Bundesagentur spend detail requests on postings nobody has read (texts
+are read again after a week, since postings get edited). Job Bank: verified live that every Atom query returns an empty
+feed while the search page lists the jobs (19 for "surveyor"); the new `jobbank` backend reads the search pages of both
+language sites (robots.txt asks for a 5 s delay and forbids nothing), and the page extractor learned schema.org RDFa,
+which is how those postings carry their text. Prospector: no company hint is passed to the probe (adapters echo it
+back), an outage no longer parks an employer for 120 days, boards known only by name are probed, validated ones are
+promoted to daily reads. Hacker News links come from the `href`. Adzuna adverts re-served by other aggregators fuse by
+advert number. Pages without a charset are read as UTF-8 when they are valid UTF-8; a BOM no longer hides robots rules.
+Atom uses `published` and the `alternate` link; Jooble dates are not reliable. Quota-bound APIs back off after failures
+and Adzuna stays under 25 calls a minute. France Travail is asked newest-first, JSearch for the last week.
 
 ### Telegram, Worker, index (`notifications/`, `cloudflare/worker.js`, `core/index.py`)
 
@@ -210,4 +225,26 @@ and the step follows from the status on record. `/ask` is wired on both sides.
 
 ### Opportunities recorded (not bugs)
 
-- **O1** confirmation with inline Yes/No buttons for writes derived from free text; inline buttons under digests (`callback_query`) so nobody types codes · **O2** "more"/"next" paging instead of truncation · **O3** conversation memory ("why 2", "hide the third one") · **O4** sponsorship-first ordering inside a tier, and a small bonus for a strong visa route · **O5** rescore stored jobs from kept descriptions when rules change (`scorer_version`) · **O6** a bonus and badge for French or Arabic postings · **O7** salary as a structured fact at ingestion · **O8** new verified sources: ReliefWeb RSS (no appname needed), Le Forem open data (Wallonia), AfDB vacancies RSS, AECOM on SmartRecruiters (needs `q=`) · **O9** Greenhouse `?content=true` to read all descriptions in one call.
+- **O1 · inline Yes/No buttons for writes derived from free text, and buttons under digests (`callback_query`) · [idea]** The
+  question and typo guards (F59) remove the dangerous cases; buttons would remove typing codes altogether. Needs
+  `allowed_updates` to include `callback_query` and a Worker handler.
+- **O2 · "more" / "next" paging · [idea]** Long replies are no longer lost or cut through a tag (F64); paging on demand is still open.
+- **O3 · conversation memory ("why 2", "hide the third one") · [idea]**
+- **O4 · sponsorship-first ordering inside a tier, a small bonus for a strong visa route · [idea]**
+- **O5 · rescore stored jobs when rules change · [done]** `SCORER_VERSION`, `rescore_stored`, place re-read.
+- **O6 · a bonus and badge for French or Arabic postings · [idea]**
+- **O7 · salary as a structured fact at ingestion · [idea]**
+- **O8 · new sources · [partly done]** Job Bank search pages (done). Still open, each verified to exist: ReliefWeb RSS (no appname
+  needed), Le Forem open data (Wallonia), AfDB vacancies RSS, AECOM on SmartRecruiters (needs `q=`).
+- **O9 · Greenhouse `?content=true` · [skip]** `knows_text` makes detail requests proportional to *new* postings, for every ATS, so
+  the one-call variant is no longer needed.
+- **O10 · semantic matching with embeddings (F7) · [idea]** Second chances (F6) catch odd titles whose text carries known terms;
+  embeddings would catch the rest ("Software Engineer, Maps"). Needs vectors per job and a threshold tuned on real data.
+
+## State of the review
+
+Every row above has a status. 67 findings: 66 fixed, 1 recorded as an idea (F7). Tests went from 280 to 464 (Python) and from 17
+to 23 (Worker). Not verifiable from the development machine, and therefore to watch in the next runs: the AI model chain
+(the token lives in GitHub secrets; the last model of the chain is the one that worked before), France Travail live answers,
+and the first run after deployment, which rescores stored matches (`rescored_from_text` in the run summary) and may carry
+over alerts that were held back earlier (`carried_over`).

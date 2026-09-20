@@ -205,3 +205,66 @@ def test_rotation_scheduling_budget():
     reasons = {ref.slug: why for ref, why in picked}
     assert reasons["mine"] == "config" and reasons["hot"] == "hot"
     assert sum(1 for w in reasons.values() if w == "rotation") == 3
+
+
+# ------------------------------------------------------------------ detail requests go to postings nobody has read yet
+def test_detail_budget_skips_postings_whose_text_is_on_file_and_a_title_only_sighting_never_rescores():
+    from datetime import timedelta
+
+    from conftest import NOW, make_settings
+    from geojobbot.core.fusion import fuse
+    from geojobbot.core.jobs import process_fused
+
+    # first run: the posting is read in full and stored as a High match
+    state = {"jobs": {}, "boards": {}}
+    ctx = make_ctx(FakeSession(gh_routes()), state=state)
+    result = GreenhouseAdapter().fetch_board(ctx, BoardRef("greenhouse", "acme"), geo_context=True, variant=None, company_hint=None)
+    process_fused(fuse(result.jobs, state["jobs"], NOW), state, make_settings(), NOW)
+    rec = state["jobs"]["greenhouse:1"]
+    assert rec["tier"] == "high" and rec["text_seen"] and rec["description_length"] > 300
+    score = rec["score"]
+    # next run: no detail request for it (the budget is for unread postings), only the listing
+    session = FakeSession(gh_routes())
+    later = NOW + timedelta(hours=2)
+    ctx = make_ctx(session, state=state)
+    assert ctx.knows_text("greenhouse:1") and not ctx.knows_text("greenhouse:999") and not ctx.knows_text(None)
+    result = GreenhouseAdapter().fetch_board(ctx, BoardRef("greenhouse", "acme"), geo_context=True, variant=None, company_hint=None)
+    assert [c[1] for c in session.calls if c[1].endswith("/jobs/1")] == [] and result.jobs[0].description == ""
+    outcome = process_fused(fuse(result.jobs, state["jobs"], later), state, make_settings(), later)
+    rec = state["jobs"]["greenhouse:1"]
+    assert rec["score"] == score and rec["tier"] == "high" and rec["description_length"] > 300  # seen again, not scored from the title
+    assert rec["last_seen"] > rec["first_seen"] and outcome.counts["updated"] == 0
+    # after a week the text is read again: postings get edited
+    stale = make_ctx(FakeSession(gh_routes()), state=state)
+    stale.now = NOW + timedelta(days=8)
+    assert not stale.knows_text("greenhouse:1")
+
+
+def test_workday_reads_every_page_and_reports_known_postings_without_a_detail_request():
+    origin = "https://acme.wd5.myworkdayjobs.com"
+    api = f"{origin}/wday/cxs/acme/External"
+    offsets = []
+
+    def jobs(method, url, params, body):
+        if body.get("searchText") != "GIS":
+            return FakeResponse(200, {"total": 0, "jobPostings": []})
+        offsets.append(body["offset"])
+        rows = [{"title": f"GIS Analyst {i}", "externalPath": f"/job/Denver/GIS-Analyst_R{i}", "locationsText": "Denver, CO", "bulletFields": [f"R{i}"]}
+                for i in range(body["offset"], min(body["offset"] + 20, 25))]
+        return FakeResponse(200, {"total": 25, "jobPostings": rows})
+
+    def detail(method, url, params, body):
+        number = url.rsplit("_R", 1)[1]
+        return FakeResponse(200, {"jobPostingInfo": {"title": f"GIS Analyst {number}", "jobDescription": "<p>" + GIS_DESCRIPTION + "</p>",
+                                                     "location": "Denver, CO", "jobReqId": f"R{number}"}})
+
+    routes = {f"{api}/jobs": jobs}
+    routes.update({f"{api}/job/Denver/GIS-Analyst_R{i}": detail for i in range(25)})
+    state = {"jobs": {"workday:acme:r3": {"text_seen": "2026-09-15T00:00:00Z", "description_length": 900, "aliases": ["workday:acme:r3"]}}}
+    session = FakeSession(routes)
+    ctx = make_ctx(session, state=state)
+    result = WorkdayAdapter().fetch_board(ctx, BoardRef("workday", "acme/wd5/External"), geo_context=True, variant=None, company_hint="Acme")
+    assert offsets == [0, 20] and len(result.jobs) == 25  # the second page too
+    known = next(j for j in result.jobs if j.native_id == "workday:acme:R3")
+    assert known.description == "" and known.company == "Acme"
+    assert not [c for c in session.calls if c[1].endswith("_R3")]  # no detail request for the posting already on file

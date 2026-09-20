@@ -59,6 +59,9 @@ class FreehireBackend(Backend):
             if "q" in ignored:  # the API drops filters it does not know instead of refusing: never take that for a result
                 errors.append(f"{term}: the search parameter was ignored")
                 continue
+            dropped = sorted(set(ignored) & {"q_fields", "sort", "limit"})
+            if dropped:  # still results for the term, but no longer the newest hundred by title: say so (PARTIAL)
+                errors.append(f"{term}: ignored by the API: {', '.join(dropped)}")
             ok += 1
             for item in items:
                 if not isinstance(item, dict) or item.get("closed_at"):

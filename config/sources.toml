@@ -158,43 +158,8 @@ url = "https://www.gisjobs.com/rssjobs"
 source_type = "feed"
 geospatial = true
 
-# Government of Canada Job Bank (EN) and Guichet-Emplois (FR). The feed matches occupation titles,
-# not free text: "GIS" and "cartographer" return nothing, the searches below do.
-[[rss_feeds]]
-name = "jobbank-surveyor"
-url = "https://www.jobbank.gc.ca/jobsearch/feed/jobSearchRSSfeed?searchstring=surveyor&sort=M&rows=100"
-source_type = "government"
-geospatial = false
-
-[[rss_feeds]]
-name = "jobbank-survey-technician"
-url = "https://www.jobbank.gc.ca/jobsearch/feed/jobSearchRSSfeed?searchstring=survey%20technician&sort=M&rows=100"
-source_type = "government"
-geospatial = false
-
-[[rss_feeds]]
-name = "jobbank-geomatics"
-url = "https://www.jobbank.gc.ca/jobsearch/feed/jobSearchRSSfeed?searchstring=geomatics&sort=M&rows=100"
-source_type = "government"
-geospatial = true
-
-[[rss_feeds]]
-name = "guichetemplois-geomatique"
-url = "https://www.guichetemplois.gc.ca/jobsearch/feed/jobSearchRSSfeed?searchstring=g%C3%A9omatique&sort=M&rows=100"
-source_type = "government"
-geospatial = true
-
-[[rss_feeds]]
-name = "guichetemplois-arpenteur"
-url = "https://www.guichetemplois.gc.ca/jobsearch/feed/jobSearchRSSfeed?searchstring=arpenteur&sort=M&rows=100"
-source_type = "government"
-geospatial = false
-
-[[rss_feeds]]
-name = "guichetemplois-topographe"
-url = "https://www.guichetemplois.gc.ca/jobsearch/feed/jobSearchRSSfeed?searchstring=topographe&sort=M&rows=100"
-source_type = "government"
-geospatial = false
+# Government of Canada Job Bank (EN) and Guichet-Emplois (FR): their Atom feeds still answer, but without entries, so
+# they are read from the search pages by the "jobbank" backend (geojobbot/scrapers/official.py).
 
 # Tunisie Travail (WordPress job board): one feed per search term; titles read "Company recrute Title".
 # The "SIG" search is broad, so irrelevant titles are prefiltered; the others are precise.

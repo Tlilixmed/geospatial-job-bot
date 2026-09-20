@@ -38,6 +38,7 @@ GENERIC_TOKENS = {"land", "survey", "surveys", "surveying", "surveyors", "geomat
                   "solutions", "consulting", "consultants", "engineering", "associates", "partners", "company", "global",
                   "international", "north", "south", "east", "west", "first", "general", "national", "new", "city", "county"}
 RECHECK_DAYS = 120
+MAX_PROBE_FAILURES = 3  # technical failures in a row before an employer is set aside like any other
 WATCH_RECHECK_DAYS = 14
 MAX_PROSPECTS = 4000
 PRIORITY = {"watch": 0, "award": 1, "lmia": 2, "register": 3}
@@ -150,9 +151,13 @@ class ProspectBackend(Backend):
             errors += boards is None
             with ctx.lock:
                 previous = book.get(target["key"]) or {}
-                book[target["key"]] = {"name": target["name"], "kind": target["kind"], "why": target["why"],
-                                       "country": target["country"], "checked": to_iso(ctx.now),
-                                       "boards": sorted(set(previous.get("boards") or []) | set(boards or []))}
+                failed = int(previous.get("failed") or 0) + 1 if boards is None else 0
+                entry = {"name": target["name"], "kind": target["kind"], "why": target["why"], "country": target["country"],
+                         "checked": to_iso(ctx.now), "boards": sorted(set(previous.get("boards") or []) | set(boards or []))}
+                if 0 < failed < MAX_PROBE_FAILURES:
+                    # the ATS was unreachable, which says nothing about the employer: look again next run, not in 120 days
+                    entry.update(checked=previous.get("checked"), failed=failed)
+                book[target["key"]] = entry
             found_boards += len(boards or [])
         with ctx.lock:  # drop entries that are no longer targets, and cap the book
             keep = {t["key"] for t in targets}
@@ -176,13 +181,15 @@ class ProspectBackend(Backend):
                     continue
                 ref = BoardRef(ats, slug)
                 known = ctx.registry.entry(ref.key)
-                if known is not None:  # already in the registry: a hit only if it is alive and ours
+                if known is not None and known.get("status") != "UNKNOWN":  # read before: a hit only if it is alive and ours
                     if known.get("status") == "VALID" and company_matches(target["name"], known.get("company"), slug):
+                        ctx.registry.register(ref, "prospect")  # known from the slow rotation: a proven sponsor is read daily
                         found.append(ref.key)
                     continue
                 attempts += 1
                 try:
-                    result = adapter.fetch_board(ctx, ref, geo_context=True, variant=None, company_hint=target["name"])
+                    # no company hint: an adapter given one reports it back, and any board would then "match" its employer
+                    result = adapter.fetch_board(ctx, ref, geo_context=True, variant=None, company_hint=None)
                 except FetchError as exc:
                     failures += exc.kind != "NOT_FOUND"
                     continue
@@ -194,11 +201,14 @@ class ProspectBackend(Backend):
                     continue  # unknown account, or an ATS that answers "empty" for anything
                 if not company_matches(target["name"], result.company, slug):
                     continue
+                # an ATS that does not name its customer reports the slug ("Summitgeomatics"): the register's spelling is better
+                slug_like = not result.company or normalize_company(result.company).replace(" ", "") == slug.replace("-", "")
+                company = target["name"] if slug_like else result.company
                 ctx.registry.register(ref, "prospect")  # read daily from now on (BoardRegistry.select)
-                ctx.registry.record(ref, "VALID", job_count=result.listed, variant=result.variant,
-                                    company=result.company or target["name"])
+                ctx.registry.record(ref, "VALID", job_count=result.listed, variant=result.variant, company=company)
                 for job in result.jobs:  # the probe already read the board: keep what it found
                     job.board_key, job.geo_context, job.from_rotation = ref.key, True, False
+                    job.company = company
                 out.jobs.extend(result.jobs)
                 out.prefiltered_out += result.prefiltered_out
                 found.append(ref.key)

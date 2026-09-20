@@ -272,3 +272,54 @@ def test_annotations_survive_a_job_being_seen_again():
     again = JobRecord.from_dict(stored).to_dict()
     assert again["learned"] == {"adj": 4, "because": ["+4 lidar"]} and again["visa"] == {"verdict": "open"} and again["watched"] is True
     assert "extra" not in again and again["title"] == "GIS Analyst"
+
+
+def test_prospector_trusts_no_echo_retries_after_outages_and_promotes_known_boards():
+    from geojobbot.core.boards import BoardRegistry
+    from geojobbot.insights import prospects
+    from geojobbot.models import RawJob
+    from geojobbot.scrapers.ats.base import BoardResult
+    from geojobbot.scrapers.ats.detect import BoardRef
+    from geojobbot.utils.http import FetchError
+
+    class EchoAdapter:
+        """Like Lever and Ashby: the API does not name its customer, so the adapter reports the hint, else the slug."""
+        down = False
+
+        def fetch_board(self, ctx, ref, *, geo_context, variant=None, company_hint=None):
+            if self.down:
+                raise FetchError("SERVER_ERROR", "503", status=503)
+            if ref.slug not in ("summit", "acmesurveys"):
+                raise FetchError("NOT_FOUND", "404", status=404)
+            jobs = [RawJob(source_type="ats", source_name="lever", source_url="https://x.example", title="Land Surveyor", company="x")]
+            return BoardResult("VALID", jobs=jobs, listed=1, company=company_hint or ref.slug.title())
+
+    data = {"registers": {"ca": {"summit geomatics": {"n": "Summit Geomatics Ltd", "g": True, "o": ["Land surveyors"]}},
+                          "uk": {"acme surveys": {"n": "ACME SURVEYS LIMITED"}}}}
+    state = {"boards": {}}
+    ctx = make_ctx(FakeSession(), state=state)
+    ctx.registry = BoardRegistry(state, NOW)
+    adapter = EchoAdapter()
+    out = prospects.ProspectBackend({"lever": adapter}, data, []).run(ctx)
+    assert state["prospects"]["summit geomatics"]["boards"] == []  # lever:summit is some other Summit: the echo proved nothing
+    assert state["prospects"]["acme surveys"]["boards"] == ["lever:acmesurveys"]  # a slug spelling the whole name is enough
+    assert [j.company for j in out.jobs] == ["ACME SURVEYS LIMITED"] and state["boards"]["lever:acmesurveys"]["company"] == "ACME SURVEYS LIMITED"
+    # an outage says nothing about the employer: it is looked at again next run, and set aside only after three failures
+    state = {"boards": {}}
+    ctx = make_ctx(FakeSession(), state=state)
+    ctx.registry = BoardRegistry(state, NOW)
+    adapter.down = True
+    for expected in (1, 2):
+        out = prospects.ProspectBackend({"lever": adapter}, data, []).run(ctx)
+        assert out.details["probed"] == 2 and state["prospects"]["acme surveys"].get("failed") == expected
+        assert state["prospects"]["acme surveys"]["checked"] is None
+    prospects.ProspectBackend({"lever": adapter}, data, []).run(ctx)
+    assert state["prospects"]["acme surveys"]["checked"] and "failed" not in state["prospects"]["acme surveys"]
+    # a board discovery registered but never read is probed; one the rotation already validated is promoted to daily reads
+    state = {"boards": {}}
+    ctx = make_ctx(FakeSession(), state=state)
+    ctx.registry = BoardRegistry(state, NOW)
+    ctx.registry.register(BoardRef("lever", "acmesurveys"), "commoncrawl")
+    adapter.down = False
+    prospects.ProspectBackend({"lever": adapter}, data, []).run(ctx)
+    assert state["prospects"]["acme surveys"]["boards"] == ["lever:acmesurveys"] and state["boards"]["lever:acmesurveys"]["origin"] == "prospect"

@@ -178,6 +178,7 @@ def process_fused(fused_jobs: list[FusedJob], state: dict, settings, now) -> Pro
             rec = JobRecord(canonical_id=fused.canonical_id, title=fused.title, first_seen=to_iso(now),
                             last_seen=to_iso(now), from_rotation=fused.from_rotation)
             _apply(rec, fused, result)
+            rec.text_seen = to_iso(now) if len(fused.description or "") >= 300 else None
             _merge_sources(rec, fused, now)
             rec.aliases = fused.aliases
             rec.board_keys = sorted(fused.board_keys)
@@ -191,7 +192,12 @@ def process_fused(fused_jobs: list[FusedJob], state: dict, settings, now) -> Pro
             rec.board_keys = sorted(set(rec.board_keys or []) | fused.board_keys)
             outcome.counts["already_seen"] += 1
             better_description = rec.description_length < 300 <= len(fused.description or "")
-            if fused.priority >= rec.field_priority or better_description:
+            # Seen again without its text (the detail budget went to newer postings): the job is still open, which is all
+            # this observation says. Scoring it from the title alone would drop a High match to the title-only floor.
+            worse_description = len(fused.description or "") < 300 <= rec.description_length
+            if len(fused.description or "") >= 300:
+                rec.text_seen = to_iso(now)
+            if (fused.priority >= rec.field_priority and not worse_description) or better_description:
                 before = {
                     "title": normalize_title(rec.title), "location_raw": rec.location_raw, "salary": rec.salary,
                     "remote": rec.remote, "employment_type": rec.employment_type,
@@ -233,7 +239,7 @@ def alert_block_reason(rec: dict, settings, now) -> str | None:
 LISTED_DAYS = 5            # sources polled every run
 LISTED_DAYS_ROTATION = 21  # boards checked on a slow rotation
 LISTED_DAYS_PAGES = 35     # pages and sitemaps: a cached page is not fetched again for up to 30 days
-PAGE_METHODS = {"jsonld", "html", "embedded_json"}  # read from a fetched page, not from a feed or an API
+PAGE_METHODS = {"jsonld", "rdfa", "html", "embedded_json"}  # read from a fetched page, not from a feed or an API
 
 
 def listed_days(rec: dict) -> int:

@@ -16,6 +16,7 @@ job keeps the same canonical id across runs and sources.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 
 from ..models import SOURCE_PRIORITY, RawJob
@@ -75,12 +76,21 @@ class FusedJob:
         return list(seen.values())
 
 
+# An Adzuna advert keeps its number wherever it is re-served (freehire, Jooble and others pass Adzuna links on):
+# https://www.adzuna.ca/land/ad/5012345678?..., https://www.adzuna.fr/details/5012345678
+ADZUNA_AD_RE = re.compile(r"//(?:www\.)?adzuna\.[a-z.]+/(?:land/ad|details)/(\d{6,})")
+
+
 def strong_keys(raw: RawJob) -> list[str]:
     from ..scrapers.ats.detect import detect
 
     keys = []
     if raw.native_id:
         keys.append(raw.native_id.lower())
+    for candidate in (raw.url, raw.apply_url):
+        advert = ADZUNA_AD_RE.search(candidate or "")
+        if advert and f"adzuna:{advert.group(1)}" not in keys:
+            keys.append(f"adzuna:{advert.group(1)}")
     for candidate in (raw.url, raw.apply_url):
         native, _ = detect(candidate)
         if native and native.lower() not in keys:

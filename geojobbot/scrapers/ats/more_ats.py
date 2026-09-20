@@ -23,6 +23,8 @@ from .detect import BoardRef, detect
 
 WORKDAY_SEARCH_TERMS = ["GIS", "geospatial", "mapping", "LiDAR", "cartographer", "surveying", "remote sensing",
                         "photogrammetry", "geomatics", "spatial"]
+WORKDAY_PAGE = 20      # the most the Workday search serves per request
+WORKDAY_MAX_PAGES = 3
 
 
 class SmartRecruitersAdapter(ATSAdapter):
@@ -88,7 +90,7 @@ class SmartRecruitersAdapter(ATSAdapter):
                 result.prefiltered_out += 1
                 continue
             detail = None
-            if fetched < budget and not ctx.out_of_time(120):
+            if fetched < budget and not ctx.knows_text(f"smartrecruiters:{item['id']}") and not ctx.out_of_time(120):
                 detail = self._detail(ctx, ref.slug, str(item["id"]))
                 fetched += 1
             raw = self._to_raw(item, detail, ref.slug, geo_context)
@@ -272,6 +274,18 @@ class WorkdayAdapter(ATSAdapter):
             source_job_id=str(req_id) if req_id else None, extraction_method="api", geo_context=geo_context,
         )
 
+    def _listed(self, ref: BoardRef, path: str, geo_context: bool, item: dict, company: str | None) -> RawJob:
+        """A posting as the search results show it (no detail request): enough to say it is still open."""
+        tenant, wd, site = self._parts(ref)
+        req_id = next(iter(item.get("bulletFields") or []), None)
+        public_url = f"https://{tenant}.{wd}.myworkdayjobs.com/{site}{path}"
+        return RawJob(
+            source_type="ats", source_name="workday", source_url=public_url, title=(item.get("title") or "").strip(),
+            company=company or prettify_slug(tenant), url=public_url, apply_url=public_url, description="",
+            location_raw=item.get("locationsText") or "", native_id=f"workday:{tenant.lower()}:{str(req_id).upper()}" if req_id else None,
+            source_job_id=str(req_id) if req_id else None, extraction_method="api", geo_context=geo_context,
+        )
+
     def fetch_board(self, ctx: RunContext, ref: BoardRef, *, geo_context: bool, variant=None, company_hint=None):
         try:
             tenant, wd, site = self._parts(ref)
@@ -283,23 +297,28 @@ class WorkdayAdapter(ATSAdapter):
         for term in WORKDAY_SEARCH_TERMS:
             if ctx.out_of_time(150):
                 break
-            try:
-                payload = ctx.client.post(api, json={"appliedFacets": {}, "limit": 20, "offset": 0, "searchText": term},
-                                          headers={"Accept": "application/json"}, detect_challenge=False).json()
-            except FetchError as exc:
-                if exc.kind in ("NOT_FOUND", "HTTP_ERROR") and not postings:
-                    return BoardResult("INVALID", error=f"Workday site not found ({exc.status})", http_status=exc.status)
-                return self.error_result(exc) if not postings else BoardResult(
-                    "VALID", error=str(exc), listed=listed_total)
-            except ValueError:
-                return BoardResult("SCHEMA_MISMATCH", error="non-JSON Workday response")
-            if not isinstance(payload, dict) or "jobPostings" not in payload:
-                return BoardResult("SCHEMA_MISMATCH", error="missing 'jobPostings'")
-            listed_total = max(listed_total, int(payload.get("total") or 0))
-            for item in payload.get("jobPostings") or []:
-                path = item.get("externalPath")
-                if path:
-                    postings.setdefault(path, item)
+            for offset in range(0, WORKDAY_PAGE * WORKDAY_MAX_PAGES, WORKDAY_PAGE):  # Workday serves 20 hits at a time
+                try:
+                    payload = ctx.client.post(api, json={"appliedFacets": {}, "limit": WORKDAY_PAGE, "offset": offset, "searchText": term},
+                                              headers={"Accept": "application/json"}, detect_challenge=False).json()
+                except FetchError as exc:
+                    if exc.kind in ("NOT_FOUND", "HTTP_ERROR") and not postings:
+                        return BoardResult("INVALID", error=f"Workday site not found ({exc.status})", http_status=exc.status)
+                    return self.error_result(exc) if not postings else BoardResult(
+                        "VALID", error=str(exc), listed=listed_total)
+                except ValueError:
+                    return BoardResult("SCHEMA_MISMATCH", error="non-JSON Workday response")
+                if not isinstance(payload, dict) or "jobPostings" not in payload:
+                    return BoardResult("SCHEMA_MISMATCH", error="missing 'jobPostings'")
+                total = int(payload.get("total") or 0)
+                listed_total = max(listed_total, total)
+                page = payload.get("jobPostings") or []
+                for item in page:
+                    path = item.get("externalPath")
+                    if path:
+                        postings.setdefault(path, item)
+                if len(page) < WORKDAY_PAGE or offset + WORKDAY_PAGE >= total or ctx.out_of_time(150):
+                    break
         result = BoardResult("VALID", listed=listed_total, company=company_hint)
         budget = ctx.settings.max_detail_fetches_per_board
         fetched = 0
@@ -308,8 +327,12 @@ class WorkdayAdapter(ATSAdapter):
             if not ctx.prefilter(title, geo_context):
                 result.prefiltered_out += 1
                 continue
+            req_id = next(iter(item.get("bulletFields") or []), None)
+            if req_id and ctx.knows_text(f"workday:{tenant.lower()}:{str(req_id).upper()}"):
+                result.jobs.append(self._listed(ref, path, geo_context, item, company_hint))  # still open; its text is on file
+                continue
             if fetched >= budget or ctx.out_of_time(120):
-                break
+                continue  # read at a later run; the known postings further down the list are still reported
             fetched += 1
             raw = self._detail(ctx, ref, path, geo_context, item)
             if raw.title:

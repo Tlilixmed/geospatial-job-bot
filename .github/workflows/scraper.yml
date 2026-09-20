@@ -108,6 +108,7 @@ jobs:
           AI_MODELS: ${{ vars.AI_MODELS }}
           AI_REVIEWS_PER_RUN: ${{ vars.AI_REVIEWS_PER_RUN }}
           AI_SECOND_CHANCES_PER_RUN: ${{ vars.AI_SECOND_CHANCES_PER_RUN }}
+          AI_TIME_BUDGET_SECONDS: ${{ vars.AI_TIME_BUDGET_SECONDS }}
           VISA_PENALTY: ${{ vars.VISA_PENALTY }}
           MY_LANGUAGES: ${{ vars.MY_LANGUAGES }}
           MY_SKILLS: ${{ vars.MY_SKILLS }}

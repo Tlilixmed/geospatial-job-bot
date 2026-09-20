@@ -357,18 +357,23 @@ class RssFeedBackend(Backend):
                         return (el.text or el.get("href") or "").strip()
                 return ""
             title = html_to_text(find("title", "{http://www.w3.org/2005/Atom}title"))
-            link = find("link", "{http://www.w3.org/2005/Atom}link")
+            link = find("link")
+            if not link:  # Atom: the posting's page is rel="alternate" (or no rel), never rel="self" or an enclosure
+                links = entry.findall("{http://www.w3.org/2005/Atom}link")
+                pick = next((el for el in links if (el.get("rel") or "alternate") == "alternate" and el.get("href")), None)
+                link = (pick.get("href") if pick is not None else "").strip()
             # WordPress feeds (job boards built on WP Job Manager) carry the full posting in content:encoded
             desc = find("{http://purl.org/rss/1.0/modules/content/}encoded", "description",
                         "{http://www.w3.org/2005/Atom}summary", "{http://www.w3.org/2005/Atom}content")
-            posted = parse_datetime(find("pubDate", "{http://www.w3.org/2005/Atom}updated",
-                                         "{http://www.w3.org/2005/Atom}published"))
+            posted = parse_datetime(find("pubDate", "{http://www.w3.org/2005/Atom}published",
+                                         "{http://purl.org/dc/elements/1.1/}date"))
+            touched = None if posted else parse_datetime(find("{http://www.w3.org/2005/Atom}updated"))  # not a posting date
             if not title:
                 continue
             jobs.append(RawJob(
                 source_type=feed.get("source_type", "feed"), source_name=f"rss:{feed.get('name', 'feed')}",
                 source_url=feed["url"], title=title, company=feed.get("company"), url=link or None,
-                apply_url=link or None, description=html_to_text(desc), posted_at=posted,
+                apply_url=link or None, description=html_to_text(desc), posted_at=posted or touched,
                 posted_at_reliable=posted is not None, native_id=_link_native(link),
                 source_job_id=find("guid", "{http://www.w3.org/2005/Atom}id") or None, extraction_method="api",
                 geo_context=bool(feed.get("geospatial", False)),
@@ -384,6 +389,9 @@ class RssFeedBackend(Backend):
         out = BackendOutput()
         errors, ok, queued, empty_html = [], 0, 0, []
         for feed in self.feeds:
+            if ctx.out_of_time(300):
+                errors.append("time budget reached before every feed was read")
+                break
             try:
                 response = ctx.client.get(feed["url"], detect_challenge=False)
                 body = response.content
@@ -438,6 +446,8 @@ class UsaJobsBackend(Backend):
                    "Authorization-Key": ctx.settings.usajobs_api_key}
         errors, ok, seen = [], 0, set()
         for keyword in self.keywords:
+            if ctx.out_of_time(200):
+                break
             try:
                 data = ctx.client.get_json("https://data.usajobs.gov/api/search", headers=headers, respect_robots=False,
                                            params={"Keyword": keyword, "ResultsPerPage": 100,
@@ -647,6 +657,7 @@ class AdzunaBackend(Backend):
     phase = "extraction"
     source_type = "aggregator"
     min_interval_hours = 4
+    quota_bound = True
     terms = ["GIS", "geospatial", "geomatics", "LiDAR", "cartographer", "remote sensing", "photogrammetry",
              "surveying technician"]
     api = "https://api.adzuna.com/v1/api/jobs/{country}/search/1"
@@ -733,6 +744,7 @@ class JoobleBackend(Backend):
     phase = "extraction"
     source_type = "aggregator"
     min_interval_hours = 4
+    quota_bound = True
     terms = ["GIS", "geospatial", "geomatics", "LiDAR", "cartographer", "SIG", "géomatique", "topographe",
              "télédétection"]
 
@@ -804,7 +816,7 @@ class JoobleBackend(Backend):
             title=html_to_text(item.get("title")), company=item.get("company") or None, url=url, apply_url=url,
             description=html_to_text(item.get("snippet")), location_raw=item.get("location") or "",
             employment_type=item.get("type") or None, salary=item.get("salary") or None, posted_at=posted,
-            posted_at_reliable=posted is not None, native_id=_link_native(url),
+            posted_at_reliable=False, native_id=_link_native(url),  # "updated" is when Jooble touched the advert
             source_job_id=f"jooble:{item['id']}" if item.get("id") else None, extraction_method="api",
             geo_context=True,
         )
@@ -819,6 +831,7 @@ class JSearchBackend(Backend):
     phase = "extraction"
     source_type = "aggregator"
     min_interval_hours = 4  # the free quota is per month: 6 runs a day, however often the workflow fires
+    quota_bound = True
     api = "https://jsearch.p.rapidapi.com/search"
     host = "jsearch.p.rapidapi.com"
 
@@ -833,7 +846,8 @@ class JSearchBackend(Backend):
     @staticmethod
     def date_posted(settings) -> str:
         days = days_window(settings)
-        return "today" if days <= 1 else "3days" if days <= 3 else "week" if days <= 7 else "month"
+        # results come by relevance, ten to a page: "month" is mostly postings too old to alert on, so a week it is
+        return "today" if days <= 1 else "3days" if days <= 3 else "week" if days <= 21 else "month"
 
     def run(self, ctx: RunContext) -> BackendOutput:
         out = BackendOutput()

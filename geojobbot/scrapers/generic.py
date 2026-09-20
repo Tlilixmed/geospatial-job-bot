@@ -193,6 +193,35 @@ def parse_jsonld_postings(soup: BeautifulSoup, page_url: str, now=None) -> tuple
     return jobs, expired, errors
 
 
+# ---------------------------------------------------------------------------- RDFa (schema.org as HTML attributes)
+def parse_rdfa_posting(soup: BeautifulSoup, page_url: str) -> list[RawJob]:
+    """One posting marked up with schema.org `property="..."` attributes instead of JSON-LD, as Canada's Job Bank and
+    Guichet-Emplois do. Only a page that names a title AND carries a real description counts."""
+    def text_of(prop: str) -> str:
+        node = soup.select_one(f'[property="{prop}"]')
+        if node is None:
+            return ""
+        return clean_whitespace(node.get("content") or node.get_text(" "))
+
+    description_node = soup.select_one('[property="description"]')
+    title = text_of("title")
+    if description_node is None or not title or len(title) > 200:
+        return []
+    description = html_to_text(str(description_node))
+    if len(description) < MIN_FULL_DESCRIPTION:
+        return []
+    posted = parse_datetime(re.sub(r"^(?:posted on|publi\w+ le|affich\w+ le)\s+", "", text_of("datePosted"), flags=re.I))  # "Posted on September 17, 2026"
+    place = ", ".join(p for p in (text_of("addressLocality"), text_of("addressRegion"), text_of("addressCountry")) if p)
+    salary = text_of("baseSalary") or None
+    native, _ = detect(page_url)
+    return [RawJob(
+        source_type="employer_page", source_name="generic_rdfa", source_url=page_url, title=title,
+        company=text_of("hiringOrganization") or None, url=page_url, apply_url=page_url, description=description,
+        location_raw=place, employment_type=text_of("employmentType") or None, salary=salary, posted_at=posted,
+        posted_at_reliable=posted is not None, native_id=native, extraction_method="rdfa",
+    )]
+
+
 # ---------------------------------------------------------------------------- embedded JSON
 _TITLE_KEYS = ("title", "jobTitle", "job_title", "positionTitle", "postingTitle")
 _DESC_KEYS = ("description", "jobDescription", "descriptionHtml", "job_description", "descriptionPlain", "content")
@@ -379,6 +408,14 @@ def extract_jobs(html: str | bytes, page_url: str, now=None) -> ExtractionResult
             return result
     except Exception as exc:
         result.errors.append(f"jsonld: {type(exc).__name__}")
+
+    try:
+        jobs = parse_rdfa_posting(soup, page_url)
+        if jobs:
+            result.jobs, result.method = jobs, "rdfa"
+            return result
+    except Exception as exc:
+        result.errors.append(f"rdfa: {type(exc).__name__}")
 
     page_title = None
     h1 = soup.find("h1")

@@ -137,7 +137,7 @@ def test_jsearch_rotates_queries_within_budget_and_parses():
     job = out.jobs[0]
     assert (job.company, job.source_name, job.location_raw, job.source_job_id) == ("MapCo", "jsearch:LinkedIn", "Tunis, TN", "jsearch:abc")
     assert job.posted_at.day == 15 and job.description == GIS_DESCRIPTION and job.employment_type == "FULLTIME"
-    assert len(s.calls) == 1 and all(p in s.calls[0][1] for p in ("query=GIS", "country=ca", "date_posted=month"))
+    assert len(s.calls) == 1 and all(p in s.calls[0][1] for p in ("query=GIS", "country=ca", "date_posted=week"))  # relevance-ordered: a month of results is mostly too old to alert on
     assert ctx.cursor("jsearch")["index"] == 1
     JSearchBackend().run(ctx)  # next run takes the next query
     assert "query=SIG" in s.calls[1][1] and "country=tn" in s.calls[1][1] and ctx.cursor("jsearch")["index"] == 2
@@ -242,3 +242,39 @@ def test_reliefweb_needs_appname_and_parses():
     job = out.jobs[0]
     assert (job.company, job.location_raw, job.source_job_id) == ("UNHCR", "Tunis, Tunisia", "reliefweb:4001")
     assert "Apply online." in job.description and "appname=approved-app" in s.calls[0][1]
+
+
+def test_atom_entries_use_the_published_date_and_the_alternate_link():
+    atom = b"""<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom"><entry><title>GIS Analyst</title>
+      <link rel="self" href="https://feed.example/entries/1.xml"/><link rel="alternate" href="https://acme.example/jobs/1"/>
+      <link rel="enclosure" href="https://feed.example/logo.png"/><id>tag:feed.example,2026:1</id>
+      <published>2026-09-10T08:00:00Z</published><updated>2026-09-16T08:00:00Z</updated><summary>x</summary></entry>
+      <entry><title>LiDAR Technician</title><link href="https://acme.example/jobs/2"/><updated>2026-09-16T08:00:00Z</updated></entry></feed>"""
+    first, second = RssFeedBackend.parse(atom, {"name": "f", "url": "https://feed.example/atom"})
+    assert first.url == "https://acme.example/jobs/1" and first.posted_at.day == 10 and first.posted_at_reliable
+    assert second.url == "https://acme.example/jobs/2" and second.posted_at.day == 16 and not second.posted_at_reliable  # "updated" is not a posting date
+
+
+def test_a_quota_bound_api_that_failed_is_not_asked_again_every_run():
+    from datetime import timedelta
+
+    from conftest import NOW, FakeS3, make_settings
+    from test_pipeline import FakeNotifier
+
+    from geojobbot.core.pipeline import Pipeline
+    from geojobbot.models import BackendOutput
+    from geojobbot.scrapers.base import Backend
+    from geojobbot.storage.r2 import R2Store
+
+    class Metered(Backend):
+        name, phase, min_interval_hours, quota_bound, calls = "metered", "extraction", 4, True, 0
+
+        def run(self, ctx):
+            Metered.calls += 1
+            return BackendOutput(status="FAILED", error="RATE_LIMITED")
+
+    s3 = FakeS3()
+    for minutes, expected in ((0, 1), (20, 1), (70, 2), (100, 2), (200, 3)):  # an hour after one failure, two hours after two
+        Pipeline(make_settings(), store=R2Store("b", client=s3), backends=[Metered()], notifier=FakeNotifier(), now=NOW + timedelta(minutes=minutes),
+                 http_session=FakeSession(), sleep=lambda x: None).run()
+        assert Metered.calls == expected, minutes

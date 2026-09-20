@@ -14,11 +14,12 @@ from __future__ import annotations
 
 import base64
 import logging
+import re
 
 from ..models import BackendOutput, RawJob
 from ..utils.dates import parse_datetime
 from ..utils.http import FetchError
-from ..utils.text import html_to_text
+from ..utils.text import fold, html_to_text
 from .base import Backend, RunContext
 from .feeds import days_window, rotating_batch
 
@@ -49,6 +50,8 @@ class BundesagenturBackend(Backend):
     terms = ["GIS", "Geospatial", "Geoinformatik", "Remote Sensing", "LiDAR", "Photogrammetrie", "Geodaten", "Vermessung GIS"]
     queries_per_run = 2
     details_per_run = 15
+    page_size = 100
+    pages_per_term = 4
 
     def run(self, ctx: RunContext) -> BackendOutput:
         out = BackendOutput()
@@ -60,21 +63,35 @@ class BundesagenturBackend(Backend):
         for term in batch.get("de", []):
             if ctx.out_of_time(200):
                 break
-            try:
-                data = ctx.client.get(f"{self.api}/v6/jobs", params={"was": term, "angebotsart": 1, "size": 50, "page": 1,
-                                                                      "veroeffentlichtseit": min(100, days_window(ctx.settings))},
-                                      headers=self.headers, respect_robots=False, detect_challenge=False).json()
-            except FetchError as exc:
-                errors.append(f"{term}: {exc.kind}")
-                continue
-            except ValueError:
-                errors.append(f"{term}: non-JSON response")
-                continue
-            items = data.get("ergebnisliste") if isinstance(data, dict) else None
-            if not isinstance(items, list):
-                errors.append(f"{term}: unexpected structure")
+            items, failed = [], False
+            for page in range(1, self.pages_per_term + 1):  # the API serves results by relevance: read them all, not the top 50
+                try:
+                    data = ctx.client.get(f"{self.api}/v6/jobs", params={"was": term, "angebotsart": 1, "size": self.page_size, "page": page,
+                                                                          "veroeffentlichtseit": min(100, days_window(ctx.settings))},
+                                          headers=self.headers, respect_robots=False, detect_challenge=False).json()
+                except FetchError as exc:
+                    errors.append(f"{term}: {exc.kind}")
+                    failed = page == 1
+                    break
+                except ValueError:
+                    errors.append(f"{term}: non-JSON response")
+                    failed = page == 1
+                    break
+                rows = data.get("ergebnisliste") if isinstance(data, dict) else None
+                if not isinstance(rows, list):
+                    if page == 1:
+                        errors.append(f"{term}: unexpected structure")
+                        failed = True
+                    break
+                items.extend(rows)
+                total = int((data.get("maxErgebnisse") if isinstance(data, dict) else 0) or 0)
+                if len(rows) < self.page_size or page * self.page_size >= total or ctx.out_of_time(200):
+                    break
+            if failed:
                 continue
             ok += 1
+            # newest first: the detail budget (needed to tell the language) goes to what was published last
+            items.sort(key=lambda it: str((it or {}).get("aktuelleVeroeffentlichungsdatum") or (it or {}).get("eintrittsdatum") or ""), reverse=True)
             for item in items:
                 ref = item.get("referenznummer") if isinstance(item, dict) else None
                 title = (item or {}).get("stellenangebotsTitel")
@@ -86,6 +103,9 @@ class BundesagenturBackend(Backend):
                     continue
                 if not ctx.prefilter(title, True):
                     out.prefiltered_out += 1
+                    continue
+                if ctx.knows_text(f"bundesagentur:{ref}"):
+                    out.jobs.append(self.to_raw(item))  # read before and not German: still open, its text is on file
                     continue
                 if details >= self.details_per_run or ctx.out_of_time(200):
                     continue  # without the text the language is unknown: next run
@@ -142,6 +162,102 @@ class BundesagenturBackend(Backend):
         )
 
 
+FRENCH_MONTHS = {"janvier": 1, "fevrier": 2, "mars": 3, "avril": 4, "mai": 5, "juin": 6, "juillet": 7, "aout": 8, "septembre": 9,
+                 "octobre": 10, "novembre": 11, "decembre": 12}
+
+
+def _french_date(text: str):
+    """"17 septembre 2026" -> datetime (UTC), or None."""
+    from datetime import datetime, timezone
+
+    from ..utils.text import fold
+
+    match = re.search(r"(\d{1,2})(?:er)? ([a-z]+) (20\d{2})", fold(text))
+    if not match or match.group(2) not in FRENCH_MONTHS:
+        return None
+    try:
+        return datetime(int(match.group(3)), FRENCH_MONTHS[match.group(2)], int(match.group(1)), tzinfo=timezone.utc)
+    except ValueError:
+        return None
+
+
+class JobBankBackend(Backend):
+    """Canada's Job Bank and its French twin, Guichet-Emplois, read from their search pages.
+
+    Their Atom feeds still answer, but with no entries, for every query; the search pages list the same postings
+    (robots.txt asks for a five-second crawl delay and forbids nothing). A result gives title, employer, place, pay and
+    date; the posting page is queued for the page extractor, which reads its RDFa markup for the full text.
+    """
+
+    name = "jobbank"
+    phase = "discovery"  # it queues posting pages, which are read in the extraction phase of the same run
+    source_type = "government"
+    min_interval_hours = 6
+    sites = {"en": "https://www.jobbank.gc.ca", "fr": "https://www.guichetemplois.gc.ca"}
+    terms = [("en", "geomatics"), ("en", "GIS"), ("en", "land surveyor"), ("en", "survey technician"), ("en", "remote sensing"),
+             ("en", "cartographer"), ("en", "LiDAR"), ("fr", "géomatique"), ("fr", "arpenteur"), ("fr", "cartographe"), ("fr", "SIG")]
+    weak_terms = {"land surveyor", "survey technician", "arpenteur"}
+    queries_per_run = 3
+
+    @staticmethod
+    def parse(html: str, origin: str) -> list[RawJob]:
+        from bs4 import BeautifulSoup
+
+        jobs = []
+        for article in BeautifulSoup(html or "", "html.parser").select('article[id^="article-"]'):
+            number = article.get("id", "").split("-", 1)[1]
+            title_node = article.select_one(".noctitle")
+            if not number.isdigit() or title_node is None:
+                continue
+            text = lambda cls: " ".join((article.select_one(f"li.{cls}").get_text(" ") if article.select_one(f"li.{cls}") else "").split())  # noqa: E731
+            place = re.sub(r"^(?:Location|Emplacement|Lieu)\s*", "", text("location"))  # "Burlington (ON)"
+            place = re.sub(r"\s*\(([A-Z]{2})\)$", r", \1", place)
+            salary = re.sub(r"^(?:Salary|Salaire)\s*:?\s*", "", text("salary")) or None
+            posted = parse_datetime(text("date")) or _french_date(text("date"))
+            url = f"{origin}/jobsearch/jobposting/{number}"
+            jobs.append(RawJob(
+                source_type="government", source_name="jobbank", source_url=f"{origin}/jobsearch/jobsearch", url=url, apply_url=url,
+                title=" ".join(title_node.get_text(" ").split()), company=text("business") or None,
+                location_raw=", ".join(p for p in (place, "Canada") if p), salary=salary, posted_at=posted,
+                posted_at_reliable=posted is not None, source_job_id=f"jobbank:{number}", extraction_method="html", geo_context=True,
+            ))
+        return jobs
+
+    def run(self, ctx: RunContext) -> BackendOutput:
+        out = BackendOutput()
+        errors, ok, queued, seen = [], 0, 0, set()
+        batch = rotating_batch(ctx, self.name, self.terms, self.queries_per_run)
+        for language, terms in batch.items():
+            origin = self.sites[language]
+            for term in terms:
+                if ctx.out_of_time(300):
+                    break
+                try:
+                    page = ctx.client.get(f"{origin}/jobsearch/jobsearch", params={"searchstring": term, "sort": "D"}).text
+                except FetchError as exc:
+                    errors.append(f"{term}: {exc.kind}")
+                    continue
+                ok += 1
+                for job in self.parse(page, origin):
+                    if job.source_job_id in seen:
+                        continue
+                    seen.add(job.source_job_id)
+                    job.geo_context = fold(term) not in self.weak_terms  # "surveyor" also finds quantity and marine surveyors
+                    if not ctx.prefilter(job.title, job.geo_context):
+                        out.prefiltered_out += 1
+                        continue
+                    out.jobs.append(job)
+                    if not ctx.knows_text(job.source_job_id) and ctx.pages.add(job.url, origin="jobbank", priority=80,
+                                                                               source_type="government", geo_context=job.geo_context):
+                        queued += 1
+        out.details = {"queries_ok": ok, "pages_queued": queued, "errors": errors[:10]}
+        if ok == 0 and errors:
+            out.status, out.error = "FAILED", errors[0]
+        elif errors:
+            out.status = "PARTIAL"
+        return out
+
+
 class FranceTravailBackend(Backend):
     name = "francetravail"
     phase = "extraction"
@@ -189,7 +305,7 @@ class FranceTravailBackend(Backend):
             if ctx.out_of_time(200):
                 break
             try:
-                response = ctx.client.get(self.api, params={"motsCles": term, "publieeDepuis": window, "range": "0-99"},
+                response = ctx.client.get(self.api, params={"motsCles": term, "publieeDepuis": window, "range": "0-99", "sort": 1},  # 1 = newest first; the default is "relevance"
                                           headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
                                           respect_robots=False, detect_challenge=False)
                 data = response.json() if response.status_code != 204 and response.content else {"resultats": []}

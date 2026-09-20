@@ -63,6 +63,9 @@ class PageQueue:
             return len(self._heap)
 
 
+TEXT_FRESH_DAYS = 7  # after that the text is read again: postings get edited (a deadline moves, "no sponsorship" appears)
+
+
 class RunContext:
     def __init__(self, settings, client, state: dict, *, run_id: str, now, registry=None, match_config=None,
                  deadline: float | None = None):
@@ -78,6 +81,26 @@ class RunContext:
         self.lock = threading.RLock()
         self.parser_errors: Counter = Counter()
         self.snapshots: dict[str, list[dict]] = defaultdict(list)
+        self._text_known: set[str] | None = None
+
+    def knows_text(self, job_id: str | None) -> bool:
+        """Was this posting's full text read within TEXT_FRESH_DAYS? Then a backend need not spend a detail request on it:
+        it reports the job by its title (which keeps it listed, and never overwrites the stored text) and gives the
+        request to a posting nobody has read yet."""
+        if not job_id:
+            return False
+        with self.lock:
+            if self._text_known is None:
+                from ..utils.dates import parse_datetime
+
+                known: set[str] = set()
+                for cid, rec in (self.state.get("jobs") or {}).items():
+                    seen = parse_datetime(rec.get("text_seen"))
+                    if seen is not None and (self.now - seen).days < TEXT_FRESH_DAYS and int(rec.get("description_length") or 0) >= 300:
+                        known.add(cid.lower())
+                        known.update(str(a).lower() for a in rec.get("aliases") or [])
+                self._text_known = known
+            return job_id.lower() in self._text_known
 
     def time_left(self) -> float:
         return self.deadline - time.monotonic()
@@ -109,6 +132,7 @@ class Backend:
     phase: str = "extraction"  # "discovery" runs before "extraction"
     source_type: str = "feed"
     min_interval_hours: float = 0.0
+    quota_bound: bool = False  # a paid-by-the-call API: the interval also counts from a failed attempt, not only from a success
 
     def enabled(self, ctx: RunContext) -> tuple[bool, str | None]:
         if self.name in ctx.settings.disabled_backends:

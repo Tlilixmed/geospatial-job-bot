@@ -32,10 +32,10 @@ Finds relevant GIS / geospatial / surveying / LiDAR / remote-sensing jobs from l
 | Career pages + sitemaps | `career_sites` | Configured company pages: JSON-LD jobs, embedded ATS boards, job links, job sitemaps. |
 | Generic extraction | `generic_pages` | Any queued public job page: JSON-LD `JobPosting` → embedded JSON → structured HTML. ATS URLs are fetched through the ATS API instead. |
 | Geospatial boards | `career_sites` (GEO CAREERS), `rss_feeds` (GoGeomatics, GISjobs.com) | GEO CAREERS is the largest geospatial-only board: 700+ postings with structured data, read through its sitemap newest-first. |
-| Official employment services | `bundesagentur`, `francetravail` | Germany's public job API (no key; German-language postings skipped) and France Travail (free key). |
+| Official employment services | `bundesagentur`, `francetravail`, `jobbank` | Germany's public job API (no key; German-language postings skipped), France Travail (free key, newest first) and Canada's Job Bank with its French twin Guichet-Emplois (search pages; the posting's schema.org RDFa gives the full text). |
 | Keyless aggregator | `freehire` | freehire.dev: about four million open postings read from company ATS boards and partner feeds (Adzuna, WhatJobs, EURES…), with full descriptions and no key. Queried by title, newest first, four terms per run on rotation. Its own AI fields (visa sponsorship, relocation) are not trusted: the text goes through this bot's wording rules. |
 | Community | `hn_hiring` | Hacker News "Who is hiring?" monthly thread through the free Algolia API, once a day, strict geospatial filter. |
-| Public feeds | `remotive`, `jobicy`, `himalayas`, `arbeitnow`, `remoteok`, `rss_feeds`, `usajobs` | Rate-respecting JSON/RSS feeds (each has a minimum interval). `rss_feeds` ships with GoGeomatics (Canada), GISjobs.com, Government of Canada Job Bank searches and Tunisie Travail searches. |
+| Public feeds | `remotive`, `jobicy`, `himalayas`, `arbeitnow`, `remoteok`, `rss_feeds`, `usajobs` | Rate-respecting JSON/RSS feeds (each has a minimum interval). `rss_feeds` ships with GoGeomatics (Canada), GISjobs.com and Tunisie Travail searches. |
 | Job boards without feeds | `career_sites` with `source_type = "feed"` | Keyword search pages of boards such as Keejob (Tunisia): job links are followed and each posting's JSON-LD is read. |
 | Aggregator APIs (optional) | `adzuna`, `jooble`, `jsearch` | Free API keys. Adzuna covers Canada, UK, US and more; Jooble covers Tunisia, the Maghreb and Canada; JSearch returns Google for Jobs results (LinkedIn, Indeed, Glassdoor, employer sites) with full descriptions. |
 | Search (optional) | `search_searxng`, `search_duckduckgo` | Discovery only: results are never used as job data. |
@@ -88,14 +88,18 @@ Invalid configured slugs are listed prominently in the run summary and GitHub st
 
 ### AI second opinion (optional, free)
 
-With a `CLOUDFLARE_AI_TOKEN` secret the bot asks Cloudflare Workers AI (`@cf/meta/llama-3.1-8b-instruct`, free daily allowance) about every job the deterministic scorer accepted, once per job, best matches first, at most `AI_REVIEWS_PER_RUN` (40) per run (a backlog of older matches is worked off as they are seen again; `/status` and `/ai` show the coverage):
+With a `CLOUDFLARE_AI_TOKEN` secret the bot asks Cloudflare Workers AI (free daily allowance) about every job the deterministic scorer accepted, once per job, best matches first, at most `AI_REVIEWS_PER_RUN` (40) per run and for at most `AI_TIME_BUDGET_SECONDS` (420) of the run (a backlog of older matches is worked off from the kept descriptions; `/status` and `/ai` show the coverage). Models are tried in order (`AI_MODELS`, default `@cf/openai/gpt-oss-120b`, `@cf/google/gemma-4-26b-a4b-it`, then the older `@cf/meta/llama-3.1-8b-instruct`): a model the account cannot use is skipped, a quota answer stops the calls, and the model that answered is recorded on each review and shown in `/why` and the run summary.
 
 - a one-sentence English **summary** of what the job is and why it fits (French, Arabic or German postings are translated), shown as 💡 in the digest;
 - **concerns** the keyword rules cannot see ("requires 8+ years", "German required", "licensed surveyor only"), shown as ⚠️;
 - a 0-10 **fit**, minimum years, required languages, sponsorship reading and up to five key requirements, all visible in `/why code`;
+- two facts the wording rules can miss: **restricted** (citizenship, clearance, an existing right to work, or no sponsorship: it counts against the visa route like a refusal) and the **deadline** (used when the text rules found none);
+- your last six applications and dismissals (titles and employers only) calibrate the fit;
+- **second chances**: up to `AI_SECOND_CHANCES_PER_RUN` (5) jobs the rules rejected on relevance alone, that are a few points short or carry real geospatial content under a title the rules cannot place ("Network Planner" with QGIS and fibre routes), get one reading. Fit ≥ 7 without a restriction lifts the job to Possible; `/why` says so. Never a negative title, the wrong place, a work-rights demand or the model's own veto;
+- `/ask question` answers a free question from the current matches only ("which pay best?", "compare a3f9c and b2c1d", "which close this week?"), cites job codes, and flags any code it made up;
 - `/pitch code` drafts a short application note in the posting's language from those requirements and your profile.
 
-The scorer stays the authority. The only decision the model can take is a veto of a *Possible* match it rates clearly irrelevant (fit ≤ 2, `AI_VETO_POSSIBLE=false` disables it); High matches are never vetoed. Every field is validated and clamped, the run never depends on the service (three failures and it stops calling), and an outage changes nothing about alerts. The candidate profile the model sees is the generic one in `geojobbot/ai/review.py`; override it privately with the `CANDIDATE_PROFILE` secret. The account id is taken from the R2 endpoint, so the token is the only thing to add: Cloudflare dashboard → My Profile → API Tokens → Create Token → template **Workers AI** (Read is enough).
+The scorer stays the authority. Besides the second chance, the only decision the model can take is a veto of a *Possible* match it rates clearly irrelevant (fit ≤ 2, `AI_VETO_POSSIBLE=false` disables it). The veto is judged once, after every other adjustment, so a register bonus can neither resurrect a vetoed job nor arrive too late to save one; High matches and jobs you were already alerted about are never vetoed. Every field is validated and clamped, the run never depends on the service (three failures and it stops calling), and an outage changes nothing about alerts. The candidate profile the model sees is the generic one in `geojobbot/ai/review.py`; override it privately with the `CANDIDATE_PROFILE` secret. The account id is taken from the R2 endpoint, so the token is the only thing to add: Cloudflare dashboard → My Profile → API Tokens → Create Token → template **Workers AI** (Read is enough).
 
 ### Official visa-sponsor registers
 
@@ -173,6 +177,10 @@ Each observation yields identity keys, strongest first:
 
 Observations sharing a key become one job. A fuzzy key (normalised company + title + place) merges aggregator copies, but it can never merge two *different* ATS postings. Stored records keep all aliases, so a job keeps one canonical ID across runs and sources.
 
+**Identity.** Observations sharing an id are one job. A shared URL merges them too, unless a source both sides know gave them different ids (two France Travail offers pointing at the same generic "apply here" page are two jobs). A fuzzy match (employer, title, place) reaches 60 days back into the state; a posting that returns later is a repost and is alerted again. A job seen again without its text (the detail budget went to newer postings) is only marked as still open: it is never rescored from the title alone, and backends skip detail requests for postings whose text was read within a week.
+
+**Rescoring.** When the matching rules change (`SCORER_VERSION` in `core/jobs.py`), stored matches whose text is kept are scored again at the next run, place included, instead of waiting to be seen again; a sponsorship claim is re-read every run.
+
 **Field fusion.** Fields come from the most authoritative source: ATS API > employer page > government > feed > aggregator > search. JSON-LD ranks above HTML fallback. The apply link prefers the employer/ATS URL over aggregators.
 
 **Change detection.** A job is updated only by an equal-or-higher-authority source, or by a source that finally provides a description. Changes are recorded per job. Re-alerting on changes is opt-in (`ALERT_ON_CHANGES=true`).
@@ -211,6 +219,7 @@ The bot answers messages from the configured chat only; every other chat is igno
 | `/search words` | search stored matches by title, company, place, skill |
 | `/why code` | score breakdown, evidence, AI second opinion, sources and link for one job |
 | `/ai [n]` | the AI's view of current matches, best fit first: fit /10, summary, concerns, years, sponsorship, languages |
+| `/ask question` | a free question about your current matches, answered from the bot's own facts with job codes cited |
 | `/pitch code` | Workers AI drafts a short application note for that job, in the posting's language |
 | `/prep code` | interview sheet for that job (sent by itself when an interview is recorded) |
 | `/approach [firm]` | firms with a reason to hire · draft a speculative application to one |
@@ -429,7 +438,7 @@ In a dry run, alerts are printed rather than sent and no state is written, unles
 
 - ATS slugs per provider. For Workday, paste the career-site URL.
 - `[[career_sites]]` with an optional `job_url_pattern`, `sitemap` and `max_pages`. Add `source_type = "feed"` for a job board's search page (shipped: Keejob keyword searches): its postings then carry feed authority in fusion and the board's name is never used as the employer.
-- `[[rss_feeds]]` (shipped: GoGeomatics, GISjobs.com, Job Bank Canada searches, Tunisie Travail searches). Job Bank's feed matches occupation titles, not free text: "surveyor" and "geomatics" return results, "GIS" does not.
+- `[[rss_feeds]]` (shipped: GoGeomatics, GISjobs.com, Tunisie Travail searches). Job Bank's Atom feeds answered without entries for every query when checked on 2026-09-20, so the `jobbank` backend reads its search pages instead.
 - extra search queries
 
 > Every ATS slug shipped in `sources.toml` was checked against the live public APIs on 2026-09-16 (the file lists the job count per board). Companies change ATS providers, so run `validate-sources` or check the run summary after editing and fix or remove anything reported `INVALID`. SmartRecruiters and Workable answer with an empty list for unknown accounts, so confirm a non-empty board before adding one there.
@@ -474,7 +483,9 @@ In a dry run, alerts are printed rather than sent and no state is written, unles
 | `FRANCETRAVAIL_CLIENT_ID`, `FRANCETRAVAIL_CLIENT_SECRET` | empty | enables France Travail (free application at francetravail.io, API *Offres d'emploi v2*) |
 | `MONTHLY_RADAR`, `MY_SKILLS` | `true`, built-in list | monthly skills radar · your skills, comma-separated (`/skills` overrides) |
 | `MARKET_SIGNALS` | `true` | daily check of World Bank procurement notices for geospatial work |
-| `CLOUDFLARE_AI_TOKEN`, `AI_REVIEWS_PER_RUN`, `AI_VETO_POSSIBLE`, `AI_MODEL`, `CANDIDATE_PROFILE` | empty, `40`, `true`, llama-3.1-8b-instruct, built-in | Workers AI second opinion, veto of clearly irrelevant Possible matches, `/pitch` |
+| `CLOUDFLARE_AI_TOKEN`, `AI_REVIEWS_PER_RUN`, `AI_VETO_POSSIBLE`, `CANDIDATE_PROFILE` | empty, `40`, `true`, built-in | Workers AI second opinion, veto of clearly irrelevant Possible matches, `/pitch`, `/prep`, `/approach`, `/ask` |
+| `AI_MODELS`, `AI_MODEL` | gpt-oss-120b, gemma-4-26b, llama-3.1-8b | models tried in order (comma-separated); `AI_MODEL` puts one model first |
+| `AI_TIME_BUDGET_SECONDS`, `AI_SECOND_CHANCES_PER_RUN` | `420`, `5` | clock cap for the reviews of a run · near misses the AI reads as well (`0` = off) |
 | `JSEARCH_API_KEY`, `JSEARCH_REQUESTS_PER_RUN`, `JSEARCH_QUERIES` | empty, `1`, fifteen `query@country` entries (CA, TN, US, FR, BE, CH, DE, GB, AU, AE, SA, QA) | enables JSearch; queries rotate across runs to stay inside the free quota |
 | `DISABLED_BACKENDS` | empty | e.g. `search_duckduckgo,arbeitnow` |
 | `SOURCE_CONCURRENCY` | `6` | parallel backends |

@@ -15,7 +15,7 @@ SOURCE_PRIORITY = {
     "aggregator": 40,
     "search": 20,
 }
-EXTRACTION_BONUS = {"api": 5, "jsonld": 3, "embedded_json": 0, "html": -15}
+EXTRACTION_BONUS = {"api": 5, "jsonld": 3, "rdfa": 3, "embedded_json": 0, "html": -15}
 
 TIER_HIGH = "high"
 TIER_POSSIBLE = "possible"
@@ -110,6 +110,7 @@ class JobRecord:
     deadline: str | None = None  # application deadline read from the description (ISO date)
     deadline_reminded: bool = False
     rules: int = 0  # SCORER_VERSION the score was computed with (core/jobs.py)
+    text_seen: str | None = None  # when the full posting text was last read (backends skip detail requests while it is recent)
     # annotations other modules put on the stored dict (learned, visa, reposts, watched…): carried through untouched,
     # so re-observing a job never silently drops what a later pipeline step wrote on it
     extra: dict = field(default_factory=dict)

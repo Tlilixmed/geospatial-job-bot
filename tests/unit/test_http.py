@@ -109,3 +109,35 @@ def test_robots_404_allows():
     s = FakeSession({"https://open.com/": FakeResponse(200, "<html>hi</html>")})
     c, _ = client_for(s)
     assert c.get("https://open.com/jobs").status_code == 200
+
+
+def test_a_page_without_a_charset_is_read_as_utf8_and_a_robots_bom_is_ignored():
+    import requests
+
+    from geojobbot.utils.http import fix_encoding
+    from geojobbot.utils.robots import RobotsCache
+
+    response = requests.models.Response()
+    response._content = "Ingénieur géomatique".encode("utf-8")
+    response.headers["Content-Type"] = "text/html"
+    response.encoding = "ISO-8859-1"  # what requests assumes for text/* without a charset
+    fix_encoding(response)
+    assert response.text == "Ingénieur géomatique"
+    latin = requests.models.Response()
+    latin._content = "Ingénieur géomatique".encode("latin-1")
+    latin.headers["Content-Type"] = "text/html"
+    latin.encoding = "ISO-8859-1"
+    fix_encoding(latin)
+    assert latin.text == "Ingénieur géomatique"  # not valid UTF-8: left as it was
+    declared = requests.models.Response()
+    declared._content = b"x"
+    declared.headers["Content-Type"] = "text/html; charset=windows-1252"
+    declared.encoding = "windows-1252"
+    fix_encoding(declared)
+    assert declared.encoding == "windows-1252"
+
+    robots = b"\xef\xbb\xbfUser-agent: *\nDisallow: /private/\n"
+    session = FakeSession({"https://bom.example/robots.txt": FakeResponse(200, robots, headers={"Content-Type": "text/plain"})})
+    client = HttpClient("test-agent", default_delay=0, session=session, sleep=lambda x: None)
+    cache = RobotsCache(client, "geojobbot")
+    assert cache.allowed("https://bom.example/jobs") and not cache.allowed("https://bom.example/private/x")

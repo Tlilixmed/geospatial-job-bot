@@ -84,10 +84,14 @@ class HackerNewsHiringBackend(Backend):
                 continue
             seen.add(url)
             posted = parse_datetime(hit.get("created_at"))
-            link = re.search(r"https?://[^\s<>\"]+", text)
+            # the visible text of a long link is cut ("https://acme.com/careers/gis-an..."): the address is in the href
+            hrefs = [html.unescape(h) for h in re.findall(r'href="(https?://[^"]+)"', raw)]
+            typed = re.search(r"https?://[^\s<>\"]+", text)
+            typed = typed.group(0).rstrip(".,)") if typed and ".." not in typed.group(0)[-4:] else None
+            link = next((h for h in hrefs if "news.ycombinator.com" not in h), None) or typed
             out.jobs.append(RawJob(
                 source_type="feed", source_name="hn_hiring", source_url=f"https://news.ycombinator.com/item?id={thread['objectID']}",
-                title=title, company=company, url=url, apply_url=(link.group(0).rstrip(".,)") if link else url),
+                title=title, company=company, url=url, apply_url=link or url,
                 description=text[:6000], location_raw=location, posted_at=posted, posted_at_reliable=posted is not None,
                 source_job_id=f"hn:{hit['objectID']}", extraction_method="api", geo_context=False,
             ))

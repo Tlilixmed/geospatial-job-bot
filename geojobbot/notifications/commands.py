@@ -258,7 +258,8 @@ class CommandProcessor:
     def _accept_hint(self, hint: str) -> tuple[str, str] | None:
         """Validate the Worker's AI reading: a known command, a sane argument, an existing job code."""
         hint = (hint or "").strip()
-        if not hint.startswith("/") or len(hint) > 120 or "\n" in hint:
+        limit = 220 if hint.startswith("/ask ") else 120  # "/ask" repeats the question, hence the room
+        if not hint.startswith("/") or len(hint) > limit or "\n" in hint:
             return None
         command, _, arg = hint.partition(" ")
         command, arg = command[1:].split("@")[0].lower(), arg.strip()

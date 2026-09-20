@@ -58,3 +58,50 @@ def test_francetravail_needs_credentials_and_parses_offers():
     failing = FakeSession({backend.token_url: FakeResponse(401, {"error": "invalid_client"})})
     out = backend.run(make_ctx(failing, settings=settings))
     assert out.status == "FAILED" and out.error.startswith("token:") and "secret" not in out.error
+
+
+# ------------------------------------------------------------------ Job Bank (Canada): search pages and RDFa postings
+JOBBANK_RESULTS = """<div class="results-jobs">
+<article id="article-50309689" class="action-buttons"><a href="/jobsearch/jobposting/50309689;jsessionid=59194C.jobsearch76?source=searchresults" class="resultJobItem">
+ <h3 class="title"><span class="flag"><span class="new"> New </span></span> <span class="noctitle"> geomatics technician </span></h3>
+ <ul class="list-unstyled"><li class="date">September 17, 2026 </li><li class="business">MTE Consultants Inc.</li>
+ <li class="location"><span class="wb-inv">Location</span> Burlington (ON) </li>
+ <li class="salary"><span class="fa fa-dollar"></span> Salary $62,000.00 to $75,000.00 annually</li></ul></a></article>
+<article id="article-50302594"><a class="resultJobItem" href="/jobsearch/jobposting/50302594"><h3 class="title"><span class="noctitle">quantity surveyor - construction</span></h3>
+ <ul><li class="date">September 16, 2026</li><li class="business">A.W. Hooker</li><li class="location">Location Oakville (ON)</li></ul></a></article>
+<article id="article-50296705"><a class="resultJobItem" href="/x"><h3 class="title"><span class="noctitle">géomaticien/géomaticienne</span></h3>
+ <ul><li class="date">16 septembre 2026</li><li class="business">HYDRO-QUEBEC</li><li class="location">Emplacement Montréal (QC)</li>
+ <li class="salary">Salaire 52 852,00 $ par année</li></ul></a></article></div>"""
+JOBBANK_POSTING = """<html><body><h1><span property="title">geomatics technician</span></h1>
+<span property="datePosted"> Posted on September 17, 2026 </span><span property="hiringOrganization"> MTE Consultants Inc. </span>
+<span property="addressLocality">Burlington</span><span property="addressRegion">ON</span><span property="employmentType">Full time</span>
+<span property="baseSalary">$ 62,000 to $ 75,000 YEAR annually</span><div property="description"><p>%s</p></div></body></html>"""
+
+
+def test_jobbank_is_read_from_its_search_pages_and_postings_from_their_rdfa():
+    from conftest import GIS_DESCRIPTION
+    from geojobbot.scrapers.generic import extract_jobs
+    from geojobbot.scrapers.official import JobBankBackend
+
+    rows = JobBankBackend.parse(JOBBANK_RESULTS, "https://www.jobbank.gc.ca")
+    assert [(r.title, r.company, r.location_raw) for r in rows] == [
+        ("geomatics technician", "MTE Consultants Inc.", "Burlington, ON, Canada"),
+        ("quantity surveyor - construction", "A.W. Hooker", "Oakville, ON, Canada"),
+        ("géomaticien/géomaticienne", "HYDRO-QUEBEC", "Montréal, QC, Canada")]
+    first, french = rows[0], rows[2]
+    assert first.url == "https://www.jobbank.gc.ca/jobsearch/jobposting/50309689" and first.source_job_id == "jobbank:50309689"  # no session id
+    assert first.salary == "$62,000.00 to $75,000.00 annually" and first.posted_at.day == 17 and first.posted_at_reliable
+    assert french.salary == "52 852,00 $ par année" and (french.posted_at.month, french.posted_at.day) == (9, 16)
+
+    session = FakeSession({"https://www.jobbank.gc.ca/jobsearch/jobsearch": FakeResponse(200, JOBBANK_RESULTS),
+                           "https://www.guichetemplois.gc.ca/jobsearch/jobsearch": FakeResponse(200, "<html></html>")})
+    ctx = make_ctx(session)
+    out = JobBankBackend().run(ctx)
+    assert [j.title for j in out.jobs] == ["geomatics technician", "géomaticien/géomaticienne"] and out.prefiltered_out == 1  # no quantity surveyors
+    assert out.details["pages_queued"] == 2 and out.status == "SUCCESS"
+    # the posting page has no JSON-LD: its schema.org attributes (RDFa) carry the full text
+    result = extract_jobs(JOBBANK_POSTING % GIS_DESCRIPTION, first.url, NOW)
+    job = result.jobs[0]
+    assert result.method == "rdfa" and job.title == "geomatics technician" and job.company == "MTE Consultants Inc."
+    assert job.location_raw == "Burlington, ON" and job.posted_at.day == 17 and len(job.description) >= 300 and job.url == first.url
+    assert extract_jobs('<span property="title">x</span><div property="description">too short</div>', first.url, NOW).jobs == []

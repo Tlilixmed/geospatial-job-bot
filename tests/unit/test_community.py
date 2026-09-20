@@ -32,3 +32,18 @@ def test_only_geospatial_top_level_posts_become_jobs():
     assert out.details["geospatial"] == 2 and out.prefiltered_out == 1
     failing = FakeSession({f"{ALGOLIA}/search_by_date": FakeResponse(500, {})})
     assert HackerNewsHiringBackend().run(make_ctx(failing)).status == "FAILED"
+
+
+def test_the_apply_link_comes_from_the_href_not_from_the_shortened_text():
+    long_url = "https://careers.acme.example/openings/senior-gis-developer-remote-canada?gh_jid=12345&amp;utm=hn"
+    text = ("Acme Geo | Senior GIS Developer | Toronto, ON | REMOTE | " + GIS_DESCRIPTION
+            + f'<p>Apply: <a href="{long_url}" rel="nofollow">https://careers.acme.example/openings/senior-gis-developer-re...</a>')
+    session = FakeSession({f"{ALGOLIA}/search_by_date": FakeResponse(200, {"hits": [THREAD]}),
+                           f"{ALGOLIA}/search": FakeResponse(200, {"hits": [comment("7", text)]})})
+    job = HackerNewsHiringBackend().run(make_ctx(session)).jobs[0]
+    assert job.apply_url == "https://careers.acme.example/openings/senior-gis-developer-remote-canada?gh_jid=12345&utm=hn"
+    only_cut = comment("8", "Acme Geo | GIS Developer | Remote | " + GIS_DESCRIPTION + " see https://careers.acme.example/openings/senior-gis-dev...")
+    session = FakeSession({f"{ALGOLIA}/search_by_date": FakeResponse(200, {"hits": [THREAD]}),
+                           f"{ALGOLIA}/search": FakeResponse(200, {"hits": [only_cut]})})
+    job = HackerNewsHiringBackend().run(make_ctx(session)).jobs[0]
+    assert job.apply_url == "https://news.ycombinator.com/item?id=8"  # a cut address leads nowhere: the post itself is the link

@@ -71,8 +71,11 @@ class GreenhouseAdapter(ATSAdapter):
         company = company or prettify_slug(ref.slug)
         result.company = company
         budget = ctx.settings.max_detail_fetches_per_board
-        for index, item in enumerate(candidates):
-            if index < budget and not ctx.out_of_time(120):
+        fetched = 0
+        for item in candidates:
+            # the budget goes to postings nobody has read yet, not to the same first thirty of a board with 400
+            if fetched < budget and not ctx.knows_text(f"greenhouse:{item['id']}") and not ctx.out_of_time(120):
+                fetched += 1
                 try:
                     detail = client.get_json(f"{self.base}/{ref.slug}/jobs/{item['id']}", respect_robots=False)
                     if isinstance(detail, dict) and detail.get("title"):

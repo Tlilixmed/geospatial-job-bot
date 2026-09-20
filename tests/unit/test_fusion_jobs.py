@@ -200,3 +200,15 @@ def test_a_posting_that_comes_back_after_two_months_is_a_repost_not_the_old_reco
     process_fused(fuse([again], st["jobs"], late), st, make_settings(), late)
     third = raw(native_id=None, source_name="jobicy", source_job_id="jobicy:3", url="https://jobicy.com/job/3", apply_url=None)
     assert fuse([third], st["jobs"], late)[0].canonical_id == "remotive:2"  # the fuzzy key now leads to the record seen last
+
+
+def test_an_adzuna_advert_re_served_by_another_aggregator_is_the_same_job():
+    direct = raw(source_type="aggregator", source_name="adzuna", native_id=None, source_job_id="adzuna:5012345678",
+                 url="https://www.adzuna.ca/land/ad/5012345678?se=abc&utm_medium=api", apply_url=None, company="MapCo", title="GIS Technician")
+    served = raw(source_type="aggregator", source_name="freehire:adzuna", native_id=None, source_job_id="freehire:gis-technician-x1",
+                 url="https://www.adzuna.ca/details/5012345678", apply_url=None, company="Map Co. Ltd", title="GIS Technician (Calgary)")
+    other = raw(source_type="aggregator", source_name="freehire:adzuna", native_id=None, source_job_id="freehire:gis-technician-x2",
+                url="https://www.adzuna.ca/details/5099999999", apply_url=None, company="Other", title="GIS Technician")
+    fused = fuse([direct, served, other], {}, NOW)
+    assert sorted(len(f.raws) for f in fused) == [1, 2]
+    assert next(f for f in fused if len(f.raws) == 2).canonical_id == "adzuna:5012345678"

@@ -48,7 +48,7 @@ class RobotsCache:
         parser = RobotFileParser()
         parser.set_url(robots_url)
         try:
-            text = response.content.decode("utf-8", "replace")
+            text = response.content.decode("utf-8-sig", "replace")  # a BOM before "User-agent" hides the first group
         except Exception:
             text = ""
         parser.parse(text.splitlines())

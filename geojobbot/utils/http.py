@@ -58,6 +58,24 @@ class HttpStats:
         }
 
 
+def fix_encoding(response) -> None:
+    """A text response without a charset in its Content-Type is ISO-8859-1 by the letter of HTTP, and `requests` obeys:
+    "Ingénieur géomatique" arrives as "IngÃ©nieur gÃ©omatique" and the title filter drops it. Nearly all such pages
+    are UTF-8, so that is tried first; bytes that are not valid UTF-8 keep what the page or the library says."""
+    content_type = str(response.headers.get("Content-Type") or "").lower()
+    if "charset=" in content_type or not content_type.startswith(("text/", "application/xml", "application/rss", "application/atom",
+                                                                   "application/xhtml")):
+        return
+    try:
+        response.content.decode("utf-8")
+    except (UnicodeDecodeError, AttributeError):
+        return
+    try:
+        response.encoding = "utf-8"
+    except AttributeError:  # a test double without the attribute
+        pass
+
+
 class HttpClient:
     def __init__(
         self,
@@ -207,6 +225,7 @@ class HttpClient:
                     if detect_challenge and self._looks_like_challenge(response):
                         self.stats.errors["BLOCKED"] += 1
                         raise FetchError("BLOCKED", "challenge/CAPTCHA page (not bypassed)", status, url)
+                    fix_encoding(response)
                     return response
                 if status in RETRYABLE_STATUS:
                     kind = "RATE_LIMITED" if status == 429 else "SERVER_ERROR"

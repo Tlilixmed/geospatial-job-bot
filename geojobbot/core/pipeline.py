@@ -32,7 +32,7 @@ from ..scrapers.ats.base import ATSBackend
 from ..scrapers.ats.more_ats import all_adapters
 from ..scrapers.aggregators import FreehireBackend
 from ..scrapers.community import HackerNewsHiringBackend
-from ..scrapers.official import BundesagenturBackend, FranceTravailBackend
+from ..scrapers.official import BundesagenturBackend, FranceTravailBackend, JobBankBackend
 from ..scrapers.base import Backend, RunContext
 from ..scrapers.feeds import (AdzunaBackend, ArbeitnowBackend, HimalayasBackend, JobicyBackend, JobSpyBackend,
                               JoobleBackend, JSearchBackend, ReliefWebBackend, RemoteOKBackend, RemotiveBackend,
@@ -63,6 +63,7 @@ API_HOST_DELAYS = {
     "boards-api.greenhouse.io": 0.5, "api.lever.co": 0.5, "api.eu.lever.co": 0.5, "api.ashbyhq.com": 0.5,
     "api.smartrecruiters.com": 0.7, "apply.workable.com": 1.0, "index.commoncrawl.org": 5.0,
     "html.duckduckgo.com": 6.0, "remotive.com": 3.0, "himalayas.app": 2.0,
+    "api.adzuna.com": 2.6,  # 25 calls a minute is the limit; a run makes up to 30
 }
 
 
@@ -108,6 +109,7 @@ def build_backends(settings, sponsor_data=None) -> list[Backend]:
         JSearchBackend(),
         ReliefWebBackend(),
         BundesagenturBackend(),
+        JobBankBackend(),
         FranceTravailBackend(),
         HackerNewsHiringBackend(),
         FreehireBackend(),
@@ -166,6 +168,15 @@ class Pipeline:
             if last_success and self.now - last_success < timedelta(hours=backend.min_interval_hours):
                 result.status = "SKIPPED"
                 result.error = f"ran {to_iso(last_success)}; min interval {backend.min_interval_hours}h"
+                return result, []
+            # A quota-bound API that failed (rate limit, outage) is not asked again every run until it works: each try
+            # spends calls. It waits an hour per failure in a row, up to its normal interval.
+            last_attempt = parse_datetime(record.get("last_attempt"))
+            failures = int(record.get("consecutive_failures") or 0)
+            wait = min(backend.min_interval_hours, max(1, failures))
+            if getattr(backend, "quota_bound", False) and failures and last_attempt and self.now - last_attempt < timedelta(hours=wait):
+                result.status = "SKIPPED"
+                result.error = f"failed {failures}x, last try {to_iso(last_attempt)}; next try after {wait}h"
                 return result, []
         started = time.monotonic()
         jobs = []
@@ -463,7 +474,8 @@ class Pipeline:
             elif near_miss(stored, settings):
                 near.append((stored, text, True))
         unpenalised = lambda rec: int(rec.get("score") or 0) - int((rec.get("score_breakdown") or {}).get("visa") or 0)  # noqa: E731
-        pending.sort(key=lambda item: -unpenalised(item[0]))
+        # accepted matches first; then the jobs only the visa penalty holds back (a reading is the one thing that can lift it)
+        pending.sort(key=lambda item: (item[0].get("tier") not in ("high", "possible"), -unpenalised(item[0])))
         near.sort(key=lambda item: -int(item[0].get("score") or 0))
         near = near[: max(0, int(getattr(settings, "ai_second_chances_per_run", 0)))]
         head = max(0, int(ai.budget) - len(near))  # near misses are read before the tail of a long backlog, not never
