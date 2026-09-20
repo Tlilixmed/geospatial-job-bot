@@ -110,7 +110,7 @@ Findings are numbered `F1, F2…` and carry their evidence, so a fix can be trac
 - **F4 · the fit score ignored what the user does · [fixed]** The prompt now carries the last six applications and dismissals
   (titles and employers only) as calibration.
 - **F5 · `/ask` · [fixed]** Free questions answered from the current matches only, with job codes cited and invented codes flagged.
-- **F6 · second chance for near misses · [idea → see Findings below once the core review is in]**
+- **F6 · second chance for near misses · [fixed]** Jobs rejected on relevance alone (never a negative title, the wrong place, work rights or the AI's own veto) that are a few points short, or carry real geospatial content under a title the rules cannot place ("Network Planner" with QGIS and fibre routes), get one reading (`AI_SECOND_CHANCES_PER_RUN`, default 5). Fit ≥ 7 and no restriction lifts the job to Possible; the verdict is stored, so rescoring re-applies it without asking the model again. `/why` says so.
 - **F7 · semantic matching with embeddings (`bge-m3`, 1,075 neurons per million tokens) · [idea]** Would catch relevant jobs with
   unrecognisable titles ("Software Engineer, Maps"). Needs vectors stored per job and a threshold tuned on real data: recorded, not built.
 
@@ -129,36 +129,45 @@ Findings are numbered `F1, F2…` and carry their evidence, so a fix can be trac
 
 ### Location, visa, salary, deadlines, registers, learning (`utils/location.py`, `insights/`)
 
-- **F18 · "City, XX" with an ISO country code parsed as a US state: "Tunis, TN" → Tennessee, "Berlin, DE" → Delaware, "Rabat, MA" → Massachusetts, "Amsterdam, NL" → Newfoundland · [ ]** A Tunisian job then got the US H-1B penalty instead of "home country".
-- **F19 · deadline detection took posted dates, start dates and contract ends as the closing date, which hides the job (DEADLINE_PASSED) · [ ]**
-- **F20 · ambiguous numeric dates (10/08/2026) read day-first everywhere but the US · [ ]**
-- **F21 · a stored deadline was never cleared · [ ]**
-- **F22 · France Travail salaries multiplied by 12 ("Annuel de 38000 Euros sur 12 mois" read as monthly) · [ ]**
-- **F23 · salary ranges sharing one "k" ("£40-50k" → low 40), stray numbers (bonus %, "x 13", "37-hour week", "401(k)"), "up to", Gulf monthly pay with no unit · [ ]**
-- **F24 · sponsor-register variant matching: generic one-word cores ("surveys", "mapping", "data") matched unrelated firms and earned the bonus; legal forms stripped anywhere in the name ("AG Survey" = "Survey Co"); "U.K." a false negative; NL parser did not unescape entities · [ ]**
-- **F25 · Francophone Mobility: Québec cities without the province not excluded ("Montréal, Canada"), "Quebec Street, Vancouver" excluded · [ ]**
-- **F26 · France–Tunisia route: "Chargé d'études" could never match (apostrophe) · [ ]**
-- **F27 · learning punished the jobs the user applies to once hides outnumber applications (no base rate) · [ ]**
-- **F28 · the visa penalty could not be lifted by the AI once it had pushed a job under the threshold; regex beat an AI "not offered" · [ ]**
-- **F29 · negative title words that are real roles or ordinary words: "Survey Party Chief", "GIS Executive", "Commercial", "(Early Stage Startup)" · [ ]**
-- **F30 · Arabic "مساح" matched inside "مساحات" (interior space designer scored as a surveyor) · [ ]**
+- **F18 · "City, XX" with an ISO country code parsed as a US state: "Tunis, TN" → Tennessee, "Berlin, DE" → Delaware, "Rabat, MA" → Massachusetts, "Amsterdam, NL" → Newfoundland · [fixed]** A Tunisian job then got the US H-1B penalty instead of "home country".
+- **F19 · deadline detection took posted dates, start dates and contract ends as the closing date, which hides the job (DEADLINE_PASSED) · [fixed]**
+- **F20 · ambiguous numeric dates (10/08/2026) read day-first everywhere but the US · [fixed]**
+- **F21 · a stored deadline was never cleared · [fixed]**
+- **F22 · France Travail salaries multiplied by 12 ("Annuel de 38000 Euros sur 12 mois" read as monthly) · [fixed]**
+- **F23 · salary ranges sharing one "k" ("£40-50k" → low 40), stray numbers (bonus %, "x 13", "37-hour week", "401(k)"), "up to", Gulf monthly pay with no unit · [fixed]**
+- **F24 · sponsor-register variant matching: generic one-word cores ("surveys", "mapping", "data") matched unrelated firms and earned the bonus; legal forms stripped anywhere in the name ("AG Survey" = "Survey Co"); "U.K." a false negative; NL parser did not unescape entities · [fixed]**
+- **F25 · Francophone Mobility: Québec cities without the province not excluded ("Montréal, Canada"), "Quebec Street, Vancouver" excluded · [fixed]**
+- **F26 · France–Tunisia route: "Chargé d'études" could never match (apostrophe) · [fixed]**
+- **F27 · learning punished the jobs the user applies to once hides outnumber applications (no base rate) · [fixed]**
+- **F28 · the visa penalty could not be lifted by the AI once it had pushed a job under the threshold; regex beat an AI "not offered" · [fixed]**
+- **F29 · negative title words that are real roles or ordinary words: "Survey Party Chief", "GIS Executive", "Commercial", "(Early Stage Startup)" · [fixed]**
+- **F30 · Arabic "مساح" matched inside "مساحات" (interior space designer scored as a surveyor) · [fixed]**
 
 ### Core: fusion, state, pipeline order (`core/`)
 
-- **F31 · a shared application URL was job identity: two France Travail or Bundesagentur offers with the same generic apply page fused into one, and across runs a new offer attached to an old notified record and was never alerted · [ ]**
-- **F32 · JSON-LD `identifier`: the PropertyValue `name` ("Acme Surveys") was used as the id, and plain ids were not namespaced by host, so different jobs fused · [ ]**
-- **F33 · AI veto evaluated before the bonuses: a vetoed job was resurrected by a register bonus; an alerted High job silently vanished when rescored · [ ]**
-- **F34 · reposts swallowed: fuzzy match against state records of any age (`FUZZY_STATE_MATCH_DAYS` was never used) · [ ]**
-- **F35 · career-page / sitemap jobs dropped out of lists after 5 days while still open (cached pages are not refetched for 7–30 days) · [ ]**
-- **F36 · descriptions not kept for jobs a bonus lifted into an accepted tier · [ ]**
-- **F37 · tier counts in the report and the Worker's /status could go negative · [ ]**
-- **F38 · stale explanations after the adjustment was gone: `learned` after /learning off, `salary_eur` after the salary disappeared, `watched` after /unwatch · [ ]**
-- **F39 · alerts only selected from jobs seen this run: a job deferred by the cap, /pause or a failed send on a slow-rotation source was never alerted · [ ]**
-- **F40 · `_recheck_sponsorship` withdrew the claim but left its score effect; skipped jobs observed but not rescored · [ ]**
-- **F41 · AI review ignored the time budget and ran before the checkpoint save (a kill loses the run) · [ ]**
-- **F42 · a transient read error wiped the description store; the same shape for prefs · [ ]**
-- **F43 · eviction order bugs: Bundesagentur `german_refs` and signals `seen` trimmed by sort order / set order, not age; board registration O(n²) · [ ]**
-- **F44 · `/pause`, `/mute`, `/hide`, `/applied` sent during a run were ignored by that run's digest · [ ]**
+- **F31 · a shared application URL was job identity: two France Travail or Bundesagentur offers with the same generic apply page fused into one, and across runs a new offer attached to an old notified record and was never alerted · [fixed]**
+- **F32 · JSON-LD `identifier`: the PropertyValue `name` ("Acme Surveys") was used as the id, and plain ids were not namespaced by host, so different jobs fused · [fixed]**
+- **F33 · AI veto evaluated before the bonuses: a vetoed job was resurrected by a register bonus; an alerted High job silently vanished when rescored · [fixed]**
+- **F34 · reposts swallowed: fuzzy match against state records of any age (`FUZZY_STATE_MATCH_DAYS` was never used) · [fixed]**
+- **F35 · career-page / sitemap jobs dropped out of lists after 5 days while still open (cached pages are not refetched for 7–30 days) · [fixed]**
+- **F36 · descriptions not kept for jobs a bonus lifted into an accepted tier · [fixed]**
+- **F37 · tier counts in the report and the Worker's /status could go negative · [fixed]**
+- **F38 · stale explanations after the adjustment was gone: `learned` after /learning off, `salary_eur` after the salary disappeared, `watched` after /unwatch · [fixed]**
+- **F39 · alerts only selected from jobs seen this run: a job deferred by the cap, /pause or a failed send on a slow-rotation source was never alerted · [fixed]**
+- **F40 · `_recheck_sponsorship` withdrew the claim but left its score effect; skipped jobs observed but not rescored · [fixed]**
+- **F41 · AI review ignored the time budget and ran before the checkpoint save (a kill loses the run) · [fixed]**
+- **F42 · a transient read error wiped the description store; the same shape for prefs · [fixed for descriptions; prefs with F58]**
+- **F43 · eviction order bugs: Bundesagentur `german_refs` and signals `seen` trimmed by sort order / set order, not age; board registration O(n²) · [fixed]**
+- **F44 · `/pause`, `/mute`, `/hide`, `/applied` sent during a run were ignored by that run's digest · [fixed]**
+
+**How the core batch was fixed (F27–F44).** Identity: ids first, URLs second and only when no source both sides know gave
+them different ids (`_conflict`); fuzzy matches reach back 60 days. Run order: score → rescore stored jobs whose rules are
+outdated or whose sponsorship claim no longer reads as an offer (`SCORER_VERSION`, `rescore_stored`, place re-read too) →
+register bonus → learning (judged against the user's own base rate; forgotten when switched off) → AI reviews (clock cap
+`AI_TIME_BUDGET_SECONDS`, the user's recent decisions as calibration, jobs held back by the visa penalty included, near
+misses as second chances) → visa → AI veto, once and last → deadlines, salaries → tier counts taken from the state.
+Alerts reach back to accepted, never-notified, still-listed jobs found within the alert age, and preferences are re-read
+just before the digest. Descriptions follow an edited posting, survive a failed read, and are kept for held-back jobs.
 
 ### Sources (`scrapers/`, `insights/prospects.py`)
 

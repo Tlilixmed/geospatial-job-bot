@@ -87,7 +87,8 @@ def check(ctx, state: dict) -> list[dict]:
     last = parse_datetime(store.get("checked_at"))
     if last and ctx.now - last < timedelta(hours=CHECK_EVERY_HOURS):
         return []
-    seen = set(store.get("seen") or [])
+    remembered = list(store.get("seen") or [])  # oldest first: a set would forget ids at random once the list is full
+    seen = set(remembered)
     start = int(store.get("term_index") or 0) % len(TERMS)
     fresh: dict[str, dict] = {}
     ok = 0
@@ -119,7 +120,9 @@ def check(ctx, state: dict) -> list[dict]:
     store["checked_at"] = to_iso(ctx.now)
     store["term_index"] = (start + TERMS_PER_CHECK) % len(TERMS)
     new = sorted(fresh.values(), key=lambda s: s.get("date") or "", reverse=True)
-    store["seen"] = (list(seen) + [s["id"] for s in new])[-3000:]
+    known = set(remembered)
+    remembered += sorted(sid for sid in seen if sid not in known)  # noted by the tender check, never announced
+    store["seen"] = (remembered + [s["id"] for s in new])[-3000:]
     store["items"] = (new + list(store.get("items") or []))[:KEEP_ITEMS]
     return new
 

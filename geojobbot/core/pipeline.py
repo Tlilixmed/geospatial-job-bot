@@ -19,9 +19,9 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 
 from ..ai.client import WorkersAI
-from ..ai.review import review_job
+from ..ai.review import decisions_note, review_job
 from ..insights import fx, radar, signals, timing, visa, yields
-from ..insights.learning import apply_learning, build_model
+from ..insights.learning import apply_learning, build_model, forget
 from ..insights.prospects import ProspectBackend
 from ..insights.sponsors import SponsorRegistry, annotate_record
 from ..models import SourceResult
@@ -52,8 +52,8 @@ from .fusion import fuse
 from .health import format_health, health_messages
 from .index import SUFFIX as INDEX_SUFFIX
 from .index import build_index
-from .jobs import (AI_VETO_MAX_FIT, alert_block_reason, apply_ai_veto, due_follow_ups, is_listed, mark_failed, mark_notified, process_fused, prune_state,
-                   select_alerts)
+from .jobs import (AI_LIFT_MIN_FIT, AI_VETO_MAX_FIT, SCORER_VERSION, alert_block_reason, apply_ai_lift, apply_ai_veto, due_follow_ups, held_back_by_visa,
+                   is_listed, mark_failed, mark_notified, near_miss, process_fused, prune_state, rescore_stored, select_alerts)
 from .prefs import apply_prefs, load_prefs
 from .report import build_markdown, build_summary, diagnostics_rows
 
@@ -141,6 +141,7 @@ class Pipeline:
         self.ai = ai
         self.sponsors = sponsors
         self.descriptions: DescriptionStore | None = None
+        self.prefs: dict | None = None
         self._registry_cache: SponsorRegistry | None = None
         self.now = now or utcnow()
         self.sleep = sleep
@@ -258,14 +259,21 @@ class Pipeline:
         counts["unique"] = len(fused)
         outcome = process_fused(fused, state, settings, self.now)
         counts.update(outcome.counts)
+        # Adjustments, each stored under its own key in score_breakdown so it is applied once per scoring. The AI's
+        # verdicts frame them: a lift before the visa check (which may still hold the job back), the veto after
+        # everything, so a bonus can neither resurrect a vetoed job nor arrive too late to save one.
         self.descriptions = self._keep_descriptions(manager, outcome, state)
+        counts.update(self._rescore_stored(outcome, state))
         counts.update(self._sponsors(manager, ctx, outcome, state, writes_allowed, report))
         counts.update(self._learning(manager, outcome, state))
-        counts.update(self._ai_review(outcome, state))
-        counts.update(self._recheck_sponsorship(outcome, state))
+        counts.update(self._ai_review(outcome, state, ctx))
         counts.update(self._visa(state, outcome.seen_ids))
+        counts.update(self._ai_vetoes(outcome, state))
         counts.update(self._timing(outcome, state))
         counts.update(self._salaries(ctx, state))
+        self.descriptions = self._keep_descriptions(manager, outcome, state)  # again: jobs a bonus lifted into a tier
+        for tier in ("high", "possible", "rejected"):  # counted once, at the end: no adjustment can leave them wrong
+            counts[f"tier_{tier}"] = sum(1 for cid in outcome.seen_ids if (state["jobs"].get(cid) or {}).get("tier") == tier)
 
         relevant_by_board = Counter()
         for fj, result, _ in outcome.evaluated:
@@ -285,11 +293,16 @@ class Pipeline:
                 return self._fatal(report, f"checkpoint save failed, alerts not sent: {exc}", started, ctx)
             if self.descriptions is not None:
                 try:
-                    self.descriptions.prune(state["jobs"])
+                    self.descriptions.prune(state["jobs"], keep_also=lambda rec: held_back_by_visa(rec, settings))
                     self.descriptions.save(manager)
                 except StorageError as exc:
                     log.warning("descriptions not saved: %s", exc)
 
+        try:  # /pause, /mute, /hide or /applied sent while the sources were being read (the Worker writes prefs at once)
+            self.prefs = load_prefs(manager)
+            apply_prefs(settings, self.prefs)
+        except Exception as exc:
+            log.warning("preferences not re-read before the alerts: %s", type(exc).__name__)
         selected, alert_counts = select_alerts(state, outcome.seen_ids, settings, self.now)
         counts.update(alert_counts)
         notifier = self.notifier
@@ -326,6 +339,7 @@ class Pipeline:
             counts["health_alerts_sent"] = int(notifier.send(health)[0])
 
         counts["jobs_in_state"] = len(state["jobs"])
+        report["ai_model"] = (state.get("stats") or {}).get("ai_model")
         counts["boards_known"] = len(state["boards"])
         report["new_boards"] = dict(registry.new_this_run)
         report["http"] = client.stats.to_dict()
@@ -365,23 +379,26 @@ class Pipeline:
                 log.info("telegram polling skipped: %s", type(exc).__name__)
                 handled["polling"] = f"skipped ({type(exc).__name__})"
         try:
-            apply_prefs(settings, load_prefs(manager))
+            self.prefs = load_prefs(manager)
+            apply_prefs(settings, self.prefs)
         except Exception as exc:
             log.warning("stored preferences not applied: %s", type(exc).__name__)
             handled["prefs"] = f"not applied ({type(exc).__name__})"
         return handled
 
     def _keep_descriptions(self, manager: StateManager, outcome, state: dict) -> DescriptionStore | None:
-        """Remember the text of accepted jobs (for the AI backlog and /pitch); optional, never fatal."""
+        """Remember the text of accepted jobs (for the AI backlog, /pitch and the rechecks); optional, never fatal.
+        Called after scoring (the AI reads from it) and again after the adjustments, by the tier the job ended up in."""
         try:
-            store = DescriptionStore.load(manager)
-            for fused, result, rec in outcome.evaluated:
-                if result.tier in ("high", "possible"):
+            store = self.descriptions if self.descriptions is not None else DescriptionStore.load(manager)
+            for fused, _, rec in outcome.evaluated:
+                stored = state["jobs"].get(rec.canonical_id) or {}
+                if stored.get("tier") in ("high", "possible") or held_back_by_visa(stored, self.settings):
                     store.put(rec.canonical_id, fused.description)
             return store
         except Exception as exc:
             log.warning("descriptions not kept: %s", type(exc).__name__)
-            return None
+            return self.descriptions
 
     def _sponsor_registry(self, manager: StateManager) -> SponsorRegistry:
         """Loaded once per run: the prospector reads it during discovery, the sponsor lookup after scoring."""
@@ -400,29 +417,29 @@ class Pipeline:
             if self.sponsors is None and registry.stale(self.now) and writes_allowed and not ctx.out_of_time(420):
                 report["sponsor_registers"] = registry.refresh(ctx)
                 registry.save(manager)
-            for _, _, rec in outcome.evaluated:
-                stored = state["jobs"][rec.canonical_id]
+            for cid in self._adjustable(outcome):
+                stored = state["jobs"][cid]
                 if set(stored.get("rejection_reasons") or []) - {"LOW_SCORE"}:
                     continue
-                before = stored.get("tier")
                 annotate_record(stored, registry, self.settings)
                 counts["sponsor_matches"] += bool(stored.get("sponsor"))
-                if stored.get("tier") != before:
-                    counts[f"tier_{before}"] -= 1
-                    counts[f"tier_{stored['tier']}"] += 1
         except Exception as exc:
             log.warning("sponsor registers skipped: %s", type(exc).__name__)
             counts["sponsor_errors"] += 1
         return counts
 
-    def _ai_review(self, outcome, state: dict) -> Counter:
+    def _ai_review(self, outcome, state: dict, ctx: RunContext | None = None) -> Counter:
         """Workers AI second opinion for accepted jobs that have a description and no review yet.
 
-        Best matches first, capped per run (AI_REVIEWS_PER_RUN), stored on the job so it happens once.
-        Never fatal and never required: without a token this is a no-op.
+        Best matches first, capped per run (AI_REVIEWS_PER_RUN) and by the clock (AI_TIME_BUDGET_SECONDS), stored on the
+        job so it happens once. A few near misses get a reading too (AI_SECOND_CHANCES_PER_RUN): the rules cannot place
+        a title such as "Software Engineer, Maps", the model can. Never fatal and never required: without a token the
+        reviews are skipped, and the lifts already earned are still re-applied to rescored jobs.
         """
         counts = Counter()
         settings = self.settings
+        for cid in self._adjustable(outcome):  # rescoring wiped the adjustment: put it back before the visa check
+            apply_ai_lift(state["jobs"][cid], settings)
         if settings.dry_run and not settings.dry_run_write_state:
             return counts
         ai = self.ai if self.ai is not None else WorkersAI.from_settings(settings)
@@ -436,21 +453,32 @@ class Pipeline:
         if self.descriptions is not None:
             for cid, text in self.descriptions.data.items():
                 work.setdefault(cid, text)
-        pending = []
+        pending, near = [], []
         for cid, text in work.items():
             stored = state["jobs"].get(cid)
-            if (stored and stored.get("tier") in ("high", "possible") and not stored.get("ai")
-                    and alert_block_reason(stored, settings, self.now) is None):
-                pending.append((stored, text))
-        pending.sort(key=lambda pair: -int(pair[0].get("score") or 0))
-        for stored, text in pending:
-            if ai.budget <= 0 or ai.failures >= 3:
-                counts["ai_deferred"] += 1
+            if not stored or stored.get("ai") or alert_block_reason(stored, settings, self.now) is not None:
+                continue
+            if stored.get("tier") in ("high", "possible") or held_back_by_visa(stored, settings):
+                pending.append((stored, text, False))  # held back by the visa penalty: only a reading can lift it
+            elif near_miss(stored, settings):
+                near.append((stored, text, True))
+        unpenalised = lambda rec: int(rec.get("score") or 0) - int((rec.get("score_breakdown") or {}).get("visa") or 0)  # noqa: E731
+        pending.sort(key=lambda item: -unpenalised(item[0]))
+        near.sort(key=lambda item: -int(item[0].get("score") or 0))
+        near = near[: max(0, int(getattr(settings, "ai_second_chances_per_run", 0)))]
+        head = max(0, int(ai.budget) - len(near))  # near misses are read before the tail of a long backlog, not never
+        decisions = decisions_note(self.prefs)
+        started = time.monotonic()
+        for stored, text, second_chance in pending[:head] + near + pending[head:]:
+            late = time.monotonic() - started > settings.ai_time_budget_s or (ctx is not None and ctx.out_of_time(120))
+            if ai.budget <= 0 or ai.failures >= 3 or getattr(ai, "exhausted", False) or late:
+                counts["ai_deferred"] += not second_chance
+                counts["ai_stopped_by_clock"] += bool(late)
                 continue
             try:
                 place = ", ".join(p for p in (stored.get("city"), stored.get("country")) if p) or stored.get("location_raw")
-                review = review_job(ai, settings.candidate_profile, title=stored.get("title") or "",
-                                    company=stored.get("company"), location=place or "", description=text)
+                review = review_job(ai, settings.candidate_profile, title=stored.get("title") or "", company=stored.get("company"),
+                                    location=place or "", description=text, decisions=decisions)
             except Exception as exc:  # a model hiccup must never cost us the run
                 log.warning("ai review skipped for %s: %s", stored.get("canonical_id"), type(exc).__name__)
                 review = None
@@ -459,40 +487,69 @@ class Pipeline:
                 continue
             review["veto"] = bool(settings.ai_veto_possible and review["fit"] <= AI_VETO_MAX_FIT)
             review["at"] = to_iso(self.now)
+            if second_chance:
+                review["second_chance"] = True
+                review["lift"] = bool(review["fit"] >= AI_LIFT_MIN_FIT and not review.get("restricted"))
+                counts["ai_second_chances"] += 1
             stored["ai"] = review
             counts["ai_reviewed"] += 1
-            if apply_ai_veto(stored):
-                counts["ai_vetoed"] += 1
-                counts["tier_possible"] -= 1
-                counts["tier_rejected"] += 1
+            if second_chance and apply_ai_lift(stored, settings):
+                counts["ai_lifted"] += 1
+                if self.descriptions is not None:
+                    self.descriptions.put(stored["canonical_id"], text)
+        if getattr(ai, "last_model", None):
+            state.setdefault("stats", {})["ai_model"] = ai.last_model.rsplit("/", 1)[-1]
         return counts
 
-    def _recheck_sponsorship(self, outcome, state: dict) -> Counter:
-        """Re-read stored postings that claim sponsorship with the current wording rules (their text is kept), so a
-        claim made by an older, laxer version does not survive just because the posting was not seen again."""
+    def _ai_vetoes(self, outcome, state: dict) -> Counter:
+        """The AI veto, evaluated once and last: on this run's jobs (rescoring forgot it) and on those just reviewed."""
         counts = Counter()
+        seen = set(self._adjustable(outcome))
+        for cid, stored in state["jobs"].items():
+            review = stored.get("ai") or {}
+            if review.get("veto") and (cid in seen or review.get("at") == to_iso(self.now)) and apply_ai_veto(stored):
+                counts["ai_vetoed"] += 1
+        return counts
+
+    def _rescore_stored(self, outcome, state: dict) -> Counter:
+        """Score stored matches again from their kept text, when that is due and the job was not seen this run:
+        * the matching rules changed since it was scored (SCORER_VERSION), and the kept text is the whole posting;
+        * it claims sponsorship and today's wording rules no longer read an offer in it. That claim is what the user
+          acts on, so it is re-read every run and never survives just because the posting was not seen again.
+        The register bonus, learning, AI lift, visa check and AI veto that follow cover these jobs too."""
+        counts = Counter()
+        self.rescored: set = set()
         if self.descriptions is None:
             return counts
         try:
-            from ..matching.matcher import SPONSORSHIP_EVIDENCE, WORK_AUTHORIZATION_REQUIRED, work_authorization
+            from ..matching.matcher import SPONSORSHIP_EVIDENCE, work_authorization
+            from .descriptions import MAX_CHARS
 
             cfg = self.settings.match_config()
-            seen = {rec.canonical_id for _, _, rec in outcome.evaluated}  # rescored this run already
+            seen = {rec.canonical_id for _, _, rec in outcome.evaluated}  # scored this run already
             for cid, text in self.descriptions.data.items():
                 stored = state["jobs"].get(cid)
-                if not stored or cid in seen or SPONSORSHIP_EVIDENCE not in (stored.get("why_matched") or []):
+                if not stored or cid in seen:
                     continue
-                required, offered = work_authorization("\n".join((stored.get("title") or "", text)), stored, cfg)
-                if offered:
+                outdated = stored.get("rules") != SCORER_VERSION and int(stored.get("description_length") or 0) <= MAX_CHARS
+                claims = SPONSORSHIP_EVIDENCE in (stored.get("why_matched") or [])
+                if claims and not outdated:
+                    if work_authorization("\n".join((stored.get("title") or "", text)), stored, cfg)[1]:
+                        continue
+                elif not outdated:
                     continue
-                stored["why_matched"] = [w for w in stored["why_matched"] if w != SPONSORSHIP_EVIDENCE]
-                counts["sponsorship_claims_withdrawn"] += 1
-                if required and stored.get("tier") in ("high", "possible"):
-                    stored["tier"] = "rejected"
-                    stored["rejection_reasons"] = list(dict.fromkeys((stored.get("rejection_reasons") or []) + [WORK_AUTHORIZATION_REQUIRED]))
+                rescore_stored(stored, text, cfg)
+                self.rescored.add(cid)
+                counts["rescored_from_text"] += 1
+                if claims and SPONSORSHIP_EVIDENCE not in stored["why_matched"]:
+                    counts["sponsorship_claims_withdrawn"] += 1
         except Exception as exc:
-            log.warning("sponsorship recheck skipped: %s", type(exc).__name__)
+            log.warning("stored jobs not rescored: %s", type(exc).__name__)
         return counts
+
+    def _adjustable(self, outcome) -> list[str]:
+        """Ids whose score was computed this run (seen, or rescored from the kept text): the adjustments apply to them."""
+        return [rec.canonical_id for _, _, rec in outcome.evaluated] + sorted(getattr(self, "rescored", None) or ())
 
     def _salaries(self, ctx: RunContext, state: dict) -> Counter:
         """Posted salaries of accepted jobs in euros a year (daily rates; optional, never fatal)."""
@@ -502,7 +559,9 @@ class Pipeline:
                 fx.refresh(ctx, state)
             rates = (state.get("fx") or {}).get("eur")
             for rec in state["jobs"].values():
-                if rec.get("tier") in ("high", "possible") and rec.get("salary") and fx.annotate(rec, rates):
+                if rec.get("tier") not in ("high", "possible") or not (rec.get("salary") or rec.get("salary_eur")):
+                    continue
+                if fx.annotate(rec, rates):  # also clears the figure once the posting no longer states a salary
                     counts["salaries_converted"] += 1
         except Exception as exc:
             log.warning("salary conversion skipped: %s", type(exc).__name__)
@@ -562,9 +621,6 @@ class Pipeline:
                     counts[f"visa_{rec['visa']['verdict']}"] += 1
                 if rec.get("tier") != before:
                     counts["visa_retiered"] += 1
-                if rec.get("tier") != before and cid in seen_ids:  # the run's tier counts cover this run's jobs only
-                    counts[f"tier_{before}"] -= 1
-                    counts[f"tier_{rec['tier']}"] += 1
         except Exception as exc:
             log.warning("visa routes skipped: %s", type(exc).__name__)
         return counts
@@ -573,17 +629,13 @@ class Pipeline:
         """Nudge scores by what the user applied to and hid (transparent, small, optional)."""
         counts = Counter()
         try:
-            model = build_model(load_prefs(manager), state["jobs"])
-            if not model:
+            model = build_model(self.prefs if self.prefs is not None else load_prefs(manager), state["jobs"])
+            if not model:  # switched off, reset, or too few actions: what was learned before leaves the scores again
+                counts["learned_forgotten"] = sum(forget(rec, self.settings) for rec in state["jobs"].values())
                 return counts
-            for _, _, rec in outcome.evaluated:
-                stored = state["jobs"][rec.canonical_id]
-                before = stored.get("tier")
-                if apply_learning(stored, model, self.settings):
+            for cid in self._adjustable(outcome):
+                if apply_learning(state["jobs"][cid], model, self.settings):
                     counts["learned_adjustments"] += 1
-                if stored.get("tier") != before:
-                    counts[f"tier_{before}"] -= 1
-                    counts[f"tier_{stored['tier']}"] += 1
         except Exception as exc:
             log.warning("learning skipped: %s", type(exc).__name__)
         return counts

@@ -15,6 +15,7 @@ from .sponsors import retier
 
 MIN_LABELS = 4          # nothing is learned from fewer actions than this
 MIN_SUPPORT = 2         # a feature must have been seen in at least this many labelled jobs
+PRIOR = 2               # pseudo-observations at the user's own base rate: two sightings move a weight, they do not decide it
 SCALE = 6.0
 MAX_UP, MAX_DOWN = 6, -8
 POSITIVE_WEIGHT = {"applied": 1, "interview": 2, "offer": 2, "rejected": 1, "ghosted": 1, "withdrawn": 0}
@@ -50,8 +51,8 @@ def build_model(prefs: dict, jobs: dict) -> dict:
     if prefs.get("learning") is False:
         return {}
     since = parse_datetime(prefs.get("learning_since"))
-    positive, negative = Counter(), Counter()
-    labels = 0
+    positive, negative, seen = Counter(), Counter(), Counter()
+    labels = total_pos = total_neg = 0
     for cid, info in (prefs.get("applied") or {}).items():
         when = parse_datetime(info.get("at"))
         if since and when and when < since:
@@ -60,8 +61,10 @@ def build_model(prefs: dict, jobs: dict) -> dict:
         if not weight:
             continue
         labels += 1
+        total_pos += weight
         for feature in features({**info, **(jobs.get(cid) or {})} if jobs.get(cid) else info):
             positive[feature] += weight
+            seen[feature] += 1
     hidden_info = prefs.get("hidden_info") or {}
     for cid in prefs.get("hidden") or []:
         info = hidden_info.get(cid) or {}
@@ -72,16 +75,28 @@ def build_model(prefs: dict, jobs: dict) -> dict:
         if not source:
             continue
         labels += 1
+        total_neg += 1
         for feature in features(source):
             negative[feature] += 1
+            seen[feature] += 1
     if labels < MIN_LABELS:
         return {}
+    # A feature is judged against the user's own base rate, not against 50/50: someone who hides ten jobs for every
+    # application would otherwise teach the bot that "gis" is bad, because most hidden jobs say "gis" too.
+    base = total_pos / (total_pos + total_neg)
     model = {}
     for feature in set(positive) | set(negative):
         pos, neg = positive[feature], negative[feature]
-        if pos + neg < MIN_SUPPORT:
+        if seen[feature] < MIN_SUPPORT:
             continue
-        weight = round(SCALE * (pos - neg) / (pos + neg + 2), 1)
+        if 0 < base < 1:
+            rate = (pos + PRIOR * base) / (pos + neg + PRIOR)
+            lift = (rate - base) / ((1 - base) if rate > base else base)
+        elif seen[feature] * 2 > labels:
+            continue  # only one kind of label so far: what most labelled jobs share says nothing
+        else:
+            lift = (pos - neg) / (pos + neg + PRIOR)
+        weight = round(SCALE * lift, 1)
         if abs(weight) >= 1:
             model[feature] = weight
     return model
@@ -93,6 +108,17 @@ def adjustment(rec: dict, model: dict) -> tuple[int, list[str]]:
     adj = int(round(max(MAX_DOWN, min(MAX_UP, total))))
     because = [f"{'+' if w > 0 else '−'}{abs(w):g} {f.split(':', 1)[1]}" for w, f in hits[:4]]
     return adj, because
+
+
+def forget(rec: dict, settings) -> bool:
+    """Take a learned adjustment back out (learning was switched off or reset and the job was not rescored since)."""
+    breakdown = rec.get("score_breakdown") or {}
+    if "learned" not in breakdown:
+        return bool(rec.pop("learned", None))
+    rec["score"] = max(0, min(100, int(rec.get("score") or 0) - int(breakdown.pop("learned") or 0)))
+    rec.pop("learned", None)
+    retier(rec, settings)
+    return True
 
 
 def apply_learning(rec: dict, model: dict, settings) -> int:

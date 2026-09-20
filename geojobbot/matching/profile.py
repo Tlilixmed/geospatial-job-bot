@@ -69,7 +69,7 @@ GEO_TITLE_TERMS = [
     r"\bsig\b", r"\bgeomatiq\w*", r"\bgeomaticien\w*", r"\btopograph\w*", r"\bgeometres?\b", r"\bteledetection\b",
     r"\bgeodesien\w*", r"\bsystemes? d.information geographique", r"\barpent\w*",
     # Arabic
-    r"نظم (?:ال)?معلومات (?:ال)?جغرافي", r"مساح", r"جيوماتكس", r"استشعار عن بعد", r"خرائط",
+    r"نظم (?:ال)?معلومات (?:ال)?جغرافي", r"مساح(?!ات)", r"جيوماتكس", r"استشعار عن بعد", r"خرائط",
 ]
 
 # Weak title terms: words that are geospatial in a geomatics context but common elsewhere ("Quantity
@@ -78,7 +78,7 @@ GEO_TITLE_TERMS = [
 # description, and gets no title-only benefit of the doubt unless it is an explicit DIRECT/ADJACENT role.
 WEAK_GEO_TITLE_TERMS = [
     r"\bsurvey(?:or|ors|ing|s)?\b", r"\b(?:mapping|mapper)\b", r"\btopograph\w*", r"\bgeometres?\b", r"\barpent\w*",
-    r"مساح",
+    r"مساح(?!ات)",  # not "مساحات" (spaces, areas): an interior designer is not a surveyor
 ]
 SURVEY_EVIDENCE = (
     r"\b(?:gnss|gps|rtk|total\s+stations?|stations?\s+totales?|th[ée]odolite|levell?ing|nivellement|bornage|"
@@ -137,6 +137,18 @@ INTERNSHIP_TITLES = [
 # Negative titles that are overridden when the title itself is clearly geospatial
 # (e.g. "GIS Architect" or "Enterprise Geospatial Architect").
 NEGATIVE_OVERRIDABLE = {"Architect", "Architecte"}
+# Negative words that are also ordinary words or real roles. When the pattern matches the (folded) title, the word is
+# not held against it: a survey party chief leads a field crew, "GIS Executive" is a junior role in India and the UK,
+# "commercial" is French for a salesperson but plain English in "Commercial Drone Pilot", and "stage" is a French
+# internship but not in "(Early Stage Startup)".
+NEGATIVE_EXCEPTIONS = {
+    "Chief": r"\b(?:party|crew|survey|instrument|field)\s+chief\b|\bchief\s+of\s+part(?:y|ies)\b|\bchief\s+(?:land\s+)?surveyor\b",
+    "Executive": r"\b(?:gis|geospatial|mapping|survey|lidar|photogrammetry|cad|remote\s+sensing|geomatics)\s+executive\b",
+    "Commercial": r"\bcommercial\s+(?:drone|uav|uas|rpas|pilot|gis|geospatial|mapping|surveys?|surveying|lidar|photogrammetr\w*|"
+                  r"satellite|imagery|real\s+estate|property|properties|projects?|sector|and|&)\b|\b(?:and|&|/)\s*commercial\b",
+    "Stage": r"\b(?:early|late|growth|seed|multi|first|second|final|clinical)[\s-]+stage\b|\bstage[\s-]+(?:gate|startup|start-up|company)\b",
+    "Student": r"\bstudent\s+(?:services?|success|affairs|information|records|housing|life|support|experience|recruitment|accounts?)\b",
+}
 
 TECH_SKILLS = [
     Term("ArcGIS Pro", 7, (r"\b(?:esri\s+)?arcgis\s*pro\b",), family="esri"),
@@ -184,7 +196,7 @@ DOMAIN_TERMS = [
     Term("Surveying", 4, (r"\b(?:land|topographic|cadastral|geodetic|construction|hydrographic|boundary)\s+survey\w*",
                           r"\bsurveying\b", r"\bsurveyors?\b", r"\bgnss\b", r"\btotal\s+stations?\b",
                           r"\barpentage\b", r"\barpenteur\w*", r"\bg[ée]om[èe]tres?\b",
-                          r"\blev[ée]s?\s+topographiques?\b", r"\bstations?\s+totales?\b", r"المساحة|مساح"),
+                          r"\blev[ée]s?\s+topographiques?\b", r"\bstations?\s+totales?\b", r"المساحة|مساح(?!ات)"),
          family="surveying"),
     Term("Topography", 3, (r"\btopograph\w*",), family="surveying"),
     Term("Cadastral", 5, (r"\bcadastr\w*",), family="land_admin"),

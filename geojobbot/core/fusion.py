@@ -7,16 +7,21 @@ Identity keys per observation (strongest first):
   content hash       hash:<sha1 of company|title|location>
   fuzzy key          fz:<sha1 of normalised company|title|place>  (weak; guarded)
 
-Observations sharing any strong key are merged. Fuzzy keys merge groups only when that cannot
-join two different native ATS postings. Existing state records are matched through their stored
-aliases so a job keeps the same canonical id across runs and sources.
+Observations sharing an id are merged. A shared URL merges them too, unless a source both sides know
+gave them different ids: two France Travail offers pointing at the same generic "apply here" page are
+two jobs. Fuzzy keys merge groups only when that cannot join two different native ATS postings, and
+reach back into the state only as far as FUZZY_STATE_MATCH_DAYS (a posting that comes back later is a
+repost and is alerted again). Existing state records are matched through their stored aliases so a
+job keeps the same canonical id across runs and sources.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 
 from ..models import SOURCE_PRIORITY, RawJob
-from ..utils.dates import to_iso
+from datetime import timedelta
+
+from ..utils.dates import parse_datetime, to_iso
 from ..utils.location import FULLY_REMOTE_TEXT_RE, ParsedLocation, parse_location
 from ..utils.text import fold, normalize_company, normalize_title, sha1
 from ..utils.urls import canonicalize_url, is_aggregator
@@ -104,6 +109,25 @@ def content_hash_key(raw: RawJob) -> str:
     return "hash:" + sha1(f"{normalize_company(raw.company)}|{normalize_title(raw.title)}|{fold(raw.location_raw)}")
 
 
+WEAK_PREFIXES = ("url:", "fz:", "hash:")
+NOT_A_NAMESPACE = {"http", "https", "urn", "tag", "mailto"}  # feed guids that are URLs name no source
+
+
+def _source_ids(keys) -> dict[str, set[str]]:
+    """Ids grouped by the source that issued them: {"francetravail": {"francetravail:204xyz"}, ...}"""
+    out: dict[str, set[str]] = {}
+    for key in keys:
+        namespace = key.split(":", 1)[0]
+        if not key.startswith(WEAK_PREFIXES) and ":" in key and namespace not in NOT_A_NAMESPACE:
+            out.setdefault(namespace, set()).add(key)
+    return out
+
+
+def _conflict(a: dict, b: dict) -> bool:
+    """Do two id sets name different postings? True when a source both know gave them different ids."""
+    return any(namespace in b and not (ids & b[namespace]) for namespace, ids in a.items())
+
+
 def _native_ids(keys) -> set[str]:
     return {k for k in keys if not k.startswith(("url:", "fz:", "hash:")) and k.split(":")[0] in {
         "greenhouse", "lever", "ashby", "workable", "smartrecruiters", "recruitee", "personio", "workday"}}
@@ -135,9 +159,11 @@ def _pick(raws: list[RawJob], attr: str, predicate=lambda v: bool(v)):
 
 def build_alias_index(jobs: dict) -> dict[str, str]:
     index = {}
-    for cid, rec in jobs.items():
-        index.setdefault(cid.lower(), cid)
-        for alias in rec.get("aliases") or []:
+    newest = sorted(jobs, key=lambda cid: jobs[cid].get("last_seen") or "", reverse=True)
+    for cid in newest:
+        index[cid.lower()] = cid  # a record's own id always wins over another record's alias
+    for cid in newest:  # for a shared alias (a fuzzy key after a repost) the record seen last wins
+        for alias in jobs[cid].get("aliases") or []:
             index.setdefault(alias, cid)
     return index
 
@@ -153,15 +179,31 @@ def fuse(raws: list[RawJob], state_jobs: dict, now) -> list[FusedJob]:
     fuzz = [fuzzy_key(r.company, r.title, locs[i]) for i, r in enumerate(raws)]
 
     owner: dict[str, int] = {}
-    for i, keys in enumerate(keys_per_raw):
+    for i, keys in enumerate(keys_per_raw):  # ids first: the same id is the same posting, whatever else differs
         for key in keys:
+            if key.startswith("url:"):
+                continue
             if key in owner:
                 uf.union(owner[key], i)
             else:
                 owner[key] = i
 
+    def group_keys(root):
+        return [k for j in range(n) if uf.find(j) == root for k in keys_per_raw[j]]
+
     def group_natives(root):
-        return set().union(*[_native_ids(keys_per_raw[j]) for j in range(n) if uf.find(j) == root])
+        return _native_ids(group_keys(root))
+
+    for i, keys in enumerate(keys_per_raw):  # then URLs, which two postings can share (a generic application page)
+        for key in keys:
+            if not key.startswith("url:"):
+                continue
+            if key not in owner:
+                owner[key] = i
+                continue
+            a, b = uf.find(owner[key]), uf.find(i)
+            if a != b and not _conflict(_source_ids(group_keys(a)), _source_ids(group_keys(b))):
+                uf.union(a, b)
 
     fuzzy_owner: dict[str, int] = {}
     for i, fk in enumerate(fuzz):
@@ -187,16 +229,30 @@ def fuse(raws: list[RawJob], state_jobs: dict, now) -> list[FusedJob]:
     for members in groups.values():
         all_keys = list(dict.fromkeys(k for i in members for k in keys_per_raw[i]))
         fuzzy_keys = [fuzz[i] for i in members if fuzz[i]]
-        cid = next((alias_index[k] for k in all_keys if k in alias_index), None)
+        cid = None
+        my_ids = _source_ids(all_keys)
+        for key in all_keys:
+            candidate = alias_index.get(key)
+            if candidate is None:
+                continue
+            if key.startswith("url:") and _conflict(my_ids, _source_ids(
+                    [candidate.lower()] + list(state_jobs.get(candidate, {}).get("aliases") or []))):
+                continue  # same application page, another offer: never attach it to the old, already alerted record
+            cid = candidate
+            break
         if cid is None and fuzzy_keys:
             mine = _native_ids(all_keys)
             for fk in fuzzy_keys:
                 candidate = alias_index.get(fk)
                 if not candidate:
                     continue
-                rec_natives = _native_ids(state_jobs.get(candidate, {}).get("aliases") or [])
+                known = state_jobs.get(candidate, {})
+                rec_natives = _native_ids(known.get("aliases") or [])
                 if rec_natives and mine and not (rec_natives & mine):
                     continue
+                last_seen = parse_datetime(known.get("last_seen"))
+                if last_seen is not None and now - last_seen > timedelta(days=FUZZY_STATE_MATCH_DAYS):
+                    continue  # gone for two months and back: a repost, which deserves its own alert
                 cid = candidate
                 break
         if cid is None:

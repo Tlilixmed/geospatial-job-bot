@@ -66,7 +66,44 @@ CITY_COUNTRIES = {
     "kasserine": "Tunisia", "hammamet": "Tunisia", "la marsa": "Tunisia", "lac": "Tunisia",
     "casablanca": "Morocco", "rabat": "Morocco", "marrakech": "Morocco", "tanger": "Morocco", "alger": "Algeria",
     "algiers": "Algeria", "oran": "Algeria", "dakar": "Senegal", "abidjan": "Ivory Coast",
+    "fes": "Morocco", "agadir": "Morocco", "tangier": "Morocco",
+    # Cities of countries whose ISO code is also a US state, a Canadian province or an Australian state:
+    # "Berlin, DE" is Germany, "Dover, DE" is Delaware; "Riyadh, SA" is Saudi Arabia, "Adelaide, SA" is South Australia.
+    "berlin": "Germany", "munich": "Germany", "munchen": "Germany", "hamburg": "Germany", "frankfurt": "Germany",
+    "frankfurt am main": "Germany", "cologne": "Germany", "koln": "Germany", "stuttgart": "Germany", "dusseldorf": "Germany",
+    "leipzig": "Germany", "dresden": "Germany", "bonn": "Germany", "karlsruhe": "Germany", "hannover": "Germany",
+    "hanover": "Germany", "nuremberg": "Germany", "nurnberg": "Germany", "essen": "Germany", "dortmund": "Germany",
+    "bremen": "Germany", "potsdam": "Germany", "darmstadt": "Germany", "heidelberg": "Germany", "freiburg": "Germany",
+    "aachen": "Germany", "munster": "Germany", "mannheim": "Germany", "jena": "Germany", "oberpfaffenhofen": "Germany",
+    "bangalore": "India", "bengaluru": "India", "mumbai": "India", "delhi": "India", "new delhi": "India",
+    "hyderabad": "India", "chennai": "India", "pune": "India", "kolkata": "India", "noida": "India", "gurgaon": "India",
+    "gurugram": "India", "ahmedabad": "India",
+    "amsterdam": "Netherlands", "rotterdam": "Netherlands", "utrecht": "Netherlands", "the hague": "Netherlands",
+    "den haag": "Netherlands", "eindhoven": "Netherlands", "delft": "Netherlands", "groningen": "Netherlands",
+    "amersfoort": "Netherlands", "apeldoorn": "Netherlands", "zwolle": "Netherlands", "arnhem": "Netherlands",
+    "nijmegen": "Netherlands", "enschede": "Netherlands", "wageningen": "Netherlands",
+    "riyadh": "Saudi Arabia", "jeddah": "Saudi Arabia", "dammam": "Saudi Arabia", "khobar": "Saudi Arabia",
+    "al khobar": "Saudi Arabia", "dhahran": "Saudi Arabia", "neom": "Saudi Arabia", "jubail": "Saudi Arabia",
+    "mecca": "Saudi Arabia", "medina": "Saudi Arabia", "tabuk": "Saudi Arabia",
+    "toronto": "Canada", "vancouver": "Canada", "calgary": "Canada", "ottawa": "Canada", "edmonton": "Canada",
+    "winnipeg": "Canada", "halifax": "Canada", "saskatoon": "Canada", "regina": "Canada",
+    "sydney": "Australia", "melbourne": "Australia", "brisbane": "Australia", "perth": "Australia", "adelaide": "Australia",
+    "canberra": "Australia", "darwin": "Australia", "hobart": "Australia",
+    "jakarta": "Indonesia", "bogota": "Colombia", "medellin": "Colombia", "lima": "Peru",
+    "dubai": "United Arab Emirates", "abu dhabi": "United Arab Emirates", "sharjah": "United Arab Emirates",
+    "doha": "Qatar", "kuwait city": "Kuwait", "muscat": "Oman", "manama": "Bahrain",
+    "paris": "France", "lyon": "France", "marseille": "France", "toulouse": "France", "nantes": "France",
+    "bordeaux": "France", "lille": "France", "montpellier": "France", "rennes": "France", "grenoble": "France",
+    "strasbourg": "France", "nice": "France", "brussels": "Belgium", "bruxelles": "Belgium", "liege": "Belgium",
+    "namur": "Belgium", "geneva": "Switzerland", "geneve": "Switzerland", "lausanne": "Switzerland",
+    "zurich": "Switzerland", "bern": "Switzerland", "london": "United Kingdom", "manchester": "United Kingdom",
+    "edinburgh": "United Kingdom", "glasgow": "United Kingdom", "bristol": "United Kingdom", "leeds": "United Kingdom",
+    "dublin": "Ireland", "cork": "Ireland", "galway": "Ireland",
 }
+# Québec cities given without the province: the region matters (Francophone Mobility applies outside Québec only).
+QUEBEC_CITIES = {"montreal", "quebec", "quebec city", "ville de quebec", "gatineau", "laval", "longueuil", "sherbrooke",
+                 "trois-rivieres", "saguenay", "levis", "terrebonne", "brossard", "drummondville", "rimouski", "rouyn-noranda",
+                 "val-d'or", "chicoutimi", "saint-hyacinthe", "granby", "victoriaville"}
 US_STATES = {
     "al": "Alabama", "ak": "Alaska", "az": "Arizona", "ar": "Arkansas", "ca": "California", "co": "Colorado",
     "ct": "Connecticut", "de": "Delaware", "fl": "Florida", "ga": "Georgia", "hi": "Hawaii", "id": "Idaho",
@@ -88,6 +125,8 @@ CA_PROVINCES = {
 CA_PROVINCE_NAMES = {v.lower(): v for v in CA_PROVINCES.values()}
 AU_STATES = {"nsw": "New South Wales", "vic": "Victoria", "qld": "Queensland", "tas": "Tasmania",
              "act": "Australian Capital Territory"}
+# two-letter Australian codes collide with ISO countries (SA, NT, WA): used only when nothing says otherwise
+AU_STATE_CODES = {"sa": "South Australia", "wa": "Western Australia", "nt": "Northern Territory"}
 
 REMOTE_RE = re.compile(
     r"(\bfully\s+remote\b|100%\s*remote\b|\bremote\b|\bwork\s+from\s+home\b|\bwfh\b|\btelecommut\w*|\bhome[- ]based\b|\banywhere\b|"
@@ -160,32 +199,55 @@ def scope_from_text(text: str | None) -> str | None:
 
 def _parse_place(text: str) -> tuple[str | None, str | None, str | None]:
     tokens = [tok.strip(" .()[]") for tok in re.split(r"[,|(]| - | – | — ", text) if tok.strip(" .()[]")]
+    folded = [fold(tok) for tok in tokens]
+    known_city_country = next((CITY_COUNTRIES[f] for f in folded if f in CITY_COUNTRIES), None)
+    in_quebec = any(f in QUEBEC_CITIES for f in folded) and not any(
+        f in CA_PROVINCES or f in CA_PROVINCE_NAMES for f in folded if f not in ("qc", "quebec"))
     city = region = country = None
     remaining: list[str] = []
-    for tok in tokens:
-        f = fold(tok)
+    for tok, f in zip(tokens, folded):
+        code = tok.upper() if tok.isupper() and len(tok) == 2 else None
+        iso_country = ISO_CODES.get(code) if code and remaining else None
+        state = None
+        if remaining and tok.isupper():
+            if f in CA_PROVINCES:
+                state = (CA_PROVINCES[f], "Canada")
+            elif f in AU_STATES:
+                state = (AU_STATES[f], "Australia")
+            elif f in AU_STATE_CODES and "Australia" in (known_city_country, country):  # "Perth, WA", never "Seattle, WA"
+                state = (AU_STATE_CODES[f], "Australia")
+            elif f in US_STATES:
+                state = (US_STATES[f], "United States")
         if f in COUNTRIES and country is None:
             country = COUNTRIES[f]
         elif f in REGIONS and region is None:
             region = REGIONS[f]
         elif f in US_STATE_NAMES:
             region, country = US_STATE_NAMES[f], country or "United States"
-        elif f in CA_PROVINCE_NAMES:
+        elif f in CA_PROVINCE_NAMES and not (f == "quebec" and not remaining):
             region, country = CA_PROVINCE_NAMES[f], country or "Canada"
-        elif remaining and tok.isupper() and f in CA_PROVINCES:
-            region, country = CA_PROVINCES[f], country or "Canada"
-        elif remaining and tok.isupper() and f in AU_STATES:
-            region, country = AU_STATES[f], country or "Australia"
-        elif remaining and tok.isupper() and f in US_STATES:
-            region, country = US_STATES[f], country or "United States"
+        elif iso_country and state:
+            # "Tunis, TN": Tunisia or Tennessee? The city decides; a code that names the city's own country is that country.
+            if known_city_country == iso_country or (country == iso_country):
+                country = iso_country
+            elif known_city_country is None or known_city_country == state[1]:
+                region, country = state[0], country or state[1]
+            else:
+                country = country or known_city_country
+        elif iso_country:
+            country = country or iso_country
+        elif state:
+            region, country = state[0], country or state[1]
         else:
             remaining.append(tok)
     if remaining:
         candidate = remaining[0]
         if len(fold(candidate)) >= 2 and fold(candidate) not in WORLDWIDE:
             city = candidate
-    if country is None and city and fold(city) in CITY_COUNTRIES:
-        country = CITY_COUNTRIES[fold(city)]
+    if country is None and known_city_country:
+        country = known_city_country
+    if in_quebec and (country in (None, "Canada")):
+        region, country = region or "Quebec", "Canada"
     return city, region, country
 
 
@@ -195,6 +257,16 @@ ISO_PREFIX = {"SA": "Saudi Arabia", "AE": "United Arab Emirates", "QA": "Qatar",
               "AU": "Australia", "NZ": "New Zealand", "FR": "France", "DE": "Germany", "NL": "Netherlands", "BE": "Belgium",
               "CH": "Switzerland", "DK": "Denmark", "SE": "Sweden", "NO": "Norway", "ES": "Spain", "IT": "Italy", "PT": "Portugal",
               "TN": "Tunisia", "MA": "Morocco", "EG": "Egypt", "IN": "India", "SG": "Singapore", "ZA": "South Africa"}
+ISO_CODES = dict(ISO_PREFIX, **{
+    "AT": "Austria", "LU": "Luxembourg", "FI": "Finland", "IS": "Iceland", "PL": "Poland", "CZ": "Czechia", "RO": "Romania",
+    "GR": "Greece", "HU": "Hungary", "EE": "Estonia", "LV": "Latvia", "LT": "Lithuania", "HR": "Croatia", "RS": "Serbia",
+    "BG": "Bulgaria", "SK": "Slovakia", "SI": "Slovenia", "UA": "Ukraine", "TR": "Turkey", "DZ": "Algeria", "LY": "Libya",
+    "NG": "Nigeria", "KE": "Kenya", "GH": "Ghana", "RW": "Rwanda", "ET": "Ethiopia", "SN": "Senegal", "TZ": "Tanzania",
+    "UG": "Uganda", "ZM": "Zambia", "JO": "Jordan", "PK": "Pakistan", "MY": "Malaysia", "ID": "Indonesia", "PH": "Philippines",
+    "VN": "Vietnam", "TH": "Thailand", "JP": "Japan", "KR": "South Korea", "CN": "China", "HK": "Hong Kong", "TW": "Taiwan",
+    "BR": "Brazil", "MX": "Mexico", "CL": "Chile", "PE": "Peru", "CO": "Colombia", "AR": "Argentina", "CI": "Ivory Coast",
+    "CM": "Cameroon", "LB": "Lebanon",
+})
 ISO_PREFIX_RE = re.compile(r"^([A-Z]{2}) +[-–] +(.+)$")
 
 

@@ -151,6 +151,9 @@ class Settings:
                                                           "@cf/meta/llama-3.1-8b-instruct"])
     ai_reviews_per_run: int = 40  # ~35 neurons each; 6 runs a day stays inside the free 10,000/day
     ai_veto_possible: bool = True
+    ai_time_budget_s: int = 420          # the reviews stop here even with budget left: a slow model must not eat the run
+    ai_second_chances_per_run: int = 5   # near misses (a few points under Possible) the AI reads as well
+    ai_second_chance_margin: int = 8
     candidate_profile: str = ""  # empty = the built-in profile in geojobbot/ai/review.py
     reliefweb_appname: str | None = None  # approved app name from ReliefWeb (free): UN/NGO jobs, hired internationally
     weekly_summary: bool = True
@@ -302,6 +305,8 @@ def load_settings() -> Settings:
     s.ai_models = env_list("AI_MODELS", s.ai_models)
     s.ai_reviews_per_run = max(0, env_int("AI_REVIEWS_PER_RUN", s.ai_reviews_per_run))
     s.ai_veto_possible = env_bool("AI_VETO_POSSIBLE", s.ai_veto_possible)
+    s.ai_time_budget_s = max(30, env_int("AI_TIME_BUDGET_SECONDS", s.ai_time_budget_s))
+    s.ai_second_chances_per_run = max(0, env_int("AI_SECOND_CHANCES_PER_RUN", s.ai_second_chances_per_run))
     s.candidate_profile = env_str("CANDIDATE_PROFILE", s.candidate_profile) or ""
     s.weekly_summary = env_bool("WEEKLY_SUMMARY", s.weekly_summary)
     s.sponsor_registers = env_bool("SPONSOR_REGISTERS", s.sponsor_registers)

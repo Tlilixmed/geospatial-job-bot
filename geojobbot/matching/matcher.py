@@ -65,10 +65,19 @@ class MatchResult:
         return data
 
 
+ARABIC_LETTERS = "\u0621-\u064a"
+
+
 def _phrase_regex(phrase: str) -> re.Pattern:
-    words = [re.escape(w) for w in re.split(r"[\s/]+", fold(phrase)) if w]
+    """Whole words only, in Arabic too: "مساح" (surveyor) is not inside "مساحات" (spaces), but it is in "المساح",
+    "والمساح" and the plural "مساحون". Each Arabic word may carry the article."""
+    raw = [w for w in re.split(r"[\s/]+", fold(phrase)) if w]
+    arabic = bool(raw) and bool(re.match(f"[{ARABIC_LETTERS}]", raw[-1]))
+    words = [("(?:ال|لل)?" if re.match(f"[{ARABIC_LETTERS}]", w) else "") + re.escape(w) for w in raw]
     joiner = SEP + r"(?:[a-z0-9.+]+" + SEP + r"){0,2}"
-    return re.compile(r"(?<![a-z0-9])" + joiner.join(words) + r"(?![a-z0-9])")
+    head = f"(?<![a-z0-9{ARABIC_LETTERS}])" + ("[وفبلك]?" if arabic else "")
+    tail = ("(?:ون|ين)?" if arabic else "") + f"(?![a-z0-9{ARABIC_LETTERS}])"
+    return re.compile(head + joiner.join(words) + tail)
 
 
 @lru_cache(maxsize=None)
@@ -84,7 +93,8 @@ def _compiled_roles():
 @lru_cache(maxsize=64)
 def _compiled_negatives(extra: tuple[str, ...]):
     items = list(P.NEGATIVE_TITLES) + list(extra)
-    return [(neg, re.compile(r"(?<![a-z0-9])" + re.escape(fold(neg)) + r"(?![a-z0-9])")) for neg in items]
+    return [(neg, re.compile(r"(?<![a-z0-9])" + re.escape(fold(neg)) + r"(?![a-z0-9])"),
+             re.compile(P.NEGATIVE_EXCEPTIONS[neg]) if neg in P.NEGATIVE_EXCEPTIONS else None) for neg in items]
 
 
 @lru_cache(maxsize=None)
@@ -192,10 +202,12 @@ def classify_title(title: str, extra_negatives: tuple[str, ...] = ()) -> tuple[s
     has_geo = any(rx.search(t) for rx in geo_terms)
 
     negative_hit = None
-    for neg, rx in _compiled_negatives(tuple(extra_negatives)):
+    for neg, rx, unless in _compiled_negatives(tuple(extra_negatives)):
         if rx.search(t):
             if neg in P.NEGATIVE_OVERRIDABLE and has_geo:
                 continue
+            if unless is not None and unless.search(t):
+                continue  # an ordinary word here, not the role it usually names
             negative_hit = neg
             break
 

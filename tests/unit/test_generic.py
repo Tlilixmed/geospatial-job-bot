@@ -21,7 +21,11 @@ def test_jsonld_graph_with_trailing_comma():
     job = r.jobs[0]
     assert job.company == "SkyMap Ltd" and job.location_raw == "Leeds, United Kingdom"
     assert "GBP 30000–36000 YEAR" == job.salary and job.employment_type == "FULL_TIME"
-    assert job.source_job_id == "REQ-77" and job.posted_at.day == 15
+    assert job.source_job_id == "jsonld-skymap.example:REQ-77" and job.posted_at.day == 15  # a bare id means nothing off its site
+    named = JSONLD_GRAPH.replace('"value":"REQ-77"', '"name":"SkyMap Ltd","value":"REQ-78"')
+    assert extract_jobs(named, "https://skymap.example/careers/x", NOW).jobs[0].source_job_id == "jsonld-skymap.example:REQ-78"
+    only_name = JSONLD_GRAPH.replace('"value":"REQ-77"', '"name":"SkyMap Ltd"')  # the employer's name is not a job id
+    assert extract_jobs(only_name, "https://skymap.example/careers/x", NOW).jobs[0].source_job_id is None
 
 
 def test_jsonld_excerpt_is_topped_up_from_page_body():

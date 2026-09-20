@@ -10,6 +10,7 @@ Boards returning 404 are marked INVALID and rechecked rarely; repeated errors ba
 from __future__ import annotations
 
 import threading
+from collections import Counter
 from datetime import timedelta
 
 from ..scrapers.ats.detect import BoardRef
@@ -25,6 +26,7 @@ MAX_BOARDS_PER_ATS = 30000
 class BoardRegistry:
     def __init__(self, state: dict, now, *, hot_days: int = 30):
         self.boards: dict = state.setdefault("boards", {})
+        self._per_ats = Counter(key.split(":", 1)[0] for key in self.boards)  # kept current: counting on every call was O(n²)
         self.now = now
         self.hot_days = hot_days
         self._lock = threading.Lock()
@@ -37,9 +39,9 @@ class BoardRegistry:
         with self._lock:
             entry = self.boards.get(key)
             if entry is None:
-                count = sum(1 for k in self.boards if k.startswith(ref.ats + ":"))
-                if count >= MAX_BOARDS_PER_ATS and origin == "commoncrawl":
+                if origin == "commoncrawl" and self._per_ats[ref.ats] >= MAX_BOARDS_PER_ATS:
                     return False
+                self._per_ats[ref.ats] += 1
                 self.boards[key] = {
                     "ats": ref.ats, "slug": ref.slug, "origin": origin, "status": "UNKNOWN",
                     "first_discovered": to_iso(self.now), "last_checked": None, "last_job_count": None,

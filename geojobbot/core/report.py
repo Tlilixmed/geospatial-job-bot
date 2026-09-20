@@ -80,7 +80,13 @@ def build_summary(report: dict) -> str:
         f"Sponsor registers: {c.get('sponsor_matches', 0)} of this run's jobs are from employers on an official register"
         + (f" (refreshed: {report['sponsor_registers']})" if report.get('sponsor_registers') else ""),
         f"AI second opinion: {c.get('ai_reviewed', 0)} reviewed, {c.get('ai_vetoed', 0)} vetoed, "
-        f"{c.get('ai_failed', 0)} failed, {c.get('ai_deferred', 0)} deferred to the next run",
+        f"{c.get('ai_failed', 0)} failed, {c.get('ai_deferred', 0)} deferred to the next run"
+        + (" (stopped by the clock)" if c.get('ai_stopped_by_clock') else "")
+        + (f" · near misses read: {c.get('ai_second_chances', 0)}, lifted: {c.get('ai_lifted', 0)}" if c.get('ai_second_chances') else "")
+        + (f" · model: {report['ai_model']}" if report.get('ai_model') else ""),
+        f"Stored matches rescored from their kept text: {c.get('rescored_from_text', 0)} "
+        f"(sponsorship claims withdrawn: {c.get('sponsorship_claims_withdrawn', 0)}) · alerts carried over from earlier runs: "
+        f"{c.get('carried_over', 0)}",
         "",
         "Discovery:",
         f"  New boards registered: {report.get('new_boards', {})}",

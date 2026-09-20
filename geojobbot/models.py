@@ -109,6 +109,7 @@ class JobRecord:
     ai: dict = field(default_factory=dict)  # Workers AI second opinion: fit, summary, concerns, requirements, veto
     deadline: str | None = None  # application deadline read from the description (ISO date)
     deadline_reminded: bool = False
+    rules: int = 0  # SCORER_VERSION the score was computed with (core/jobs.py)
     # annotations other modules put on the stored dict (learned, visa, reposts, watched…): carried through untouched,
     # so re-observing a job never silently drops what a later pipeline step wrote on it
     extra: dict = field(default_factory=dict)

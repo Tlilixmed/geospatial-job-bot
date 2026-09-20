@@ -154,3 +154,49 @@ def test_prune():
     st["page_cache"]["u"] = {"fetched_at": (NOW - timedelta(days=31)).isoformat()}
     counts = prune_state(st, settings, NOW)
     assert list(st["jobs"]) == ["old_match"] and counts["page_cache_pruned"] == 1
+
+
+def ft(offer, **kw):
+    """A France Travail offer: its own page, and the employer's generic application page."""
+    base = dict(source_type="api", source_name="francetravail", native_id=None, source_job_id=f"francetravail:{offer}",
+                url=f"https://candidat.francetravail.fr/offres/recherche/detail/{offer}", apply_url="https://acme.fr/recrutement",
+                company="Acme Topo", location_raw="Lyon, France")
+    base.update(kw)
+    return raw(**base)
+
+
+def test_a_shared_application_page_is_not_job_identity():
+    a, b = ft("204AAA", title="Géomaticien"), ft("204BBB", title="Technicien SIG")
+    assert sorted(f.canonical_id for f in fuse([a, b], {}, NOW)) == ["francetravail:204aaa", "francetravail:204bbb"]
+    # across runs: the second offer must not attach to the first one's stored (already alerted) record
+    st = state()
+    process_fused(fuse([a], st["jobs"], NOW), st, make_settings(), NOW)
+    mark_notified(st["jobs"]["francetravail:204aaa"], NOW)
+    later = NOW + timedelta(days=3)
+    outcome = process_fused(fuse([b], st["jobs"], later), st, make_settings(), later)
+    assert outcome.counts["new"] == 1 and set(st["jobs"]) == {"francetravail:204aaa", "francetravail:204bbb"}
+    assert [r["canonical_id"] for r in select_alerts(st, outcome.seen_ids, make_settings(), later)[0]] == ["francetravail:204bbb"]
+    # a shared URL still fuses observations no source tells apart: the employer's page and an aggregator pointing at it
+    page = raw(source_type="employer_page", source_name="generic_jsonld", native_id=None, url="https://acme.fr/jobs/geomaticien-42",
+               apply_url=None, company="Acme Topo")
+    agg = raw(source_type="aggregator", source_name="adzuna", native_id=None, source_job_id="adzuna:9", company="Acme Topo",
+              url="https://www.adzuna.fr/details/9", apply_url="https://acme.fr/jobs/geomaticien-42", title="Geomaticien H/F")
+    assert len(fuse([page, agg], {}, NOW)) == 1
+    # feed guids that are URLs are not a namespace: two feeds carrying the same link are one job
+    one = raw(source_type="feed", source_name="rss:a", native_id=None, source_job_id="https://a.example/?p=1", url="https://x.org/job/7", apply_url=None)
+    two = raw(source_type="feed", source_name="rss:b", native_id=None, source_job_id="https://b.example/?p=9", url="https://x.org/job/7", apply_url=None)
+    assert len(fuse([one, two], {}, NOW)) == 1
+
+
+def test_a_posting_that_comes_back_after_two_months_is_a_repost_not_the_old_record():
+    st = state()
+    first = raw(native_id=None, source_name="remotive", source_job_id="remotive:1", url="https://remotive.com/job/1", apply_url=None)
+    process_fused(fuse([first], st["jobs"], NOW), st, make_settings(), NOW)
+    again = raw(native_id=None, source_name="remotive", source_job_id="remotive:2", url="https://remotive.com/job/2", apply_url=None)
+    soon = NOW + timedelta(days=20)
+    assert fuse([again], st["jobs"], soon)[0].canonical_id == "remotive:1"  # same employer, title and place: one job
+    late = NOW + timedelta(days=75)
+    assert fuse([again], st["jobs"], late)[0].canonical_id == "remotive:2"
+    process_fused(fuse([again], st["jobs"], late), st, make_settings(), late)
+    third = raw(native_id=None, source_name="jobicy", source_job_id="jobicy:3", url="https://jobicy.com/job/3", apply_url=None)
+    assert fuse([third], st["jobs"], late)[0].canonical_id == "remotive:2"  # the fuzzy key now leads to the record seen last

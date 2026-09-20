@@ -137,6 +137,28 @@ def test_irish_and_danish_registers_parse_and_match():
     assert [e["n"] for e in dk.values()] == ["NIRAS A/S", "&TRADITION A/S"]
     registry = SponsorRegistry({"registers": {"ie": ie, "dk": dk}})
     hit = registry.lookup("NIRAS")[0]
-    assert (hit["register"], hit["country"], hit["match"]) == ("dk", "Denmark", "variant")
+    assert (hit["register"], hit["country"], hit["match"]) == ("dk", "Denmark", "exact")  # "A/S" is a legal form, like "Ltd"
     assert registry.lookup("Murphy Geospatial")[0]["positions"] == 8
     assert registry.stale(NOW) is True  # registers added since the last download trigger a refresh
+
+
+def test_a_similar_name_is_not_the_same_company():
+    from geojobbot.insights import visa
+    from geojobbot.insights.sponsors import NORMALISER, distinctive
+    from geojobbot.utils.text import normalize_company
+
+    # legal forms fall only at the end of a name; dotted initials collapse
+    assert normalize_company("AG Survey Ltd") == "ag survey" and normalize_company("SA Water") == "sa water"
+    assert normalize_company("SAS Institute Inc.") == "sas institute" and normalize_company("Fugro B.V.") == "fugro"
+    assert normalize_company("Esri (U.K.) Limited") == normalize_company("Esri UK Ltd")
+    assert not distinctive("mapping") and not distinctive("survey") and distinctive("fugro") and distinctive("land survey")
+
+    uk = {normalize_company(n): {"n": n} for n in ("Mapping International Ltd", "Fugro GB Limited", "Water Research Centre Limited")}
+    reg = SponsorRegistry({"normaliser": NORMALISER, "registers": {"uk": uk, "ca": {}, "nl": {}, "ie": {}, "dk": {}}})
+    assert reg.lookup("Global Mapping Ltd") == [] and reg.lookup("SA Water") == []  # a shared trade word is not a match
+    hit = reg.lookup("Fugro")[0]
+    assert hit["match"] == "variant"
+    rec = {"company": "Fugro", "country": "United Kingdom", "score": 60, "tier": "possible", "score_breakdown": {}, "rejection_reasons": []}
+    assert annotate_record(rec, reg, make_settings()) == 0 and rec["sponsor"]  # shown for checking, but it earns no points
+    assert visa._sponsor_check(rec, {"register": "uk"})["ok"] is None
+    assert SponsorRegistry({"registers": {"uk": uk, "ca": {}, "nl": {}, "ie": {}, "dk": {}}}).stale(NOW)  # keyed by the older normaliser

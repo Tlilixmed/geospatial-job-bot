@@ -183,7 +183,9 @@ def test_french_titles_classify_like_english():
 
 def test_arabic_titles_and_sponsorship_location_bonus():
     assert M.classify_title("مهندس نظم معلومات جغرافية")[0] == "direct"
-    assert M.classify_title("أخصائي نظم المعلومات الجغرافية")[0] == "geo_title"
+    assert M.classify_title("أخصائي نظم المعلومات الجغرافية")[0] == "direct"  # the article does not hide the role
+    assert M.classify_title("مصمم مساحات داخلية")[0] == "none"  # "مساحات" (spaces) is not "مساح" (surveyor)
+    assert [M.classify_title(t)[0] for t in ("المساح", "مساحون", "مساح أراضي", "فني المساحة")] == ["direct"] * 4
     assert M.classify_title("فني مساحة")[0] == "direct"
     assert M.classify_title("مهندس ميكانيكي")[0] == "none"
     r = M.score_job("مهندس نظم معلومات جغرافية", "خبرة في نظم المعلومات الجغرافية والاستشعار عن بعد وإنتاج الخرائط. ArcGIS Pro.", {})
@@ -231,3 +233,14 @@ def test_jobs_reserved_for_nationals_are_rejected_and_iso_prefixed_locations_par
     assert emiratisation.tier == "rejected"
     open_role = score_job("GIS Specialist", GIS_DESCRIPTION, loc.to_dict(), make_settings().match_config())
     assert open_role.tier != "rejected"
+
+
+def test_negative_words_that_are_also_ordinary_words_or_real_roles():
+    from geojobbot.matching.profile import INTERNSHIP_TITLES
+    extra = tuple(INTERNSHIP_TITLES)
+    fine = ["Survey Party Chief", "Survey Crew Chief", "Chief Surveyor", "GIS Executive", "Commercial Drone Pilot / Photogrammetry",
+            "Commercial GIS Analyst", "GIS Developer (Early Stage Startup)", "GIS Analyst - Student Services"]
+    still_negative = ["Chief Geospatial Officer", "Sales Executive GIS", "Executive Assistant", "Ingénieur Commercial SIG",
+                      "Technico-commercial SIG", "Stage SIG", "Stage - Géomatique", "Student GIS Assistant", "Commercial Surveyor"]
+    assert [t for t in fine if M.classify_title(t, extra)[3]] == []
+    assert [t for t in still_negative if not M.classify_title(t, extra)[3]] == []

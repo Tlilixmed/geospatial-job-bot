@@ -54,7 +54,8 @@ class BundesagenturBackend(Backend):
         out = BackendOutput()
         errors, ok, seen, details, german = [], 0, set(), 0, 0
         cursor = ctx.cursor(self.name)
-        skip = set(cursor.get("german_refs") or [])
+        remembered = list(cursor.get("german_refs") or [])  # oldest first: the list is trimmed by age, not by spelling
+        skip = set(remembered)
         batch = rotating_batch(ctx, self.name, [("de", term) for term in self.terms], self.queries_per_run)
         for term in batch.get("de", []):
             if ctx.out_of_time(200):
@@ -94,13 +95,14 @@ class BundesagenturBackend(Backend):
                     continue
                 if mostly_german(description):
                     skip.add(ref)
+                    remembered.append(ref)
                     german += 1
                     continue
                 try:
                     out.jobs.append(self.to_raw(item, description))
                 except Exception:
                     ctx.record_parser_error(self.name)
-        cursor["german_refs"] = sorted(skip)[-MAX_REMEMBERED:]
+        cursor["german_refs"] = remembered[-MAX_REMEMBERED:]
         out.details = {"queries_ok": ok, "detail_requests": details, "german_language_skipped": german, "errors": errors[:10]}
         if out.jobs:
             ctx.snapshot(self.name, [j.snapshot() for j in out.jobs])

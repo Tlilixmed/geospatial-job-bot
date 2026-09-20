@@ -13,10 +13,13 @@ warnings.filterwarnings("ignore", category=MarkupResemblesLocatorWarning)
 
 _WS_RE = re.compile(r"[ \t\r\f\v]+")
 _NL_RE = re.compile(r"\n{3,}")
+# Legal forms are dropped only at the END of a name: "AG Survey", "SA Water" and "SAS Institute" keep their first word.
 _COMPANY_SUFFIX_RE = re.compile(
-    r"\b(inc|incorporated|ltd|limited|llc|l\.l\.c|corp|corporation|co|company|gmbh|ag|sa|s\.a|sas|srl|bv|b\.v|nv|plc|pty|pte|oy|ab|group|holdings)\b\.?",
+    r"(?:[\s,]+(?:inc|incorporated|ltd|limited|llc|l\.l\.c|corp|corporation|co|company|gmbh|ag|sa|s\.a|sas|sarl|srl|bv|b\.v|nv|plc|pty|pte|"
+    r"oy|ab|a/s|aps|group|holdings)\.?)+$",
     re.IGNORECASE,
 )
+_DOTTED_INITIALS_RE = re.compile(r"\b(?:[a-z]\.){2,}")  # "U.K." -> "uk", "B.V." -> "bv"
 _TITLE_NOISE_RE = re.compile(
     r"\((?:m/w/d|f/m/d|m/f/d|w/m/d|h/f|f/h|m/f|all genders?)\)|\b(?:m/w/d|f/m/d|m/f/d|h/f)\b",
     re.IGNORECASE,
@@ -62,8 +65,8 @@ def fold(text: str | None) -> str:
 
 
 def normalize_company(name: str | None) -> str:
-    value = fold(name)
-    value = _COMPANY_SUFFIX_RE.sub(" ", value)
+    value = _DOTTED_INITIALS_RE.sub(lambda m: m.group(0).replace(".", ""), fold(name))
+    value = _COMPANY_SUFFIX_RE.sub(" ", value.strip(" .,"))
     value = re.sub(r"[^a-z0-9]+", " ", value)
     return re.sub(r"\s+", " ", value).strip()
 

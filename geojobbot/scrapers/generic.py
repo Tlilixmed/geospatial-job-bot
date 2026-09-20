@@ -76,6 +76,20 @@ def _text(value) -> str:
     return str(value)
 
 
+def _identifier(posting: dict, url: str | None) -> str | None:
+    """schema.org `identifier` as "jsonld-<host>:<id>". In a PropertyValue the `name` is the employer ("Acme Surveys")
+    and the `value` the requisition; a bare "1042" means nothing outside its own site, hence the host."""
+    node = posting.get("identifier")
+    if isinstance(node, list):
+        node = node[0] if node else None
+    value = (node.get("value") or node.get("@value")) if isinstance(node, dict) else node
+    value = clean_whitespace(str(value)) if value not in (None, "") else ""
+    host = host_of(url)
+    if not value or not host or len(value) > 80:
+        return None
+    return f"jsonld-{host}:{value}"
+
+
 def _address_text(address) -> str:
     if isinstance(address, str):
         return address
@@ -162,8 +176,7 @@ def parse_jsonld_postings(soup: BeautifulSoup, page_url: str, now=None) -> tuple
             location_raw = f"Remote - {scope}" + (f"; {location_raw}" if location_raw else "")
         elif remote and not location_raw:
             location_raw = "Remote"
-        identifier = posting.get("identifier")
-        source_job_id = _text(identifier) if identifier else None
+        source_job_id = _identifier(posting, url or page_url)
         date_posted = parse_datetime(_text(posting.get("datePosted")))
         employment = posting.get("employmentType")
         employment = ", ".join(employment) if isinstance(employment, list) else (employment or None)

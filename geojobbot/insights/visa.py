@@ -51,7 +51,7 @@ TECHNICIAN_RE = re.compile(r"\b(technician|technicien\w*|technologist|technologu
                            r"dessinat\w+|assistant\w*|clerk|aide|trainee)\b")
 SPATIAL_RE = re.compile(r"\b(survey\w*|geometre\w*|topograph\w*|arpenteu\w*|hydrograph\w*|geodes\w*|cartograph\w*|gis|sig|"
                         r"geospatial|geomati\w+|spatial|remote sensing|teledetection|photogramm\w*|lidar|mapping)\b")
-BILATERAL_SURE_RE = re.compile(r"\b(geometre\w*|topograph\w*|survey\w*|arpenteu\w*|dessinat\w+|projeteu\w*|charge\w* d etudes?)\b")
+BILATERAL_SURE_RE = re.compile(r"\b(geometre\w*|topograph\w*|survey\w*|arpenteu\w*|dessinat\w+|projeteu\w*|charge\w* d.?\s?etudes?)\b")
 BILATERAL_MAYBE_RE = re.compile(r"\b(informaticien\w*|developpeu\w*|developer|software|ingenieur\w*|engineer|sig|gis|geomati\w+|"
                                 r"cartograph\w*|data)\b")
 
@@ -85,8 +85,17 @@ def _amount(raw: str, kilo: bool) -> float | None:
     return value * 1000 if kilo else value
 
 
+# Numbers in a salary line that are not pay: "sur 12 mois", "10% bonus", "x 13", "37-hour week", "25 days holiday", "401(k)"
+NOT_PAY_RE = re.compile(r"\bsur\s+\d{1,2}(?:[.,]\d+)?\s+mois\b|\d+(?:[.,]\d+)?\s*%|\bx\s*\d{1,2}\b|401\s*\(k\)|"
+                        r"\b\d{1,2}(?:[.,]\d)?[- ]?(?:hours?|hrs?|heures?|days?|jours?)\b(?:[ -](?:a |per )?(?:week|semaine|holiday|leave|conges?))?", re.I)
+YEARLY_RE = re.compile(r"\b(?:year|yearly|annual\w*|annum|annee|annuel\w*|jahr\w*|jaar)\b|\bpar an\b|/ ?an\b|/ ?yr\b")  # not the bare "an": it is also an English article
+CENTS_RE = re.compile(r"(?<=\d{3})[.,]\d{2}(?!\d)")
+CEILING_RE = re.compile(r"\b(?:up to|upto|maximum|max\.?|jusqu.?a|jusqu.?à)\b", re.I)
+MONTHLY_BY_CUSTOM = {"AED", "SAR", "QAR", "KWD", "OMR", "BHD", "TND", "MAD", "EGP"}  # pay quoted per month when no unit is given
+
+
 def parse_salary(text: str | None, country: str | None) -> dict | None:
-    """{"currency", "low", "high", "period"} from the free-text salary of a posting, or None when it is unusable."""
+    """{"currency", "low", "high", "period"[, "ceiling_only"]} from the free-text salary of a posting, or None."""
     if not text:
         return None
     local = COUNTRY_CURRENCY.get(country or "")
@@ -101,18 +110,28 @@ def parse_salary(text: str | None, country: str | None) -> dict | None:
         currency = local if local in DOLLAR_COUNTRIES else "USD"
     else:
         currency = local
-    folded = fold(text)
-    period = next((name for name, pattern in PERIODS if re.search(pattern, folded)), None)
-    amounts = [a for a in (_amount(m.group(1), bool(m.group(2))) for m in NUMBER_RE.finditer(text)) if a and a >= 8]
-    if not amounts or currency is None:
+    cleaned = CENTS_RE.sub("", NOT_PAY_RE.sub(" ", text))
+    folded = fold(cleaned)
+    # an explicit yearly word wins over an incidental "mois"/"week" elsewhere in the line
+    period = "year" if YEARLY_RE.search(folded) else next((name for name, pattern in PERIODS if re.search(pattern, folded)), None)
+    found = [(_amount(m.group(1), bool(m.group(2))), bool(m.group(2))) for m in NUMBER_RE.finditer(cleaned)]
+    found = [(value, kilo) for value, kilo in found if value and value >= 8][:2]
+    if not found or currency is None:
         return None
-    low, high = min(amounts[:2]), max(amounts[:2])
-    if period is None:  # no unit given: judge by magnitude
-        period = "hour" if high < 250 else "month" if high < 15000 else "year"
+    if len(found) == 2 and found[0][1] != found[1][1]:  # "45-55k": the k belongs to both ends
+        found = [(value * 1000 if not kilo and value < 1000 else value, True) for value, kilo in found]
+    amounts = [value for value, _ in found]
+    low, high = min(amounts), max(amounts)
+    if period is None:  # no unit given: judge by magnitude, and by how the currency's market quotes pay
+        monthly_cap = 100000 if currency in MONTHLY_BY_CUSTOM else 15000
+        period = "hour" if high < 250 else "month" if high < monthly_cap else "year"
     yearly = high * PER_YEAR[period]
     if not 4000 <= yearly <= 1_500_000:
         return None
-    return {"currency": currency, "low": low, "high": high, "period": period}
+    parsed = {"currency": currency, "low": low, "high": high, "period": period}
+    if len(amounts) == 1 and CEILING_RE.search(text):
+        parsed["ceiling_only"] = True  # "up to £42k": only the top of the range is known
+    return parsed
 
 
 def _in_period(amount: float, period: str, rule: dict) -> float:
@@ -144,6 +163,10 @@ def _salary_check(rec: dict, rule: dict) -> dict | None:
             text += f", {_money(reduced, currency)} for {rule.get('salary_low_label') or 'reduced cases'}"
         return {"k": "salary", "ok": None, "text": text + ")"}
     low, high = _in_period(posted["low"], posted["period"], rule), _in_period(posted["high"], posted["period"], rule)
+    if posted.get("ceiling_only"):
+        if high < (reduced or minimum):
+            return {"k": "salary", "ok": False, "text": f"salary up to {_money(high, currency)} is below the minimum {_money(reduced or minimum, currency)}/{per}"}
+        return {"k": "salary", "ok": None, "text": f"salary stated only as 'up to {_money(high, currency)}' (minimum {need})"}
     shown = _money(high, currency) if abs(high - low) < 1 else f"{_money(low, currency)}–{_money(high, currency)}"
     if low >= minimum:
         return {"k": "salary", "ok": True, "text": f"salary {shown} ≥ {need}"}
@@ -158,10 +181,13 @@ def _salary_check(rec: dict, rule: dict) -> dict | None:
 # ---------------------------------------------------------------------------- the other checks
 def _offered(rec: dict) -> bool | None:
     """True: the posting offers sponsorship. False: it says it does not. None: silent."""
-    if "Visa sponsorship offered" in (rec.get("why_matched") or []):
-        return True
-    reading = (rec.get("ai") or {}).get("sponsorship")
-    return True if reading == "offered" else False if reading == "not_offered" else None
+    review = rec.get("ai") or {}
+    text_says = "Visa sponsorship offered" in (rec.get("why_matched") or [])
+    ai_says = True if review.get("sponsorship") == "offered" else False if (
+        review.get("sponsorship") == "not_offered" or review.get("restricted") is True) else None
+    if text_says and ai_says is False:
+        return None  # the wording rules and the AI disagree: treat it as unknown rather than trust either
+    return True if text_says else ai_says
 
 
 def _sponsor_check(rec: dict, rule: dict) -> dict:
@@ -175,7 +201,7 @@ def _sponsor_check(rec: dict, rule: dict) -> dict:
         if hit.get("geo"):
             text += " (already hired " + ", ".join(hit.get("occupations") or ["geomatics staff"])[:60] + ")"
         if hit.get("match") == "variant":
-            text += " (name variant: check)"
+            return {"k": "sponsor", "ok": None, "text": text + " (a similar name, not the same: check the register)"}
         return {"k": "sponsor", "ok": True, "text": text}
     if offered:
         return {"k": "sponsor", "ok": True, "text": "the posting offers sponsorship"}
@@ -217,7 +243,8 @@ def _applies(rec: dict, rule: dict, settings) -> bool:
         return False
     regions = {fold(r) for r in rule.get("exclude_regions") or []}
     if regions:
-        place = {fold(rec.get("region") or ""), fold(rec.get("city") or "")} | set(fold(rec.get("location_raw") or "").replace(",", " ").split())
+        # whole comma-separated segments, not single words: "Quebec Street, Vancouver, BC" is not in Québec
+        place = {fold(rec.get("region") or "")} | {fold(seg.strip()) for seg in (rec.get("location_raw") or "").split(",")}
         if regions & place:
             return False
     return True
@@ -248,6 +275,8 @@ def assess(rec: dict, settings, rules: dict | None = None) -> dict | None:
     country = rec.get("country")
     if not country or fold(country) in {fold(x) for x in getattr(settings, "home_countries", None) or []}:
         return None
+    if rec.get("remote") and fold(rec.get("remote_scope") or "") == "worldwide":
+        return None  # work from anywhere: no visa question, whatever country the employer sits in
     candidates = [a for a in (_assess_rule(rec, rule) for rule in rules["paths"].get(country, []) if _applies(rec, rule, settings)) if a]
     if not candidates:
         return None

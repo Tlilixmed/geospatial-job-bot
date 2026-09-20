@@ -62,6 +62,17 @@ CORE_DROP = {"ireland", "irish", "denmark", "danmark", "uk", "gb", "great", "bri
              "intl", "global", "worldwide", "canada", "canadian", "netherlands", "nederland", "holland", "benelux",
              "the", "of", "and", "a", "s", "aps"}  # "A/S" and "ApS" are Danish legal forms
 MIN_CORE_CHARS = 4
+NORMALISER = 2  # bump when normalize_company / core_name change: stored registers are rebuilt at the next run
+# One-word cores that name a trade, not a company: "Global Mapping Ltd" must not match "Mapping International Ltd"
+GENERIC_CORES = {"survey", "surveys", "surveying", "surveyors", "mapping", "maps", "data", "spatial", "geo", "geospatial", "land", "water",
+                 "energy", "consulting", "consultants", "solutions", "services", "engineering", "technologies", "technology", "institute",
+                 "systems", "digital", "environmental", "resources", "mining", "construction", "infrastructure", "design", "research"}
+
+
+def distinctive(core: str) -> bool:
+    """Can this core name stand for one company? Two or more words, or a single word that is not a trade."""
+    tokens = core.split()
+    return len(core) >= MIN_CORE_CHARS and (len(tokens) >= 2 or tokens[0] not in GENERIC_CORES)
 
 
 def core_name(normalised: str) -> str:
@@ -151,7 +162,7 @@ def parse_ca_rows(rows: list[list[str]], into: dict) -> int:
 def parse_nl_html(html_text: str) -> dict:
     out = {}
     for name in re.findall(r"<tr[^>]*>\s*<t[hd][^>]*>\s*([^<]{2,160}?)\s*</t[hd]>\s*<td[^>]*>\s*\d{8}", html_text):
-        clean = re.sub(r'"+', "", name.replace("&amp;", "&")).strip()
+        clean = re.sub(r'"+', "", html.unescape(name)).strip()
         norm = normalize_company(clean)
         if len(norm) >= 3 and norm not in out:
             out[norm] = {"n": clean[:80]}
@@ -211,7 +222,8 @@ class SponsorRegistry:
 
     def stale(self, now) -> bool:
         checked = parse_datetime(self.data.get("checked_at"))
-        if any(code not in self.data["registers"] for code in REGISTERS):  # a register added since the last download
+        if self.data.get("normaliser") != NORMALISER or any(code not in self.data["registers"] for code in REGISTERS):
+            # a register added, or names keyed by an older normaliser, since the last download
             return checked is None or now - checked > timedelta(hours=20)
         return checked is None or now - checked > timedelta(days=REFRESH_DAYS)
 
@@ -237,6 +249,7 @@ class SponsorRegistry:
                 status[code] = f"failed: {type(exc).__name__}: {str(exc)[:80]}"
                 log.warning("sponsor register %s not refreshed: %s", code, status[code])
         self.data["checked_at"] = to_iso(ctx.now)
+        self.data["normaliser"] = NORMALISER
         self._cores.clear()
         return status
 
@@ -287,7 +300,7 @@ class SponsorRegistry:
             index: dict[str, str] = {}
             for norm in self.data["registers"].get(code, {}):
                 core = core_name(norm)
-                if len(core) >= MIN_CORE_CHARS:
+                if distinctive(core):
                     index.setdefault(core, norm)
             self._cores[code] = index
         return self._cores[code]
@@ -302,7 +315,7 @@ class SponsorRegistry:
         for code, meta in REGISTERS.items():
             names = self.data["registers"].get(code) or {}
             key, kind = (norm, "exact") if norm in names else (None, None)
-            if key is None and len(core) >= MIN_CORE_CHARS:
+            if key is None and distinctive(core):
                 key = self._core_index(code).get(core)
                 kind = "variant" if key else None
             if key is None:
@@ -343,7 +356,8 @@ def annotate_record(rec: dict, registry: SponsorRegistry, settings) -> int:
     if breakdown.get("sponsor"):  # still carrying the bonus from an earlier run (the job was not rescored)
         return 0
     country = rec.get("country")
-    local = [h for h in hits if h.get("country") == country or (country is None and rec.get("remote"))]
+    # only an exact name earns points: a variant ("Fugro" for "Fugro GB Limited") is shown for the user to check
+    local = [h for h in hits if h.get("match") == "exact" and (h.get("country") == country or (country is None and rec.get("remote")))]
     if not local or set(rec.get("rejection_reasons") or []) - {"LOW_SCORE"}:
         return 0
     bonus = SPONSOR_BONUS + (2 if any(h.get("geo") for h in local) else 0)

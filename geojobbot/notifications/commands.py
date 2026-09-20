@@ -350,6 +350,10 @@ class CommandProcessor:
                  f"Score {int(rec.get('score') or 0)}/100 · {_esc(rec.get('tier'))}",
                  "Title {title} · skills {tech} · domain {domain} · tasks {responsibilities} · location {location}".format(
                      **{k: breakdown.get(k, 0) for k in ("title", "tech", "domain", "responsibilities", "location")})]
+        extras = [f"{label} {int(breakdown[key]):+d}" for key, label in (("sponsor", "sponsor register"), ("learned", "learned"),
+                                                                        ("visa", "visa route"), ("ai", "AI reading")) if breakdown.get(key)]
+        if extras:
+            lines.append("Adjustments: " + " · ".join(extras))
         if rec.get("why_matched"):
             lines += ["", "<b>Evidence</b>"] + [f"• {_esc(w)}" for w in rec["why_matched"][:12]]
         for hit in rec.get("sponsor") or []:
@@ -374,7 +378,12 @@ class CommandProcessor:
             lines += [""] + route
         review = rec.get("ai") or {}
         if review:
-            lines += ["", f"<b>AI second opinion</b> · fit {review.get('fit', '?')}/10"]
+            lines += ["", f"<b>AI second opinion</b> · fit {review.get('fit', '?')}/10"
+                      + (f" · {_esc(review['model'])}" if review.get("model") else "")]
+            if review.get("lift"):
+                lines.append("⤴️ The rules had passed on this one; the reading brought it back.")
+            if review.get("restricted"):
+                lines.append("🚫 The reading found a citizenship, clearance or work-rights restriction.")
             if review.get("summary"):
                 lines.append(f"💡 {_esc(review['summary'])}")
             if review.get("concerns"):
