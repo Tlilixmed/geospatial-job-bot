@@ -297,6 +297,7 @@ class WorkdayAdapter(ATSAdapter):
         for term in WORKDAY_SEARCH_TERMS:
             if ctx.out_of_time(150):
                 break
+            total, paths = 0, set()
             for offset in range(0, WORKDAY_PAGE * WORKDAY_MAX_PAGES, WORKDAY_PAGE):  # Workday serves 20 hits at a time
                 try:
                     payload = ctx.client.post(api, json={"appliedFacets": {}, "limit": WORKDAY_PAGE, "offset": offset, "searchText": term},
@@ -310,14 +311,19 @@ class WorkdayAdapter(ATSAdapter):
                     return BoardResult("SCHEMA_MISMATCH", error="non-JSON Workday response")
                 if not isinstance(payload, dict) or "jobPostings" not in payload:
                     return BoardResult("SCHEMA_MISMATCH", error="missing 'jobPostings'")
-                total = int(payload.get("total") or 0)
-                listed_total = max(listed_total, total)
+                if offset == 0:  # Workday counts the hits on the first page only: later pages say "total": 0
+                    total = int(payload.get("total") or 0)
+                    listed_total = max(listed_total, total)
                 page = payload.get("jobPostings") or []
+                fresh = 0
                 for item in page:
                     path = item.get("externalPath")
-                    if path:
+                    if path and path not in paths:
+                        paths.add(path)
                         postings.setdefault(path, item)
-                if len(page) < WORKDAY_PAGE or offset + WORKDAY_PAGE >= total or ctx.out_of_time(150):
+                        fresh += 1
+                # a small result set is served again at every later offset: a page with no new path is the end, too
+                if len(page) < WORKDAY_PAGE or not fresh or offset + WORKDAY_PAGE >= total or ctx.out_of_time(150):
                     break
         result = BoardResult("VALID", listed=listed_total, company=company_hint)
         budget = ctx.settings.max_detail_fetches_per_board

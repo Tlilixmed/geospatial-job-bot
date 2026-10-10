@@ -251,7 +251,7 @@ def test_workday_reads_every_page_and_reports_known_postings_without_a_detail_re
         offsets.append(body["offset"])
         rows = [{"title": f"GIS Analyst {i}", "externalPath": f"/job/Denver/GIS-Analyst_R{i}", "locationsText": "Denver, CO", "bulletFields": [f"R{i}"]}
                 for i in range(body["offset"], min(body["offset"] + 20, 25))]
-        return FakeResponse(200, {"total": 25, "jobPostings": rows})
+        return FakeResponse(200, {"total": 25 if body["offset"] == 0 else 0, "jobPostings": rows})  # as Workday does
 
     def detail(method, url, params, body):
         number = url.rsplit("_R", 1)[1]
@@ -268,3 +268,39 @@ def test_workday_reads_every_page_and_reports_known_postings_without_a_detail_re
     known = next(j for j in result.jobs if j.native_id == "workday:acme:R3")
     assert known.description == "" and known.company == "Acme"
     assert not [c for c in session.calls if c[1].endswith("_R3")]  # no detail request for the posting already on file
+
+
+def _workday_offsets(hits: int, repeat_small: bool, claimed: int | None = None):
+    """Offsets the adapter asks for, against a fake that behaves like Workday (checked live on trimble, 2026-10-10):
+    "total" only on the offset-0 page (0 after), and a small result set served again at every later offset."""
+    api = "https://acme.wd5.myworkdayjobs.com/wday/cxs/acme/External"
+    offsets = []
+
+    def jobs(method, url, params, body):
+        if body.get("searchText") != "GIS":
+            return FakeResponse(200, {"total": 0, "jobPostings": []})
+        offsets.append(body["offset"])
+        start = 0 if repeat_small else body["offset"]
+        rows = [{"title": f"Surveyor {i}", "externalPath": f"/job/X/Surveyor_R{i}"} for i in range(start, min(start + 20, hits))]
+        total = (hits if claimed is None else claimed) if body["offset"] == 0 else 0
+        return FakeResponse(200, {"total": total, "jobPostings": rows})
+
+    ctx = make_ctx(FakeSession({f"{api}/jobs": jobs}))
+    ctx.prefilter = lambda title, geo: False  # paging only: no detail requests
+    result = WorkdayAdapter().fetch_board(ctx, BoardRef("workday", "acme/wd5/External"), geo_context=True, variant=None, company_hint=None)
+    return offsets, result
+
+
+def test_workday_paging_reads_the_total_of_the_first_page_and_stops_on_repeats():
+    cases = [  # (hits, small set repeated at later offsets, total claimed on page 0, offsets asked for)
+        (45, False, None, [0, 20, 40]),   # later pages say "total": 0 and must still be read
+        (80, False, None, [0, 20, 40]),   # WORKDAY_MAX_PAGES caps it
+        (25, False, None, [0, 20]),       # the short second page is the end
+        (20, True, None, [0]),            # offset + page reaches the total of page 0
+        (7, True, None, [0]),             # a short first page
+        (20, True, 40, [0, 20]),          # a total that over-counts: the repeated page brings no new path
+    ]
+    for hits, repeat, claimed, expected in cases:
+        offsets, result = _workday_offsets(hits, repeat, claimed)
+        assert offsets == expected, (hits, repeat, claimed, offsets)
+        assert result.prefiltered_out == min(hits, 60) and result.listed == (hits if claimed is None else claimed)
