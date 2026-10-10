@@ -773,7 +773,8 @@ async function dashboard(request, env) {
 // fills the gaps: when the last index is FILL_AFTER_HOURS old and no scraper run is queued or running, it re-enables
 // and starts the workflow itself. A scraper that crashes before writing the index is started again after 1, 2 and
 // 4 hours, then left alone (MAX_KICKS) until a run gets through. A silence of STALE_HOURS rings once per incident,
-// and the recovery is reported.
+// and the recovery is reported. A start GitHub refuses (an expired or under-scoped GITHUB_TOKEN) rings at once, names
+// the HTTP status in every later alert, and is tried again each hour without counting toward MAX_KICKS.
 const FILL_AFTER_HOURS = 1.75;
 const STALE_HOURS = 6;
 const MAX_KICKS = 4;  // runs started in a row without a new index
@@ -826,24 +827,38 @@ async function watchdog(env) {
     else {
       await github(env, "PUT", "scraper.yml/enable");
       started = await github(env, "POST", "scraper.yml/dispatches", { ref: "main" });
-      outcome = started.ok ? "kicked" : "kick failed";
-      next.kicks = kicks + 1;
-      next.last_kick = new Date().toISOString();
+      if (started.ok) {
+        outcome = "kicked";
+        next.kicks = kicks + 1;
+        next.last_kick = new Date().toISOString();
+        delete next.refused;
+      } else {
+        // a refused start runs nothing and costs nothing, so it does not count toward MAX_KICKS: the filler carries
+        // on by itself once the token is fixed. Why it was refused is kept, so every alert can name the cause.
+        outcome = "kick failed";
+        next.refused = started.status;
+      }
     }
   }
+  const refusal = `GitHub refused to start the scraper (HTTP ${next.refused}). Check the Worker's GITHUB_TOKEN: `
+    + "Actions = Read and write, and not expired.";
   if (age >= STALE_HOURS && !next.alerted) {
     const silent = Number.isFinite(age) ? `${Math.round(age)} hours` : "a long time";
     const detail = {
       kicked: "I re-enabled the schedule and started a run myself.",
-      "kick failed": `I could not start one (GitHub answered ${started && started.status}). Check the Actions tab and the Worker's GITHUB_TOKEN.`,
+      "kick failed": refusal,
       running: "A run is queued or in progress; I am waiting for it.",
       waiting: "The run I started did not finish; I will start another one later.",
       "gave up": `I started ${MAX_KICKS} runs and none of them finished. Please look at the repository's Actions tab.`,
     }[outcome];
     await ring(env, `${outcome === "kicked" ? "🛟" : "⚠️"} No scraper run for ${silent}. ${detail}`);
     next.alerted = true;
-  } else if (next.alerted && started && next.kicks >= MAX_KICKS) {
+  } else if (outcome === "kick failed" && !memo.refused) {
+    await ring(env, `⚠️ ${refusal}`);  // a broken token does not wait for six hours of silence: once, at the first refusal
+  } else if (next.alerted && outcome === "kicked" && next.kicks >= MAX_KICKS) {
     await ring(env, `⚠️ Still no scraper run after ${MAX_KICKS} attempts. Please look at the repository's Actions tab.`);
+  } else if (outcome === "kicked" && memo.refused) {
+    await tell(env, "✅ GitHub accepts my scraper starts again.");
   }
   // written only when something changed: an hourly cron must not cost an R2 write every hour
   if (JSON.stringify(next) !== JSON.stringify(memo)) {

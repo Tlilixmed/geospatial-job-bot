@@ -103,7 +103,9 @@ a run itself, without a message: that is routine gap filling, and the GitHub sch
 that crashes before writing the index is started again after 1, 2 and 4 hours, then left alone until a run gets
 through (a push, the schedule or **Run workflow**). After 6 hours without a run the Worker **rings** once
 (`🛟 No scraper run for 7 hours…` or `⚠️ …` with the reason), once more when it gives up, and reports
-`✅ The scraper is running again` quietly afterwards.
+`✅ The scraper is running again` quietly afterwards. A start GitHub refuses (an expired token, or one without
+*Actions: Read and write*) rings at once with the HTTP status, is named again in the 6-hour alert, and is tried again
+every hour without using up the four starts, so the filler resumes by itself once the token is replaced.
 
 It uses the `GITHUB_TOKEN` (*Actions: Read and write* covers listing runs) and the `INBOX` binding you already have.
 Cost: 24 invocations a day, each one R2 `head()` and at most four GitHub requests; Workers Free allows 5 Cron

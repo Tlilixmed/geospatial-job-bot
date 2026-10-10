@@ -380,11 +380,48 @@ test("watchdog: no index at all, and a dispatch GitHub refuses, ring at once", a
   const h = harness({});
   h.github.dispatchStatus = 403;
   await h.tick();
-  assert.match(h.sent[0].text, /^⚠️ No scraper run for a long time\. I could not start one \(GitHub answered 403\)/);
-  assert.equal(h.stored("state/watchdog.json").kicks, 1);  // a refused start counts: the cap holds for a bad token too
+  assert.equal(h.sent.length, 1);
+  assert.match(h.sent[0].text, /^⚠️ No scraper run for a long time\. GitHub refused to start the scraper \(HTTP 403\)\. Check the Worker's GITHUB_TOKEN/);
+  assert.equal(h.stored("state/watchdog.json").refused, 403);
   const ok = harness({});
   await ok.tick();
   assert.match(ok.sent[0].text, /^🛟 No scraper run for a long time\. I re-enabled the schedule and started a run myself\./);
+});
+
+test("watchdog: a token GitHub refuses rings at once, is named again at six hours, and never exhausts the starts", async () => {
+  const h = harness({ index: makeIndex([]) });
+  h.github.dispatchStatus = 401;  // an expired fine-grained token
+  const tries = () => h.dispatched.length;
+  const steps = [  // [index age, dispatches tried so far, rings so far]
+    [2, 1, 1],     // the first refusal rings at once, with the cause
+    [3, 2, 1],     // tried again each hour (nothing ran, nothing to wait for), but not said again
+    [4, 3, 1],
+    [5, 4, 1],
+    [6.5, 5, 2],   // six hours of silence: the alert names the refusal, not a run that "did not finish"
+    [8, 6, 2],
+    [12, 7, 2],    // more than MAX_KICKS refusals: still trying, since none of them counted
+  ];
+  for (const [age, tried, rings] of steps) {
+    h.indexAge(age);
+    await h.tick();
+    assert.equal(tries(), tried, `age ${age}`);
+    assert.equal(h.sent.length, rings, `age ${age}`);
+  }
+  assert.match(h.sent[0].text, /^⚠️ GitHub refused to start the scraper \(HTTP 401\)\. Check the Worker's GITHUB_TOKEN/);
+  assert.match(h.sent[1].text, /^⚠️ No scraper run for 7 hours\. GitHub refused to start the scraper \(HTTP 401\)/);
+  for (const ringing of h.sent) assert.ok(ringing.parse_mode === "HTML" && !ringing.disable_notification);
+  assert.equal(h.stored("state/watchdog.json").kicks || 0, 0);
+  h.github.dispatchStatus = 204;  // the token was replaced: the filler recovers by itself
+  await h.tick();
+  assert.equal(tries(), 8);
+  assert.match(h.sent[2].text, /GitHub accepts my scraper starts again/);
+  assert.equal(h.sent[2].disable_notification, true);
+  const memo = h.stored("state/watchdog.json");
+  assert.equal(memo.kicks, 1);
+  assert.equal(memo.refused, undefined);
+  h.indexAge(0.1);
+  await h.tick();
+  assert.match(h.sent[3].text, /running again/);
 });
 
 function mail({ from, subject, body }) {

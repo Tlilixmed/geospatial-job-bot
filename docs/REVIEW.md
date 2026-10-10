@@ -234,7 +234,10 @@ and the step follows from the status on record. `/ask` is wired on both sides.
   was probably never configured, and its alert was a silent message. The Worker cron (`41 * * * *`) is now a filler: it reads the
   index's upload time with `head()` (no parse), and when it is 1.75 h old and no scraper run is queued or in progress it
   re-enables and dispatches `scraper.yml`. A crash before the index is written backs off 1, 2, 4 h and stops after four
-  starts (critique 4.4); six hours of silence ring once, giving up rings once more, recovery is reported quietly.
+  starts (critique 4.4); six hours of silence ring once, giving up rings once more, recovery is reported quietly. A
+  dispatch GitHub refuses (expired or under-scoped token) is kept in `state/watchdog.json`: it rings at once with the
+  HTTP status, the 6-hour alert names it instead of "the run did not finish", and it does not count toward the four
+  starts, so the filler resumes by itself once the token is replaced (review of the branch).
 - **F69 · Python wrote `prefs.json` blind · [fixed]** F58 made the Worker's writes conditional, not Python's: a `/applied`
   tap or an interview recorded from mail landing between Python's read and its PUT was erased. `get_tagged` returns the
   ETag, `put_bytes(if_match=)` sends `IfMatch` (boto3 >= 1.35.69, checked with a botocore Stubber; 1.34 rejects the
