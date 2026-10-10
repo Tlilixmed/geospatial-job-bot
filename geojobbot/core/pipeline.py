@@ -29,6 +29,7 @@ from ..notifications.commands import HELP, CommandProcessor
 from ..notifications.telegram import TelegramNotifier, format_digest, format_job_message
 from ..notifications.weekly import format_follow_ups, format_weekly
 from ..scrapers.ats.base import ATSBackend
+from ..scrapers.ats.detect import parse_board_url
 from ..scrapers.ats.more_ats import all_adapters
 from ..scrapers.aggregators import FreehireBackend
 from ..scrapers.community import HackerNewsHiringBackend
@@ -87,10 +88,7 @@ def build_backends(settings, sponsor_data=None) -> list[Backend]:
     adapters = all_adapters()
     backends: list[Backend] = []
     for name, adapter in adapters.items():
-        slugs = list(ats_cfg.get(name, []) or [])
-        if name == "workday":
-            from ..scrapers.ats.detect import parse_workday_url
-            slugs = [ref.slug for ref in (parse_workday_url(u) for u in slugs) if ref]
+        slugs = [ref.slug for ref in (parse_board_url(name, s) for s in ats_cfg.get(name, []) or [] if s) if ref]
         backends.append(ATSBackend(adapter, slugs))
     watched_pages = [{"name": w["name"], "url": w["url"], "geospatial": True}
                      for w in getattr(settings, "watch_list", None) or [] if w.get("url")]

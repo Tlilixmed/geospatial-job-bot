@@ -140,7 +140,7 @@ def _conflict(a: dict, b: dict) -> bool:
 
 def _native_ids(keys) -> set[str]:
     return {k for k in keys if not k.startswith(("url:", "fz:", "hash:")) and k.split(":")[0] in {
-        "greenhouse", "lever", "ashby", "workable", "smartrecruiters", "recruitee", "personio", "workday"}}
+        "greenhouse", "lever", "ashby", "workable", "smartrecruiters", "recruitee", "personio", "workday", "oracle"}}
 
 
 class _UnionFind:

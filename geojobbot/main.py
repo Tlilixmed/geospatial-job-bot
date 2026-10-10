@@ -22,7 +22,7 @@ from .config import load_settings
 from .core.pipeline import API_HOST_DELAYS, SecretRedactingFilter, ConfigError, Pipeline, build_store
 from .matching.matcher import score_job
 from .scrapers.ats.base import ATSAdapter
-from .scrapers.ats.detect import detect, parse_workday_url, BoardRef
+from .scrapers.ats.detect import detect, parse_board_url
 from .scrapers.ats.more_ats import all_adapters
 from .scrapers.base import RunContext
 from .scrapers.generic import extract_jobs
@@ -89,9 +89,9 @@ def cmd_validate(settings, args) -> int:
             problems += 1
             continue
         for slug in slugs or []:
-            ref = parse_workday_url(slug) if ats == "workday" else BoardRef(ats, slug)
+            ref = parse_board_url(ats, slug)
             if ref is None:
-                print(f"{ats:<16}{slug[:39]:<40}{'INVALID':<18}{'':>7}  not a Workday career-site URL")
+                print(f"{ats:<16}{slug[:39]:<40}{'INVALID':<18}{'':>7}  not a {ats.capitalize()} career-site URL")
                 problems += 1
                 continue
             try:

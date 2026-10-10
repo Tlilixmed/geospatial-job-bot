@@ -64,11 +64,26 @@ workday = [
   "https://riotinto.wd3.myworkdayjobs.com/Riotinto_Careers", # Rio Tinto
   "https://alcoa.wd5.myworkdayjobs.com/Careers",             # Alcoa
   "https://mosaic.wd5.myworkdayjobs.com/Mosaic",             # Mosaic - phosphate/potash
+  # Geospatial makers and agencies (verified 2026-10-10 with the bot's own adapter)
+  "https://topcon.wd1.myworkdayjobs.com/TopconPositioningCareers", # Topcon Positioning - survey instruments (46)
+  "https://ag.wd3.myworkdayjobs.com/Airbus",                 # Airbus - incl. Defence and Space geo-intelligence (2000+)
+  "https://flir.wd1.myworkdayjobs.com/flircareers",          # Teledyne, incl. Optech LiDAR (755)
+  "https://bentleysystems.wd5.myworkdayjobs.com/bentley",    # Bentley Systems - infrastructure/reality modelling (88)
+  "https://ordnancesurvey.wd3.myworkdayjobs.com/OS_Careers", # Ordnance Survey - UK national mapping (4)
+  "https://maxar.wd1.myworkdayjobs.com/Vantor",              # Vantor, formerly Maxar - satellite imagery (140)
+]
+# Oracle Recruiting Cloud: paste the public career-site URL, e.g.
+# "https://pod.fa.dc.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1". The API answers any site
+# number with the tenant's default site, so the bot checks the site against its public page; a wrong one
+# is reported INVALID. Sites over 600 postings are searched by geospatial keywords.
+oracle = [
+  "https://emit.fa.ca3.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_2001", # WSP - engineering, survey, GIS (4049)
+  "https://ebxs.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_2",    # Michael Baker - US engineering, survey (295)
 ]
 
-# Not on any supported ATS (checked): Maxar, Hexagon, Stantec, WSP, Carto, Ecopia, Felt,
-# Overture Maps, Wherobots, Bentley Systems, Safe Software. Add them as career sites below
-# once you have verified that the page exposes JSON-LD or job links.
+# Not on any supported ATS (checked): Hexagon, Stantec, Ecopia, Felt, Overture Maps, Wherobots,
+# Safe Software; Carto is on Pinpoint (no adapter). Add them as career sites below once you have
+# verified that the page exposes JSON-LD or job links.
 
 # ---------------------------------------------------------------------------- job boards (search pages)
 # Boards with neither an API nor a feed: the bot reads the search page, follows the links that match
