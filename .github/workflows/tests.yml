@@ -65,7 +65,7 @@ jobs:
   validate-sources:
     if: ${{ github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 40  # every configured board is read in full: 16 Workday boards and WSP's 4,000 Oracle postings take over 15 minutes
     continue-on-error: true
     steps:
       - uses: actions/checkout@v7
