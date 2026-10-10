@@ -22,6 +22,7 @@ from ..core.jobs import APPLICATION_STATUSES, alert_block_reason, is_listed, is_
 from ..core.prefs import load_prefs, save_prefs
 from ..insights import prospects, radar, signals, timing, visa, yields
 from ..insights.learning import MIN_LABELS, build_model, describe_model, snapshot
+from ..matching.matcher import extract_terms
 from ..matching.profile import TECH_SKILLS
 from ..models import TIER_HIGH, TIER_POSSIBLE
 from ..utils.dates import parse_datetime, to_iso, utcnow
@@ -725,7 +726,9 @@ class CommandProcessor:
             return ["Skills list reset to the one from your CV."]
         if action.lower() in ("add", "remove") and name:
             known = {fold(t.canonical): t.canonical for t in TECH_SKILLS}
-            canonical = known.get(fold(name), name)
+            # a tool's own name ("Trimble Business Center", "PostgreSQL") is stored as the canonical the matcher reports
+            aliases = [h.canonical for h in extract_terms(name, "tech")]
+            canonical = known.get(fold(name)) or (aliases[0] if len(aliases) == 1 else name)
             have = [s for s in have if fold(s) != fold(canonical)]
             if action.lower() == "add":
                 have.append(canonical)

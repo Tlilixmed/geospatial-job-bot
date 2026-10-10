@@ -98,6 +98,12 @@ def test_radar_separates_strengths_from_gaps():
     assert "PostGIS" in load_prefs(manager)["my_skills"]  # canonical spelling
     proc.run_text("/radar")
     assert "Gaps worth closing" not in replies.sent[-1]
+    # a tool's own name is stored as the canonical the radar counts; an unknown name is kept as typed
+    proc.run_text("/skills add Trimble Business Center")
+    proc.run_text("/skills add Leica Infinity")
+    proc.run_text("/skills add Bentley OpenRoads")
+    have = load_prefs(manager)["my_skills"]
+    assert have.count("Survey office software") == 1 and "Bentley OpenRoads" in have
 
 
 AWARD_TEXT = ("<p>Contract Award</p> Scope of Contract: LiDAR survey Awarded Firm(s): GEOFIT EXPERT (12345) Country: France "

@@ -66,6 +66,14 @@ class MatchResult:
 
 
 ARABIC_LETTERS = "\u0621-\u064a"
+# Arabic short vowels (tashkeel) are optional and hamza on an alef is often left out, so the term patterns, which run
+# on raw text, are written bare: strip the vowels and write every alef plainly before matching.
+_TASHKEEL_RE = re.compile("[\u064b-\u0652]")
+_PLAIN_ALEF = str.maketrans("\u0623\u0625\u0622", "\u0627\u0627\u0627")
+
+
+def _plain_arabic(text: str) -> str:
+    return _TASHKEEL_RE.sub("", text).translate(_PLAIN_ALEF)
 
 
 def _phrase_regex(phrase: str) -> re.Pattern:
@@ -186,10 +194,16 @@ def work_authorization(text: str, location: dict, cfg: P.MatchConfig) -> tuple[b
     return required, offered
 
 
+_ARABIC_RE = re.compile(f"[{ARABIC_LETTERS}]")
+
+
 @lru_cache(maxsize=None)
-def _compiled_terms(kind: str):
+def _compiled_terms(kind: str, arabic: bool = True):
+    """Each term with its patterns. Without Arabic letters in the text the Arabic patterns are left out: most postings
+    have none, and every pattern is a pass over the whole posting."""
     source = {"tech": P.TECH_SKILLS, "domain": P.DOMAIN_TERMS, "resp": P.RESPONSIBILITY_TERMS}[kind]
-    return [(term, [re.compile(p, re.IGNORECASE | re.DOTALL) for p in term.patterns]) for term in source]
+    return [(term, [re.compile(p, re.IGNORECASE | re.DOTALL) for p in term.patterns if arabic or not _ARABIC_RE.search(p)])
+            for term in source]
 
 
 def classify_title(title: str, extra_negatives: tuple[str, ...] = ()) -> tuple[str, int, str | None, str | None]:
@@ -255,7 +269,8 @@ def _qualifier(text: str, start: int, end: int) -> str | None:
 def extract_terms(text: str, kind: str) -> list[TermHit]:
     """Extract canonical terms (variants collapse to one canonical name; each counted once)."""
     hits: dict[str, TermHit] = {}
-    for term, patterns in _compiled_terms(kind):
+    compiled = _compiled_terms(kind, bool(_ARABIC_RE.search(text)))
+    for term, patterns in compiled:
         for rx in patterns:
             m = rx.search(text)
             if m:
@@ -263,7 +278,7 @@ def extract_terms(text: str, kind: str) -> list[TermHit]:
                                                _qualifier(text, m.start(), m.end()) if kind == "tech" else None)
                 break
     # context guards
-    for term, _ in _compiled_terms(kind):
+    for term, _ in compiled:
         if term.requires and term.canonical in hits and term.requires not in hits and not (
             term.requires == "ArcGIS" and "ArcGIS Pro" in hits
         ):
@@ -309,10 +324,11 @@ def score_job(title: str, description: str, location: dict, cfg: P.MatchConfig |
     description = description or ""
     kind, title_points, title_evidence, negative_hit = classify_title(title or "", tuple(cfg.extra_negative_titles))
     full_text = f"{title or ''}\n{description}"
+    term_text = _plain_arabic(full_text)
 
-    skills = extract_terms(full_text, "tech")
-    domains = extract_terms(full_text, "domain")
-    resp = extract_terms(full_text, "resp")
+    skills = extract_terms(term_text, "tech")
+    domains = extract_terms(term_text, "domain")
+    resp = extract_terms(term_text, "resp")
     families = sorted({h.family for h in skills + domains + resp if h.family})
 
     tech_points = _capped(skills, P.CATEGORY_CAPS["tech"])
@@ -342,10 +358,11 @@ def score_job(title: str, description: str, location: dict, cfg: P.MatchConfig |
     weak_title = kind != "none" and weak_only_title(title or "")
     if weak_title and has_description:
         # "Surveyor" / "Mapping" titles need geomatics evidence in the body: another geospatial family, a
-        # geospatial tool, or concrete land-survey vocabulary (GNSS, total station, cadastral survey...).
-        body_hits = extract_terms(description, "tech") + extract_terms(description, "domain") + extract_terms(description, "resp")
-        body_families = {h.family for h in body_hits if h.family and h.family != "surveying"}
-        if not body_families and not _compiled_weak()[2].search(description):
+        # geospatial tool, or concrete land-survey vocabulary (GNSS, total station, survey software, bornage...).
+        body = _plain_arabic(description)
+        body_hits = extract_terms(body, "tech") + extract_terms(body, "domain") + extract_terms(body, "resp")
+        evidence = [h for h in body_hits if (h.family and h.family != "surveying") or h.canonical in P.SURVEY_EVIDENCE_TERMS]
+        if not evidence and not _compiled_weak()[2].search(body):
             rejections.append(INSUFFICIENT_GEOSPATIAL_SIGNALS)
     floor_allowed = not weak_title or kind in ("direct", "adjacent")
     if not has_description and not rejections and floor_allowed and title_points >= cfg.title_only_min_points:

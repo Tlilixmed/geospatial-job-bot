@@ -21,7 +21,7 @@ from .fusion import FusedJob
 
 # Bump when the matching rules change (profile.py, matcher.py, location.py): stored matches whose text is kept are
 # scored again at the next run instead of waiting to be seen again, so a fixed rule also fixes yesterday's jobs.
-SCORER_VERSION = 2
+SCORER_VERSION = 3
 
 CHANGE_FIELDS = ("title", "location_raw", "salary", "remote", "employment_type", "description_hash")
 ALERT_CHANGE_FIELDS = {"title", "location_raw", "salary", "remote"}

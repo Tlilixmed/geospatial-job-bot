@@ -55,6 +55,13 @@ ADJACENT_ROLES = [
     "Land Tenure Specialist",
 ]
 
+# Arabic survey titles, folded (shared by the strong and the weak title lists, which must hold the same strings). The
+# job word is a whole word ("مهندسة" counts, "مدير" too), and "مساحة العمل/المكتب" after it is a workspace.
+_AR_SURVEYOR = r"مساح(?![اةته]|يق)"
+_AR_SURVEY_JOB = (r"(?<![ء-ي])(?:ال)?(?:مهندس[ةه]?|فني[ةه]?|اخصايي[ةه]?|مشرف[ةه]?|مساعد|رييس|مدير|مسوول|مراقب|قسم|اعمال|"
+                  r"ادار[ةه]|هندس[ةه])\s+(?:ال)?مساح[ةه](?!\s+(?:ال)?(?:عمل|مكتب\w*|تجاري\w*|تخزين\w*))")
+_AR_SURVEY_ADJ = r"مساح[ةه]\s+(?:ال)?(?:جيوديسي[ةه]|تصويري[ةه]|طبوغرافي[ةه])"
+
 # Title terms that are geospatial on their own (used for inverted/variant titles such as
 # "Analyst, GIS" or "Senior Geospatial Data Scientist").
 GEO_TITLE_TERMS = [
@@ -63,13 +70,22 @@ GEO_TITLE_TERMS = [
     r"\bsurvey\s+(?:technician|tech|cad|crew|party|assistant)\b", r"\bland\s+(?:information|tenure|records)\b",
     r"\bmineral\s+tenure\b", r"\bspatial\s+(?:data|analyst|analysis|information|scientist)\b",
     r"\b(?:mapping|mapper)\b", r"\bmap\s+(?:draft\w*|technician|editor|maker|production)\b",
-    r"\bgeographic information\b", r"\bgeodes\w*", r"\bhydrograph\w*",
+    r"\bgeographic information\b", r"\bgeodes\w*", r"\bhydrograph\w*", r"\bbathymetr\w*",
     r"\bearth observation\b", r"\bgeodata\b",
-    # French (titles are accent-folded before these run)
+    # French (titles are accent-folded before these run). Buried-network detection (DT-DICT) is surveying work in
+    # France; "détection réseau(x)" is also intrusion detection, so the plural without a security word in the title, or a
+    # buried-network word, is needed.
     r"\bsig\b", r"\bgeomatiq\w*", r"\bgeomaticien\w*", r"\btopograph\w*", r"\bgeometres?\b", r"\bteledetection\b",
     r"\bgeodesien\w*", r"\bsystemes? d.information geographique", r"\barpent\w*",
-    # Arabic
-    r"نظم (?:ال)?معلومات (?:ال)?جغرافي", r"مساح(?!ات)", r"جيوماتكس", r"استشعار عن بعد", r"خرائط",
+    r"^(?!.*\b(?:securite|cyber\w*|soc|ndr|edr|siem|ids|intrusions?|menaces?)\b)"
+    r".*\bdetection\s+(?:de\s+|des\s+)?reseaux\b(?!\s+(?:informatiques?|it|telecom\w*|sociaux|et\s+systemes?|&\s+systemes?))",
+    r"\bdetection\s+(?:de\s+|des\s+)?reseaux?\s+(?:enterre|souterrain|sensible)", r"\bgeodetection\b",
+    # Arabic, as fold() leaves it: hamza carriers decompose (خرائط -> خرايط, رئيس -> رييس). "مساحة"/"مساحات" is
+    # also an area or a space, so the bare word must not go on as مساحة/مساحه/مساحات or مساحيق (powders); the survey
+    # sense of "مساحة" needs a job word before it or a survey adjective after it. "خرائط الطريق" is a roadmap.
+    r"(?:ا?نظم[ةه]?|نظام)\s+(?:ال)?معلومات\s+(?:ال)?جغرافي", _AR_SURVEYOR, r"جيوماتكس", r"استشعار عن بعد",
+    r"خرا[ئي]ط(?!\s+(?:ال)?طريق)", r"جغرفة\s+(?:ال)?رقمية", _AR_SURVEY_JOB, _AR_SURVEY_ADJ,
+    r"طبوغراف", r"قيس\s+(?:ال)?اراضي", r"مسح\s+(?:ال)?اراضي",
 ]
 
 # Weak title terms: words that are geospatial in a geomatics context but common elsewhere ("Quantity
@@ -78,23 +94,33 @@ GEO_TITLE_TERMS = [
 # description, and gets no title-only benefit of the doubt unless it is an explicit DIRECT/ADJACENT role.
 WEAK_GEO_TITLE_TERMS = [
     r"\bsurvey(?:or|ors|ing|s)?\b", r"\b(?:mapping|mapper)\b", r"\btopograph\w*", r"\bgeometres?\b", r"\barpent\w*",
-    r"مساح(?!ات)",  # not "مساحات" (spaces, areas): an interior designer is not a surveyor
+    _AR_SURVEYOR, _AR_SURVEY_JOB, _AR_SURVEY_ADJ,  # an interior designer of "مساحات" (spaces) is not a surveyor
+    r"طبوغراف", r"قيس\s+(?:ال)?اراضي", r"مسح\s+(?:ال)?اراضي",
 ]
+# Land-survey vocabulary that backs a weak title. Brand names alone are not evidence (Leica also makes cameras and
+# microscopes, Topcon eye-care devices, Trimble fleet software) and neither is a bare theodolite (metrology labs): the
+# guarded "Survey instruments" term covers them, and the terms in SURVEY_EVIDENCE_TERMS count as evidence as well. Plain
+# GPS and RTK are fleet tracking and drone navigation as often as surveying, so they count only as survey kit.
 SURVEY_EVIDENCE = (
-    r"\b(?:gnss|gps|rtk|total\s+stations?|stations?\s+totales?|th[ée]odolite|levell?ing|nivellement|bornage|"
+    r"\b(?:gnss|rtk\s+(?:gps|gnss)|gps\s+(?:survey\w*|rovers?|receivers?|equipment|base\s+stations?)|survey[\s-]grade\s+gps|"
+    r"total\s+stations?|stations?\s+totales?|levell?ing|nivellement|bornage|"
     r"(?:land|topographic|cadastral|geodetic|boundary|hydrographic|construction|engineering|legal|mine|as-?built)\s+survey\w*|"
     r"lev[ée]s?\s+(?:topographiques?|de\s+terrain)|control\s+points?|stake-?out|point\s+clouds?|"
-    r"civil\s*3d|covadis|trimble|leica|topcon|cadastr\w*)\b"
+    r"civil\s*3d|covadis|cadastr\w*)\b"
+    r"|الرفع\s+المساحي|(?:ال)?محط[ةه]\s+(?:ال)?شامل[ةه]|توتال\s+ستيشن"
 )
+# Surveying-family terms concrete enough to back a weak title. The "Surveying" and "Topography" domain terms are not:
+# they match the title's own word ("Surveyor", "Topographe") and would let the title vouch for itself.
+SURVEY_EVIDENCE_TERMS = {"Survey office software", "Survey instruments", "French topographic works"}
 
 ROLE_NOUNS = (
     r"analyst|specialist|technician|tech|officer|coordinator|developer|engineer|scientist|manager|lead|"
     r"processor|editor|consultant|intern|assistant|administrator|drafter|designer|operator|mapper|associate|"
-    r"programmer|architect|professional|surveyor|expert|drafts(?:man|woman|person)|"
+    r"programmer|architect|professional|surveyor|expert|technologist|hydrographer|photogrammetrist|drafts(?:man|woman|person)|"
     # French role nouns
     r"ingenieur|technicien(?:ne)?|analyste|chargee?|cartographe|topographe|geometre|geomaticien(?:ne)?|"
     r"dessinat(?:eur|rice)|operat(?:eur|rice)|responsable|specialiste|developpeu(?:r|se)|administrat(?:eur|rice)|"
-    r"stagiaire|geodesien|arpenteur|chef de projet|"
+    r"stagiaire|geodesien|arpenteur|technologue|chef de projet|"
     # Arabic role nouns as they look after folding (hamza carriers decompose: أخصائي -> اخصايي)
     r"مهندس|فني|اخصايي|اخصائي|محلل|مساح|مطور|رسام"
 )
@@ -148,7 +174,16 @@ NEGATIVE_EXCEPTIONS = {
                   r"satellite|imagery|real\s+estate|property|properties|projects?|sector|and|&)\b|\b(?:and|&|/)\s*commercial\b",
     "Stage": r"\b(?:early|late|growth|seed|multi|first|second|final|clinical)[\s-]+stage\b|\bstage[\s-]+(?:gate|startup|start-up|company)\b",
     "Student": r"\bstudent\s+(?:services?|success|affairs|information|records|housing|life|support|experience|recruitment|accounts?)\b",
+    # a hydrographic or geophysical marine surveyor maps the seabed; a plain one inspects ships and cargo
+    "Marine Surveyor": r"\bhydrograph\w*|\bbathymetr\w*|\bmultibeam\b|\bgeophysic\w*",
 }
+
+# Survey instrument makers and the instruments they make (the "Survey instruments" term pairs them). Plain GPS is left
+# out of the instruments: Trimble also sells GPS fleet tracking, so a brand pairs with GPS only as survey hardware.
+_SURV_BRAND = r"(?:trimble|leica|topcon|sokkia|stonex|emlid|spectra\s+(?:precision|geospatial))"
+_SURV_NOUN = (r"(?:gnss|rtk|stations?\s+(?:totales?|robotis[ée]es?)|total\s+stations?|robotic\s+stations?|r[ée]cepteurs?|"
+              r"receivers?|tach[ée]om[èe]tres?|niveaux?\s+(?:num[ée]riques?|optiques?)|digital\s+levels?|laser\s+scanners?|"
+              r"scanners?\s+(?:laser|3d))")
 
 TECH_SKILLS = [
     Term("ArcGIS Pro", 7, (r"\b(?:esri\s+)?arcgis\s*pro\b",), family="esri"),
@@ -174,14 +209,75 @@ TECH_SKILLS = [
     Term("REST APIs", 2, (r"\brest(?:ful)?\s*(?:apis?|services?|endpoints?)\b",)),
     Term("GDAL/OGR", 3, (r"\bgdal\b", r"\bogr2ogr\b"), family="geo_libs"),
     Term("GeoPandas", 3, (r"\bgeopandas\b", r"\bshapely\b", r"\brasterio\b"), family="geo_libs"),
-    Term("Google Earth Engine", 3, (r"\bgoogle\s+earth\s+engine\b", r"\bgee\b(?=.{0,40}\b(?:imagery|satellite|remote))"),
-         family="remote_sensing"),
+    Term("Google Earth Engine", 3, (r"\bgoogle\s+earth\s+engine\b",
+                                    r"\bgee\b(?=[^.;\n]{0,40}\b(?:imagery|satellite|remote))"), family="remote_sensing"),
     Term("ENVI/eCognition", 3, (r"\benvi\b", r"\becognition\b", r"\berdas\b"), family="remote_sensing"),
     Term("Pix4D", 3, (r"\bpix4d\w*",), family="photogrammetry_tools"),
     Term("Global Mapper", 3, (r"\bglobal\s+mapper\b",), family="geo_desktop"),
     Term("CloudCompare/LAStools", 3, (r"\bcloudcompare\b", r"\blastools\b", r"\bpdal\b"), family="lidar_tools"),
-    Term("Web mapping libraries", 3, (r"\bleaflet(?:\.js)?\b(?=.{0,60}\b(?:map|gis|spatial))", r"\bopenlayers\b",
-                                      r"\bmapbox\b", r"\bgeoserver\b", r"\bcesium(?:js)?\b"), family="web_mapping"),
+    Term("Web mapping libraries", 3, (r"\bleaflet(?:\.js)?\b(?=[^.;\n]{0,60}\b(?:map|gis|spatial))", r"\bopenlayers\b",
+                                      r"\bmapbox\b", r"\bgeoserver\b", r"\bcesium(?:js)?\b", r"\bmaplibre\b",
+                                      r"\bdeck\.?gl\b", r"\bkepler\.?gl\b"), family="web_mapping"),
+    # Surveying tools join the "surveying" family, which a generic title already gets from GNSS or a total station.
+    # TBC alone is also "to be confirmed" ("Location TBC, Survey department", "Salary TBC, AutoCAD essential"): only
+    # Trimble's name or a list with another survey package makes it Trimble Business Center; a general CAD package after
+    # it does not. Mensura is also a Belgian occupational-health service.
+    Term("Survey office software", 4, (
+        r"\btrimble\s+business\s+cent(?:er|re)\b", r"\btrimble[\s(]+tbc\b", r"\btbc\s*\(\s*trimble\b",
+        r"\btbc(?<!salary tbc)(?<!salary: tbc)(?<!location tbc)(?<!location: tbc)(?<!date tbc)(?<!date: tbc)"
+        r"(?<!start tbc)(?<!rate tbc)(?<!hours tbc)\s*[,/&]\s*(?:and\s+|or\s+|et\s+|ou\s+)?(?:12d|carlson|magnet|mensura|leica)\b",
+        r"\b(?:12d(?:\s+model)?|civil\s*3d|autocad|carlson|magnet|covadis|mensura)\s*[,/&]\s*(?:and\s+|or\s+|et\s+|ou\s+)?tbc\b",
+        r"\bmensura\b(?=[^.;\n]{0,60}\b(?:autocad|covadis|civil\s*3d|topo\w*|cao|dao)\b)",
+        r"\b(?:autocad|covadis|civil\s*3d|topo\w*|cao|dao|logiciels?)\b[^.;\n]{0,60}\bmensura\b",
+        r"\bleica\s+infinity\b", r"\b12d\s+(?:model|synergy|field)\b", r"\bcarlson\s+(?:survey|survce|civil|field)\b",
+        r"\bsurvce\b", r"\bmagnet\s+(?:office|field|tools)\b", r"\btrimble\s+access\b", r"\bleica\s+captivate\b",
+    ), family="surveying"),
+    # A brand counts only next to a survey instrument and a theodolite only next to other survey kit: Leica also makes
+    # cameras, and metrology labs align optics with theodolites. RTK on its own is drone or robot navigation.
+    Term("Survey instruments", 3, (
+        rf"\b{_SURV_BRAND}\b(?=[^.;\n]{{0,40}}\b{_SURV_NOUN}\b)", rf"\b{_SURV_NOUN}\b[^.;\n]{{0,40}}\b{_SURV_BRAND}\b",
+        rf"\b{_SURV_BRAND}\s+gps\s+(?:hardware|equipment|receivers?|rovers?|survey\w*)\b",
+        r"\brtk\b(?=[^.;\n]{0,40}\b(?:rovers?|survey\w*|base\s+stations?|stake-?out|topograph\w*|gnss|ppk)\b)",
+        r"\b(?:survey\w*|topograph\w*|gnss|ppk)\b[^.;\n]{0,40}\brtk\b",
+        r"\b(?:total\s+stations?|stations?\s+totales?|gps|gnss|niveaux?|levels?|leica|trimble|topcon)\b[^.;\n]{0,40}"
+        r"\bth[ée]odolites?\b",
+        r"\bth[ée]odolites?\b(?=[^.;\n]{0,40}\b(?:gps|gnss|total\s+stations?|stations?\s+totales?|niveaux?|levels?)\b)",
+        r"\btach[ée]om[èe]tre\w*",
+    ), family="surveying"),
+    Term("Hydrographic software", 4, (
+        r"\bqinsy\b|\bqimera\b|\bhypack\b|\bhysweep\b|\bsonarwiz\b|\bnavi(?:suite|pac|edit|model)\b"
+        r"|\beiva\s+(?:navi\w*|beamworks)\b|\bcaris\s+(?:hips|sips|base\s+editor|onboard)\b|\bteledyne\s+caris\b"
+        r"|\bcaris\b(?=[^.;\n]{0,80}\b(?:qinsy|qimera|hypack|eiva|sonarwiz|hips|beamworks)\b)",
+    ), family="hydrography"),
+    # STAC, COG and OGC are also a finance benchmark council, "cost of goods sold" and the Office of General Counsel:
+    # each needs a geospatial neighbour in the same sentence. COG is matched in capitals only for the same reason.
+    Term("Cloud-native geo formats", 3, (
+        r"\bstac\b(?=[^.;\n]{0,80}\b(?:catalog\w*|apis?|geotiffs?|cogs?|imagery|raster|items?|collections?|fastapi|pgstac"
+        r"|ogc|geojson|zarr|netcdf|hdf\w*|tiles?)\b)",
+        r"\b(?:geotiffs?|cogs?|imagery|raster|geojson|ogc|zarr|netcdf|hdf\w*|xarray)\b[^.;\n]{0,80}\bstac\b",
+        r"\bpgstac\b", r"\bstac[-_]fastapi\b",
+        r"(?-i:\bCOGs?\b)(?!\s+(?:for|across|of|by|reduction|savings?)\b)"
+        r"(?=[^.;\n]{0,40}\b(?:geotiffs?|raster|imagery|stac|zarr|geoparquet|netcdf|xarray|gdal)\b)",
+        r"\b(?:geospatial|raster|imagery|stac|xarray|netcdf|gdal|formats?)\b[^.;\n]{0,60}(?-i:\bCOGs?\b)"
+        r"(?!\s+(?:for|across|of|by|reduction|savings?)\b)",
+        r"\bcloud[\s-]optimi[sz]ed\s+geotiffs?\b", r"\bgeotiffs?\b",
+        r"\bgeoparquet\b", r"(?<!ome-)\bzarr\b", r"\bpmtiles\b", r"\bflatgeobuf\b", r"\btitiler\b",
+        r"\bpg_(?:featureserv|tileserv)\b",
+    ), family="geo_formats"),
+    Term("OGC web services", 3, (
+        r"\bogc\b(?:[\s-]+(?:standards?|services?|apis?|compliant|specifications?)\b"
+        r"|(?=[^.;\n]{0,40}\b(?:wms|wfs|wmts|wcs|stac|cog|geoserver|geopackage|i3s|3d\s+tiles)\b))",
+        r"\b(?:wms|wfs|wmts|stac|geoserver)\b[^.;\n]{0,40}\bogc\b",
+        # WMS and WFS are also a warehouse system and Kronos Workforce Software, together in logistics postings: the pair
+        # alone is not enough, a map server or map layers must be named with them
+        r"\b(?:wms|wfs|wmts|wcs)\b(?=[^.;\n]{0,40}\b(?:ogc|geoserver|mapserver|layers?|couches?)\b)",
+        r"\b(?:ogc|geoserver|mapserver|qgis|arcgis)\b[^.;\n]{0,40}\b(?:wms|wfs|wmts|wcs)\b",
+        r"\bflux\s+(?:wms|wfs|wmts)\b", r"\bflux\s+(?:de\s+donn[ée]es\s+)?cartograph\w*",
+        r"\bweb\s+(?:map|feature|coverage)\s+services?\b",
+        r"\bdirective\s+inspire\b",
+        r"(?-i:\bINSPIRE\b)(?=[^.;\n]{0,40}\b(?:directive|compliant|conform\w*|metadata|m[ée]tadonn[ée]es)\b)",
+        r"\bvector\s+tiles?\b", r"\btuiles?\s+vectorielles?\b",
+    ), family="web_mapping"),
 ]
 
 # Domain/responsibility patterns run on the raw text (case-insensitive, accents intact), so French
@@ -189,17 +285,27 @@ TECH_SKILLS = [
 DOMAIN_TERMS = [
     Term("GIS", 4, (r"\bgis\b", r"\bgeographic(?:al)?\s+information\s+systems?\b", r"\bsig\b",
                     r"\bsyst[èe]mes?\s+d.information\s+g[ée]ographique",
-                    r"نظم\s+(?:ال)?معلومات\s+(?:ال)?جغرافية"), family="gis"),
+                    r"(?:انظم[ةه]?|نظم|نظام)\s+(?:ال)?معلومات\s+(?:ال)?جغرافي[ةه]?"), family="gis"),
     Term("Geospatial", 4, (r"\bg[ée]o-?spatial\w*",), family="gis"),
     Term("Geomatics", 5, (r"\bg[ée]omatics?\b", r"\bg[ée]omatique\b", r"\bg[ée]omaticien\w*"), family="geomatics"),
-    Term("Cartography", 5, (r"\bcartograph\w*", r"خرائط"), family="cartography"),
+    Term("Cartography", 5, (r"\bcartograph\w*", r"خرا[ئي]ط(?!\s+(?:ال)?طريق)", r"جغرفة\s+(?:ال)?رقمية"),
+         family="cartography"),
     Term("Surveying", 4, (r"\b(?:land|topographic|cadastral|geodetic|construction|hydrographic|boundary)\s+survey\w*",
                           r"\bsurveying\b", r"\bsurveyors?\b", r"\bgnss\b", r"\btotal\s+stations?\b",
                           r"\barpentage\b", r"\barpenteur\w*", r"\bg[ée]om[èe]tres?\b",
-                          r"\blev[ée]s?\s+topographiques?\b", r"\bstations?\s+totales?\b", r"المساحة|مساح(?!ات)"),
+                          r"\blev[ée]s?\s+topographiques?\b", r"\bstations?\s+totales?\b",
+                          # Arabic: the surveyor, with an attached article or particle ("المساح", "للمساحين"), but
+                          # not "مساحة"/"مساحات" (area, space) unless a survey word sits next to it
+                          r"(?<![ء-ي])[وفبلك]?(?:ال|لل)?مساح(?:ين|ون|و)?(?![ء-ي])",
+                          r"(?<![ء-ي])(?:[وفبلك]?ال)?(?:اعمال|مجال|اجهز[ةه]|علم|هندس[ةه]|مهندس[ةه]?|فني[ةه]?|قسم|اخصا[ئي]ي[ةه]?|"
+                          r"مشرف[ةه]?|مساعد|ر[ئي]يس|مدير|مس[ؤو]ول|مراقب)\s+(?:ال)?مساح[ةه]"
+                          r"(?!\s+(?:ال)?(?:عمل|مكتب\w*|تجاري\w*|تخزين\w*))",
+                          r"(?:ال)?مساح[ةه]\s+(?:ال)?(?:جيوديسي[ةه]|تصويري[ةه]|طبوغرافي[ةه])|المساح[ةه]\s+العقاري[ةه]",
+                          r"(?:ال)?اعمال\s+(?:ال)?مساحي[ةه]|الرفع\s+المساحي|(?:قيس|مسح)\s+(?:ال)?اراضي"),
          family="surveying"),
-    Term("Topography", 3, (r"\btopograph\w*",), family="surveying"),
-    Term("Cadastral", 5, (r"\bcadastr\w*",), family="land_admin"),
+    Term("Topography", 3, (r"\btopograph\w*", r"طبوغراف"), family="surveying"),
+    # "السجل العقاري" is left out: in Gulf property ads it is the real-estate register, not the cadastre
+    Term("Cadastral", 5, (r"\bcadastr\w*", r"(?:ال)?مسح\s+(?:ال)?عقاري"), family="land_admin"),
     Term("Land administration", 5, (r"\bland\s+administration\b", r"\bland\s+regist\w*", r"\bland\s+records?\b",
                                     r"\bfonci[èe]re?s?\b", r"\bregistre\s+foncier\b"), family="land_admin"),
     Term("Land tenure", 5, (r"\bland\s+tenure\b",), family="land_admin"),
@@ -215,16 +321,45 @@ DOMAIN_TERMS = [
     Term("LiDAR", 5, (r"\blidar\b", r"\blaser\s+scann\w*", r"\bbalayage\s+laser\b", r"\bscanner\s+laser\b"),
          family="lidar"),
     Term("Point clouds", 5, (r"\bpoint[\s-]?clouds?\b", r"\bnuages?\s+de\s+points\b"), family="lidar"),
-    Term("Photogrammetry", 5, (r"\bphotogramm[ée]tr\w*", r"\bortho-?(?:photo|imagery|mosaic|rectif|image)\w*"),
-         family="photogrammetry"),
+    Term("Photogrammetry", 5, (r"\bphotogramm[ée]tr\w*", r"\bortho-?(?:photo|imagery|mosaic|rectif|image)\w*",
+                               r"(?:ال)?مساح[ةه]\s+(?:ال)?تصويري[ةه]|فوتوغرامتري"), family="photogrammetry"),
+    # Sentinel needs its mission number: plain "Sentinel" is also Microsoft's SIEM, and "Sentinel 3+ years" is still the
+    # SIEM, so a spaced number counts only with imagery words after it. "SAR imagery" is left out: it is the company
+    # introduction in every ICEYE posting, AOCS and DevOps roles included.
     Term("Remote sensing", 5, (r"\bremote\s+sensing\b", r"\bsatellite\s+(?:imagery|images|data)\b",
                                r"\bearth\s+observation\b", r"\bmultispectral\b", r"\bhyperspectral\b",
                                r"\bt[ée]l[ée]d[ée]tection\b", r"\bimage(?:s|rie)?\s+satellit\w*",
-                               r"\bobservation\s+de\s+la\s+terre\b", r"استشعار\s+عن\s+بعد"), family="remote_sensing"),
+                               r"\bobservation\s+de\s+la\s+terre\b", r"\bsentinel-?[1-6][a-d]?\b",
+                               r"\bsentinel\s[1-6][a-d]?\b(?=[^.;\n]{0,30}\b(?:imagery|images?|scenes?|tiles?|sar|msi|olci|"
+                               r"radar|optical|mission|time\s+series)\b)",
+                               r"(?:ال)?استشعار\s+عن\s+بعد"), family="remote_sensing"),
     Term("UAV", 4, (r"\buavs?\b", r"\bdrones?\b", r"\bunmanned\s+aerial\b", r"\brpas\b", r"\bsuas\b")),
     Term("Utility mapping", 5, (r"\butility\s+(?:mapping|gis|network\s+(?:data|model)|records|locat\w+)\b",
                                 r"\bsubsurface\s+utilit\w+", r"\bcartographie\s+des?\s+r[ée]seaux\b",
                                 r"\br[ée]seaux\s+enterr[ée]s\b"), family="utility_gis"),
+    # French buried-network detection (DT-DICT works). It stays in the utility_gis family: DT-DICT alone also turns up
+    # in water-works and admin postings, and must not open the generic-title gate by itself. "Détection réseaux" is also
+    # intrusion detection (NDR, a SOC), so a sentence with a security word anywhere in it does not count. The precision
+    # class is a capital A: "chaque classe a 12 élèves" is the verb.
+    Term("Network detection (DT-DICT)", 5, (
+        r"(?:^|(?<=[.;\n]))(?=[^.;\n]*?\bd[ée]tection\s)"  # only sentences with the word pay for the security scan
+        r"(?![^.;\n]*\b(?:s[ée]curit\w*|cyber\w*|soc|ndr|edr|siem|ids|intrusions?|menaces?|logs?)\b)"
+        r"[^.;\n]*?\bd[ée]tection\s+(?:de\s+|des\s+)?r[ée]seaux\b(?!\s+(?:informatiques?|it|t[ée]l[ée]com\w*|sociaux))",
+        r"\bd[ée]tection\s+(?:de\s+|des\s+)?r[ée]seaux?\s+(?:enterr|souterrain|sensible)\w*", r"\bg[ée]od[ée]tection\b",
+        r"\bg[ée]or[ée]f[ée]rencement\s+(?:de\s+|des\s+)?r[ée]seaux?\b",
+        r"\bclasses?\s+(?:de\s+pr[ée]cision\s+)?(?-i:A)\b(?:\s*/\s*b\b)?(?=[^.,;\n]{0,60}\br[ée]seaux\b(?!\s+sociaux))",
+        r"\br[ée]seaux\b(?!\s+sociaux)[^.,;\n]{0,60}\bclasses?\s+(?:de\s+pr[ée]cision\s+)?(?-i:A)\b",
+        r"(?-i:\bPCRS\b)", r"\bplan\s+de\s+corps\s+de\s+rue\b",  # capitals only: "PCRs" are lab tests
+        r"\bg[ée]o[\s-]?radar\b", r"\bground[\s-]penetrating\s+radar\b", r"\bdt\s*[-/]?\s*dict\b",
+    ), family="utility_gis"),
+    # "bassin hydrographique" is a river basin, and multibeam/single-beam also describe antennas and lasers ("multi-beam
+    # phased array antennas for high data rate links"), so "data" is not a seabed word
+    Term("Hydrography / bathymetry", 5, (
+        r"\bbathym[ée]tri\w*",
+        r"\b(?:multi|single)-?beam\b(?=[^.;\n]{0,40}\b(?:sonar|echo\w*|survey\w*|bathy\w*|hydro\w*))",
+        r"\bside[\s-]?scan\s+sonar\b", r"\becho[\s-]?sound\w*", r"\bhydrographic\s+(?:survey\w*|data|processing|charting)\b",
+        r"\blev[ée]s?\s+hydrographiques?\b", r"\bhydrographie\b(?!\s+(?:du|de\s+la|des)\b)",
+    ), family="hydrography"),
     Term("Telecom", 2, (r"\bt[ée]l[ée]com(?:s|munications?)?\b",)),
     Term("Fiber", 2, (r"\bfib(?:er|re)\s+(?:optics?|optique|networks?|design|routes?)\b", r"\bftth\b",
                       r"\boutside\s+plant\b")),
@@ -240,6 +375,10 @@ DOMAIN_TERMS = [
                         r"\bmap\s+production\b", r"\bproduction\s+cartographique\b",
                         r"\bcartographie\s+(?:num[ée]rique|th[ée]matique|web|mobile|topographique)\b"), family="mapping"),
 ]
+
+_RECOLEMENT = (r"\br[ée]coll?ements?\b"
+               r"(?!\s+(?:d[ée]cennal|d(?:es|u|e\s+la|e\s+l.)\s*(?:collections?|[œo]e?uvres|biens|archives|fonds|inventaires?|"
+               r"mus[ée]es?|mobiliers?|d[ée]p[ôo]ts?)))")
 
 RESPONSIBILITY_TERMS = [
     Term("Digitizing / data capture", 2, (r"\bdigiti[sz]\w*", r"\bspatial\s+data\s+capture\b", r"\bvectori[sz]\w*",
@@ -268,6 +407,25 @@ RESPONSIBILITY_TERMS = [
                                      r"\bcartes?\s+(?:web|en\s+ligne|interactives?)\b"), family="web_mapping"),
     Term("Point cloud classification", 2, (r"\bclassif\w+\s+(?:of\s+)?(?:lidar|point)",
                                            r"\bclassification\s+(?:des?\s+)?nuages?\s+de\s+points\b"), family="lidar"),
+    # The daily work of a French géomètre-topographe. Museums also do a "récolement" (of their collections), shops an
+    # "implantation" (of a store or a shelf) and HR a "nivellement" (of salaries), so each word needs survey company.
+    Term("French topographic works", 3, (
+        r"\bbornages?\b", r"\bdivisions?\s+parcellaires?\b",
+        r"\b(?:plans?|dossiers?|doe)\s+(?:de\s+)?r[ée]coll?ement\b",
+        r"\b(?:plans?|topo\w*|travaux|r[ée]seaux|[ée]x[ée]cution|exe)\b[^.;\n]{0,60}" + _RECOLEMENT,
+        _RECOLEMENT + r"(?=[^.;\n]{0,40}\b(?:r[ée]seaux|travaux|topo\w*|plans?)\b)",
+        r"\bimplantations?\s+(?:(?!commercia)\w+\s+)?(?:topographiques?|altim[ée]triques?|planim[ée]triques?|d.ouvrages?"
+        r"|des\s+(?:axes|ouvrages?|b[âa]timents?|r[ée]seaux\s+(?:enterr|humides|secs|d.assainissement)\w*)"
+        r"|de\s+(?:b[âa]timents?|chantiers?|points?\s+(?:topo\w*|de\s+(?:r[ée]f[ée]rence|contr[ôo]le)))"
+        r"|sur\s+(?:le\s+|les\s+)?(?:terrain|chantiers?)\b|chantiers?\b)"
+        r"(?![^.;\n]{0,30}\b(?:commercia\w*|de\s+vente|magasins?|boutiques?|enseignes?))",
+        r"\b(?:tout\s+type|travaux|fichiers?)\s+d.implantations?\b",
+        r"\bimplantations?\b(?=[^.;\n]{0,60}\b(?:topograph\w*|gnss|stations?\s+totales?|piquets?|tach[ée]om\w*)\b)",
+        r"\bpiquetage\b",
+        r"\bnivellements?\b(?!\s+(?:par\s+le\s+(?:bas|haut)|des\s+(?:salaires|comp[ée]tences|r[ée]mun\w+)))",
+        r"\bcubatures?\b", r"\bprofils?\s+en\s+(?:long|travers)\b",
+        r"\bpolygonation\b", r"\bcanevas\s+(?:topographiques?|polygona(?:l|ux)|g[ée]od[ée]siques?)\b",
+    ), family="surveying"),
 ]
 
 # Qualifier hints run on the accent-folded sentence around a skill, so French forms are written without accents.
