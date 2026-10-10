@@ -327,6 +327,8 @@ def test_a_french_board_gives_the_town_from_the_title_and_its_tags_reach_the_int
                                               "place_in_title": True})[0]
     assert job.location_raw == "Angers, France" and job.title == "[CDI] Géomaticien H/F - Angers (49)"
     assert RssFeedBackend.parse(rss.encode(), {"name": "other", "url": "https://x.example/feed"})[0].location_raw == ""  # opt-in only
+    uk = RssFeedBackend.parse(rss.encode(), {"name": "gsa-uk", "url": "https://x.example/feed", "country": "United Kingdom"})[0]
+    assert uk.location_raw == "United Kingdom"  # a one-country board without towns in its titles
     extra = tuple(INTERNSHIP_TITLES)
     for tagged in ("[Altern] Geomaticien (F/M/X) - Nimes (30)", "[VSC] Soutien Geomatique - ONF Guadeloupe",
                    "[CDD] Post-doctorat - SIG et Electromobilite (60)", "[THESE] Télédétection des forêts"):

@@ -184,6 +184,7 @@ place_in_title = true
 [[rss_feeds]]
 name = "gsa-uk"        # Geospatial Survey Association (UK) job board; partly non-survey roles, so titles are filtered
 url = "https://www.gsa-uk.org.uk/job-opportunities/feed/"
+country = "United Kingdom"  # a UK association: every post is in the UK
 source_type = "feed"
 geospatial = false
 

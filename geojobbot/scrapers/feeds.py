@@ -386,8 +386,9 @@ class RssFeedBackend(Backend):
             touched = None if posted else parse_datetime(find("{http://www.w3.org/2005/Atom}updated"))  # not a posting date
             if not title:
                 continue
-            # a board that serves one country and writes the town into the title (GeoRezo: "... - Angers (49)")
-            location = place_from_title(title, feed["country"]) if feed.get("place_in_title") and feed.get("country") else ""
+            # a board that serves one country (GSA-UK), and that may write the town into the title (GeoRezo: "... - Angers (49)")
+            country = feed.get("country") or ""
+            location = place_from_title(title, country) if country and feed.get("place_in_title") else country
             jobs.append(RawJob(
                 source_type=feed.get("source_type", "feed"), source_name=f"rss:{feed.get('name', 'feed')}",
                 source_url=feed["url"], title=title, company=feed.get("company"), url=link or None,
