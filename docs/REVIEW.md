@@ -21,7 +21,7 @@ Findings are numbered `F1, F2…` and carry their evidence, so a fix can be trac
 | 5 | Extraction phase, parallel | `_run_phase("extraction")` | [fixed] F47, F49–F52, F54, F56, F57 |
 | 6 | Raw volume per source recorded | `insights/yields.record_run` | [ok] |
 | 7 | Fusion: identity keys, grouping, field authority | `core/fusion.py` | [fixed] F31, F32, F34, F50 |
-| 8 | Scoring and state merge, change detection, AI veto carried over | `core/jobs.process_fused`, `matching/` | [fixed] F8–F17, F29, F30, F33, title-only sightings (see Sources notes) |
+| 8 | Scoring and state merge, change detection, AI veto carried over | `core/jobs.process_fused`, `matching/` | [fixed] F8–F17, F29, F30, F33, F68–F70, title-only sightings (see Sources notes) |
 | 9 | Descriptions of accepted jobs kept | `_keep_descriptions`, `core/descriptions.py` | [fixed] F36, F42 |
 | 10 | Sponsor registers: weekly refresh, lookup, bonus | `_sponsors`, `insights/sponsors.py` | [fixed] F24 |
 | 11 | Learning nudges | `_learning`, `insights/learning.py` | [fixed] F27, F38 |
@@ -223,6 +223,25 @@ write or start a workflow; codes missing from the index go to Python; long repli
 markup is sent again as plain text; mail is recorded only when it is clearly about that application, is not bulk mail,
 and the step follows from the status on record. `/ask` is wired on both sides.
 
+### Matching taxonomy (`matching/profile.py`)
+
+- **F68 · French géomètre-topographe postings were rejected at 54: their daily vocabulary was unknown · [fixed]** Bornage,
+  plans de récolement, implantation, nivellement, cubatures; survey office software (Trimble Business Center, Mensura, 12d);
+  survey instruments; buried-network detection (DT-DICT, géoradar, PCRS); hydrography; cloud-native formats (STAC, COG,
+  GeoTIFF, Zarr) and OGC services. Each word that also lives elsewhere needs survey company in the same sentence (museum
+  "récolement", store "implantation", "Salary TBC", Leica cameras, metrology theodolites, finance "COGS", the Office of
+  General Counsel, "SAR imagery" in every ICEYE introduction). Rescored on 1,642 live postings (2026-10-10): 60 score
+  changes, 5 tier changes, all Hellowork géomètre postings (three 54 → 57–61, two Possible → High), no false positive.
+  `tests/unit/test_taxonomy_golden.py` holds every row; `SCORER_VERSION` 3 rescores stored jobs.
+- **F69 · Arabic: vowel marks and hamza forms defeated the domain patterns; the title term "خرائط" could never match
+  (fold turns it into "خرايط"); "مساحة" (area) counted as surveying; "أنظمة المعلومات الجغرافية" was missed · [fixed]** The
+  term text and the description read by the weak-title check are normalised first; the surveyor is matched with its
+  attached article ("المساح", "للمساحين") and "مساحة" only next to a survey word.
+- **F70 · weak-title survey evidence was inconsistent with the false-positive rules · [fixed]** Bare Leica, Trimble, Topcon
+  and theodolite backed a "Surveyor" / "Mapping" title although they are rejected elsewhere (cameras, eye care, fleet
+  software, metrology), while survey software and French survey works did not count. Two older windows (Google Earth
+  Engine, Leaflet) crossed sentences; every window now stops at `.`, `;` and line ends.
+
 ### Opportunities recorded (not bugs)
 
 - **O1 · inline Yes/No buttons for writes derived from free text, and buttons under digests (`callback_query`) · [idea]** The
@@ -243,7 +262,7 @@ and the step follows from the status on record. `/ask` is wired on both sides.
 
 ## State of the review
 
-Every row above has a status. 67 findings: 66 fixed, 1 recorded as an idea (F7). Tests went from 280 to 464 (Python) and from 17
+Every row above has a status. 70 findings: 69 fixed, 1 recorded as an idea (F7). Tests went from 280 to 635 (Python) and from 17
 to 23 (Worker). Not verifiable from the development machine, and therefore to watch in the next runs: the AI model chain
 (the token lives in GitHub secrets; the last model of the chain is the one that worked before), France Travail live answers,
 and the first run after deployment, which rescores stored matches (`rescored_from_text` in the run summary) and may carry
