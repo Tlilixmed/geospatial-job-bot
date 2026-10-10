@@ -19,6 +19,8 @@
  *   DASHBOARD_KEY        optional: 16+ random characters; enables the read-only page at /dash/<DASHBOARD_KEY>
  *
  * Who is obeyed: messages in TELEGRAM_CHAT_ID, and messages written by the owner in any chat the bot can read.
+ * Digest buttons (callback_query) are stricter, because they write: only the owner's taps, on a message in
+ * TELEGRAM_CHAT_ID or the owner's private chat. In a group that means TELEGRAM_OWNER_ID must be set.
  *
  * Bindings (Settings -> Bindings -> Add):
  *   INBOX  R2 bucket = the bot's bucket. Enables instant replies and the private hand-over of messages
@@ -96,20 +98,45 @@ async function codeOf(id) {
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("").slice(0, 5);
 }
 
-function telegram(env, chatId, text, html) {
-  const body = { chat_id: chatId, text, disable_web_page_preview: true };
-  if (html) body.parse_mode = "HTML"; else body.disable_notification = true;
-  return fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
+function botApi(env, method, body) {
+  return fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/${method}`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
   });
 }
-const tell = (env, text) => telegram(env, env.TELEGRAM_CHAT_ID, text, false);
+/** Loudness is the caller's choice: answers to a command are silent, news the owner did not ask for rings. */
+function telegram(env, chatId, text, html, silent) {
+  const body = { chat_id: chatId, text, link_preview_options: { is_disabled: true } };
+  if (html) body.parse_mode = "HTML";
+  if (silent) body.disable_notification = true;
+  return botApi(env, "sendMessage", body);
+}
+const tell = (env, text, silent) => telegram(env, env.TELEGRAM_CHAT_ID, text, false, silent);
+const pause = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
+const bodyOf = async (response) => { try { return (await response.json()) || {}; } catch { return {}; } };
+/** Text without markup, as Telegram would have shown it: tags gone, entities decoded. */
+const plain = (text) => String(text || "").replace(/<[^>]+>/g, "")
+  .replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(Number(n))).replace(/&lt;/g, "<").replace(/&gt;/g, ">")
+  .replace(/&quot;/g, "\"").replace(/&amp;/g, "&");
 
-async function reply(env, messages) {
+async function reply(env, messages, silent) {
+  let first = true;
   for (const message of messages) {
     for (const part of splitMessage(message)) {
-      const response = await telegram(env, env.TELEGRAM_CHAT_ID, part, true);
-      if (!response.ok) await tell(env, part.replace(/<[^>]+>/g, "").slice(0, 4000));  // bad markup: send it plain
+      if (!first) await pause(1000);  // Telegram allows about one message a second per chat
+      first = false;
+      let response = await telegram(env, env.TELEGRAM_CHAT_ID, part, true, silent);
+      let result = response.ok ? {} : await bodyOf(response);
+      const wait = Number((result.parameters || {}).retry_after) || 0;
+      if (response.status === 429 || wait) {  // flood control: the same message once more, after the pause asked for
+        await pause(Math.min(wait || 1, 5) * 1000);
+        response = await telegram(env, env.TELEGRAM_CHAT_ID, part, true, silent);
+        result = response.ok ? {} : await bodyOf(response);
+      }
+      if (!response.ok && /can't parse entities/i.test(String(result.description || ""))) {  // bad markup: send it plain
+        response = await telegram(env, env.TELEGRAM_CHAT_ID, plain(part).slice(0, MAX_MESSAGE), false, silent);
+        result = response.ok ? {} : await bodyOf(response);
+      }
+      if (!response.ok) console.log("reply not delivered", JSON.stringify({ status: response.status, description: String(result.description || "").slice(0, 120) }));
     }
   }
 }
@@ -447,6 +474,25 @@ function viewSignals(index, arg) {
   return [lines.join("\n")];
 }
 
+/** Hides or restores one job in prefs; false when it already was that way. */
+function setHidden(prefs, job, hide, now) {
+  if (prefs.hidden.includes(job.id) === hide) return false;
+  if (hide) {
+    prefs.hidden.push(job.id);
+    prefs.hidden_info[job.id] = { ...snapshot(job), at: now };
+  } else {
+    prefs.hidden = prefs.hidden.filter((id) => id !== job.id);
+    delete prefs.hidden_info[job.id];
+  }
+  return true;
+}
+
+/** The id of a recorded application from the code Python derives from it (for a job that left the index). */
+async function appliedId(prefs, code) {
+  for (const key of Object.keys(prefs.applied)) if (await codeOf(key) === code.toLowerCase()) return key;
+  return undefined;
+}
+
 /** Commands that change preferences. Returns the reply, or null to let Python handle the message. */
 async function mutate(env, index, prefs, command, arg) {
   const now = new Date().toISOString();
@@ -480,15 +526,8 @@ async function mutate(env, index, prefs, command, arg) {
   } else if (command === "hide" || command === "unhide") {
     const job = findByCode(index, arg);
     if (!job) return arg ? null : [`Usage: /${command} code`];  // not in the index: Python looks in the full state
-    if (command === "hide") {
-      if (!prefs.hidden.includes(job.id)) { prefs.hidden.push(job.id); prefs.hidden_info[job.id] = { ...snapshot(job), at: now }; }
-      answer = `🙈 Hidden: ${esc(job.t)}. /unhide ${job.code} restores it.`;
-    } else {
-      if (!prefs.hidden.includes(job.id)) return ["That job isn't hidden."];
-      prefs.hidden = prefs.hidden.filter((id) => id !== job.id);
-      delete prefs.hidden_info[job.id];
-      answer = `Restored: ${esc(job.t)}`;
-    }
+    answer = command === "hide" ? `🙈 Hidden: ${esc(job.t)}. /unhide ${job.code} restores it.` : `Restored: ${esc(job.t)}`;
+    if (!setHidden(prefs, job, command === "hide", now)) return [command === "hide" ? answer : "That job isn't hidden."];  // nothing to write
   } else if (command === "applied" && arg) {
     const job = findByCode(index, arg);
     if (!job) return null;  // not in the index: Python looks in the full state
@@ -498,6 +537,17 @@ async function mutate(env, index, prefs, command, arg) {
     }
     prefs.applied[job.id] = { ...snapshot(job), url: job.url, at: now, status: "applied", history: [{ at: now, status: "applied" }] };
     answer = `✅ Marked as applied: <b>${esc(job.t)}</b>. Good luck! I'll check in with you in a week; tell me how it goes with /outcome ${job.code} interview|rejected|offer.`;
+  } else if (command === "unapply" && arg) {  // the undo of a mistaken "Applied" tap; there is no typed command for it
+    const job = findByCode(index, arg);
+    const id = job ? job.id : await appliedId(prefs, arg);
+    const info = id ? prefs.applied[id] : undefined;
+    if (!info) return ["That job isn't recorded as applied."];
+    // only a bare "applied" is undone: an interview, an offer or a mail already on record is history, not a mistake
+    if ((info.status || "applied") !== "applied" || (info.history || []).length > 1) {
+      return [`Already has an outcome (${esc(info.status || "applied")}); /outcome ${await codeOf(id)} changes it.`];
+    }
+    delete prefs.applied[id];
+    answer = `↩️ No longer marked as applied: <b>${esc(info.title || (job && job.t) || "")}</b>`;
   } else if (command === "outcome") {
     const words = arg.split(/\s+/).filter(Boolean);
     const status = words.map((w) => w.toLowerCase()).find((w) => Object.hasOwn(STATUSES, w));  // "constructor" is not a status
@@ -577,7 +627,7 @@ async function answerFast(env, command, arg, echo, update) {
   }
   if (!messages) return false;
   if (echo) messages[0] = `${echo}\n\n${messages[0]}`;
-  await reply(env, messages);
+  await reply(env, messages, true);
   // an interview was just recorded: the interview sheet needs the AI and the stored description, so Python writes it
   if (command === "outcome" && update && !update.edited && /\binterview\b/i.test(arg) && /^[🎤]/u.test(messages[0].replace(/^↪[^\n]*\n\n/, ""))) {
     const code = arg.split(/\s+/).find((w) => /^[0-9a-f]{5}$/i.test(w));
@@ -605,7 +655,7 @@ function shortcut(text, index) {
 
 // ---------------------------------------------------------------------------- hand-over to Python
 async function dispatchToPython(env, update, text, hint, notice) {
-  await tell(env, notice || "⏳ On it. Reply in about a minute.");
+  await tell(env, notice || "⏳ On it. Reply in about a minute.", true);
   let inputs;
   if (env.INBOX) {  // private hand-over: nothing about the message appears in the public workflow run
     const key = keyOf(env, `inbox/${String(update.update_id).padStart(12, "0")}.json`);
@@ -629,7 +679,7 @@ async function dispatchToPython(env, update, text, hint, notice) {
     },
   );
   if (!dispatch.ok) {
-    await tell(env, `⚠️ I could not start the command (GitHub answered ${dispatch.status}). Check the Worker's GITHUB_TOKEN.`);
+    await tell(env, `⚠️ I could not start the command (GitHub answered ${dispatch.status}). Check the Worker's GITHUB_TOKEN.`, false);
   }
 }
 
@@ -639,7 +689,7 @@ async function handleMessage(env, update, text) {
     const [head, ...rest] = text.split(/\s+/);
     const command = text.startsWith("/") ? head.slice(1).split("@")[0].toLowerCase() : "";
     if (FAST_READ.has(command) && await answerFast(env, command, rest.join(" "), "", update)) return;
-    return tell(env, "✏️ I saw the edit, but edited messages are not run again. Send it as a new message.");
+    return tell(env, "✏️ I saw the edit, but edited messages are not run again. Send it as a new message.", true);
   }
   // 1. explicit commands
   if (text.startsWith("/")) {
@@ -670,6 +720,163 @@ async function handleMessage(env, update, text) {
   }
   // 4. everything else: the Python rules decide
   return dispatchToPython(env, update, text, hint);
+}
+
+// ---------------------------------------------------------------------------- digest buttons (callback_query)
+// A digest carries one number button per entry ("m|<codes>"); a tap opens a single action row under the numbers.
+// callback_data is "<action>|<0-3 job codes>", never a title or an id: the job is always looked up again here.
+//   m open the row · a applied · h hide (every posting of the entry) · u unhide · r undo applied · w why · x close
+const CALLBACK_RE = /^([mahurwx])\|((?:[0-9a-f]{5}){0,3})$/;
+const TAP_COMMANDS = { a: "applied", h: "hide", u: "unhide", r: "unapply" };
+const isGridRow = (row) => row.length > 0 && row.every((b) => String(b.callback_data || "").startsWith("m|"));
+
+function answerCq(env, id, text, alert) {
+  // at most 200 characters, cut between characters: half an emoji from a job title would make the only answer fail
+  let toast = "";
+  for (const char of plain(text)) {
+    if (toast.length + char.length > 200) break;
+    toast += char;
+  }
+  return botApi(env, "answerCallbackQuery", { callback_query_id: id, text: toast, show_alert: Boolean(alert), cache_time: 0 });
+}
+
+/** The number button of the entry whose first code is `first`, and what its label says was done to it. */
+function gridButton(keyboard, first) {
+  for (const row of keyboard.filter(isGridRow)) {
+    for (const button of row) {
+      if (!button.callback_data.startsWith(`m|${first}`)) continue;
+      const label = String(button.text || "");
+      return { button, number: parseInt(label, 10) || 0, codes: button.callback_data.slice(2).match(/.{5}/g) || [],
+        applied: label.includes("✅"), hidden: label.includes("🙈") };
+    }
+  }
+  return null;
+}
+
+function actionRow(grid, state) {
+  const { number, codes } = grid;
+  const row = state.hidden ? [{ text: `↩️ Unhide ${number}`, callback_data: `u|${codes.join("")}` }]
+    : [state.applied ? { text: "↩️ Undo applied", callback_data: `r|${codes[0]}` } : { text: `✅ Applied ${number}`, callback_data: `a|${codes[0]}` },
+      { text: `🙈 Hide ${number}`, callback_data: `h|${codes.join("")}` }];
+  return [...row, { text: `❓ Why ${number}`, callback_data: `w|${codes[0]}` }, { text: "✖", callback_data: "x|" }];
+}
+
+/** The number rows as delivered, the tapped number relabelled with its state, and its action row when `open`. */
+function keyboardFor(keyboard, grid, state, open) {
+  const rows = keyboard.filter(isGridRow).map((row) => row.map((b) => (b === grid.button
+    ? { text: `${grid.number}${state.applied ? "✅" : ""}${state.hidden ? "🙈" : ""}`, callback_data: b.callback_data } : b)));
+  return open ? [...rows, actionRow(grid, state)] : rows;
+}
+
+async function setKeyboard(env, message, keyboard) {
+  const response = await botApi(env, "editMessageReplyMarkup",
+    { chat_id: message.chat.id, message_id: message.message_id, reply_markup: { inline_keyboard: keyboard } });
+  if (response.ok) return;
+  const result = await bodyOf(response);
+  if (/message is not modified/i.test(String(result.description || ""))) return;  // a double tap: it already shows this
+  console.log("keyboard not updated", JSON.stringify({ status: response.status, description: String(result.description || "").slice(0, 120) }));
+}
+
+/** Hide or unhide every posting of a grouped entry, written once. null when none is in the index. */
+async function mutateMany(env, index, prefs, command, codes) {
+  const jobs = codes.map((code) => findByCode(index, code)).filter(Boolean);
+  if (!jobs.length) return null;
+  const now = new Date().toISOString();
+  let changed = false;
+  for (const job of jobs) changed = setHidden(prefs, job, command === "hide", now) || changed;
+  if (!changed && command === "unhide") return ["That job isn't hidden."];
+  if (changed && !(await savePrefs(env, prefs))) return CONFLICT;
+  const what = `${esc(jobs[0].t)}${jobs.length > 1 ? ` ×${jobs.length}` : ""}`;
+  return [command === "hide" ? `🙈 Hidden: ${what}` : `Restored: ${what}`];
+}
+
+async function handleCallback(env, update, cq) {
+  let answered = false;
+  const answer = async (text, alert) => {  // every tap gets exactly one answer, or the button keeps spinning
+    if (answered) return;
+    answered = true;
+    await answerCq(env, cq.id, text || "", alert);
+  };
+  let action = "?";
+  let ok = false;
+  try {
+    const match = CALLBACK_RE.exec(String(cq.data || ""));
+    if (!match) return await answer("Unknown button");
+    action = match[1];
+    const codes = match[2].match(/.{5}/g) || [];
+    const message = cq.message;
+    // an InaccessibleMessage (date 0: too old to be read) cannot be edited; its buttons still work, with a toast only
+    const markup = message.date !== 0 && message.reply_markup;
+    const keyboard = markup && Array.isArray(markup.inline_keyboard) ? markup.inline_keyboard : [];
+    // m and x only redraw the buttons: built from the keyboard the tap came with, no index read
+    if (action === "x") {
+      await answer("");
+      if (keyboard.length) await setKeyboard(env, message, keyboard.filter(isGridRow));
+      ok = true;
+      return;
+    }
+    if (!codes.length) return await answer("Unknown button");
+    const grid = gridButton(keyboard, codes[0]);
+    if (action === "m") {
+      if (!grid) return await answer(`This message is too old for its buttons. /why ${codes[0]} still works.`);
+      await answer("");
+      await setKeyboard(env, message, keyboardFor(keyboard, grid, grid, true));
+      ok = true;
+      return;
+    }
+    if (action === "w") {
+      await answer("");
+      if (!(await answerFast(env, "why", codes[0], "", update))) await dispatchToPython(env, update, `/why ${codes[0]}`, "");
+      ok = true;
+      return;
+    }
+    // No shortcut from the label: it may be stale (a typed /unhide), and an unchanged state is not written anyway.
+    const command = TAP_COMMANDS[action];
+    // without the bucket nothing can be read here: the typed command goes to Python, like any other
+    const stored = env.INBOX ? await readJson(env, INDEX_KEY) : null;
+    // undo needs only the preferences (the application is found by its code), so it works without an index too
+    const index = stored && Array.isArray(stored.jobs) ? stored : (env.INBOX && command === "unapply" ? { jobs: [] } : null);
+    let prefs = null;
+    let result = null;
+    if (index) {
+      const change = (fresh) => (command === "hide" || command === "unhide"
+        ? mutateMany(env, index, fresh, command, codes) : mutate(env, index, fresh, command, codes[0]));
+      prefs = await loadPrefs(env);
+      result = await change(prefs);
+      if (result === CONFLICT) result = await change(prefs = await loadPrefs(env));  // once more, on the fresh copy
+    }
+    if (result === CONFLICT) return await answer("⚠️ Your preferences were being changed at the same moment. Nothing was lost; tap again.", true);
+    if (result === null && command === "unapply") {  // Python has no /unapply: never hand it over
+      return await answer("Undo needs the Worker's INBOX binding. Nothing was changed.", true);
+    }
+    if (result === null) {  // an older job, or no bucket: the full state is Python's, which answers the typed command
+      await answer("Passed on to the full history; the answer follows in about a minute.");
+      await dispatchToPython(env, update, `/${command} ${codes[0]}`, "");
+      ok = true;
+      return;
+    }
+    await answer(result[0]);
+    ok = true;
+    if (grid) {  // the label says what is really stored now, whatever it said before
+      const ids = [];
+      for (const code of codes) {
+        const job = findByCode(index, code);
+        const id = job ? job.id : await appliedId(prefs, code);
+        if (id) ids.push(id);
+      }
+      const state = { applied: ids.length > 0 && Object.hasOwn(prefs.applied, ids[0]),
+        hidden: ids.length > 0 && ids.every((id) => prefs.hidden.includes(id)) };
+      await setKeyboard(env, message, keyboardFor(keyboard, grid, state, true));
+    }
+  } catch (error) {
+    // the message may quote a request: only its kind is logged, and the toast stays generic
+    console.log("callback error", error && error.name ? error.name : "unknown");
+    const unreadable = /^your preferences could not be read/.test(String(error && error.message));
+    await answer(unreadable ? `⚠️ ${error.message}.` : "⚠️ That did not work. The typed command (/applied, /hide, /why code) still does.", true);
+  } finally {
+    await answer("");
+    console.log("callback", JSON.stringify({ action, ok }));  // never the codes or titles
+  }
 }
 
 // ---------------------------------------------------------------------------- private dashboard (read-only)
@@ -792,7 +999,7 @@ async function watchdog(env) {
   const age = index && index.generated_at ? (Date.now() - Date.parse(index.generated_at)) / 36e5 : Infinity;
   if (age <= STALE_HOURS) {
     if (memo.alerted) {
-      await tell(env, "✅ The scraper is running again.");
+      await tell(env, "✅ The scraper is running again.", false);
       await save({});
     }
     return "fresh";
@@ -806,9 +1013,9 @@ async function watchdog(env) {
   if (!memo.alerted) {
     await tell(env, started.ok
       ? `🛟 No scraper run for ${silent}. I re-enabled the schedule and started a run myself.`
-      : `⚠️ No scraper run for ${silent}, and I could not start one (GitHub answered ${started.status}). Check the Actions tab and the Worker's GITHUB_TOKEN.`);
+      : `⚠️ No scraper run for ${silent}, and I could not start one (GitHub answered ${started.status}). Check the Actions tab and the Worker's GITHUB_TOKEN.`, false);
   } else if (kicks + 1 >= MAX_KICKS) {
-    await tell(env, `⚠️ Still no scraper run after ${MAX_KICKS} attempts. Please look at the repository's Actions tab.`);
+    await tell(env, `⚠️ Still no scraper run after ${MAX_KICKS} attempts. Please look at the repository's Actions tab.`, false);
   }
   await save({ alerted: true, last_kick: new Date().toISOString(), kicks: kicks + 1 });
   return started.ok ? "kicked" : "kick failed";
@@ -929,7 +1136,7 @@ async function handleMail(message, env) {
     if (!found) return;
     const code = await codeOf(found.id);
     await reply(env, [`📧 Mail from ${esc(sender)} reads like ${MAIL_STATUS_TEXT[kind]} for ${about} — recorded as <b>${kind}</b>.\n`
-      + `<i>${esc(subject.slice(0, 120))}</i>\nWrong? /outcome ${code} applied${kind === "interview" ? " · /prep " + code + " for the interview sheet" : ""}`]);
+      + `<i>${esc(subject.slice(0, 120))}</i>\nWrong? /outcome ${code} applied${kind === "interview" ? " · /prep " + code + " for the interview sheet" : ""}`], false);
     if (kind === "interview") await dispatchToPython(env, { update_id: Date.now() }, `/prep ${code}`, "", "🎤 Preparing your interview sheet, about a minute.");
     return;
   }
@@ -939,13 +1146,13 @@ async function handleMail(message, env) {
     ? `\nNot recorded (${bulk ? "bulk mail" : found.score < 3 ? "the link to that application is weak" : `it is already '${found.application.status || "applied"}'`}): /outcome ${await codeOf(found.id)} ${kind} records it.`
     : "";
   await reply(env, [`📧 Mail from ${esc(sender)} ${verdict}${found ? ` (probably about ${about})` : ""}.\n<i>${esc(subject.slice(0, 120))}</i>${held}`
-    + (found && kind ? "" : "\nTell me what it was: /outcome code interview|rejected|offer")]);
+    + (found && kind ? "" : "\nTell me what it was: /outcome code interview|rejected|offer")], false);
 }
 
 export default {
   async email(message, env, ctx) {
     ctx.waitUntil(handleMail(message, env).catch((error) =>
-      tell(env, `⚠️ Could not read an email: ${String(error && error.message ? error.message : error).slice(0, 200)}`)));
+      tell(env, `⚠️ Could not read an email: ${String(error && error.message ? error.message : error).slice(0, 200)}`, false)));
   },
 
   async scheduled(event, env, ctx) {
@@ -963,6 +1170,21 @@ export default {
     }
     let update;
     try { update = await request.json(); } catch { return new Response("bad request", { status: 400 }); }
+    // A button tap writes preferences, so it must come from the owner, even inside the configured group, and from a
+    // message in the configured chat or the owner's private chat (on cq.message the sender is the bot itself).
+    if (update && update.callback_query) {
+      const cq = update.callback_query;
+      const owner = String(env.TELEGRAM_OWNER_ID || env.TELEGRAM_CHAT_ID);
+      const chatId = cq.message && cq.message.chat ? String(cq.message.chat.id) : "";  // none: an inline-mode message
+      const fromOwner = Boolean(cq.from) && !cq.from.is_bot && String(cq.from.id) === owner;
+      if (fromOwner && (chatId === String(env.TELEGRAM_CHAT_ID) || chatId === owner)) {
+        ctx.waitUntil(handleCallback(env, update, cq));
+      } else {
+        console.log("ignored callback", JSON.stringify({ fromOwner, chatMatches: Boolean(chatId) && (chatId === String(env.TELEGRAM_CHAT_ID) || chatId === owner) }));
+        ctx.waitUntil(answerCq(env, cq.id, "", false));  // an empty answer still stops the spinner
+      }
+      return new Response("ok");
+    }
     // Telegram delivers text in different envelopes depending on the chat: "message" (private chats and groups),
     // "channel_post" (channels), "business_message", and the edited_* variants. Accept them all.
     const message = update && (update.message || update.channel_post || update.business_message
@@ -986,7 +1208,7 @@ export default {
         lines.push(`instant replies: ${env.INBOX ? "on (R2 bound)" : "off (add the INBOX R2 binding)"} · AI: ${env.AI ? "on" : "off"}`
           + ` · dashboard: ${String(env.DASHBOARD_KEY || "").length >= 16 ? "on" : "off"}`);
       }
-      ctx.waitUntil(telegram(env, message.chat.id, lines.join("\n"), false));
+      ctx.waitUntil(telegram(env, message.chat.id, lines.join("\n"), false, true));
       return new Response("ok");
     }
     // Authorised when the message is in the configured chat, or is written by the owner anywhere (a private chat id
@@ -1013,7 +1235,7 @@ export default {
     // Whatever goes wrong is reported to the chat instead of failing silently.
     ctx.waitUntil(
       handleMessage(env, update, text).catch((error) =>
-        tell(env, `⚠️ Worker error: ${String(error && error.message ? error.message : error).slice(0, 300)}`)),
+        tell(env, `⚠️ Worker error: ${String(error && error.message ? error.message : error).slice(0, 300)}`, false)),
     );
     return new Response("ok");
   },

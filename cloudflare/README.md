@@ -44,14 +44,31 @@ Worker → **Settings → Variables and secrets → Add**, each with type **Secr
 Open this in a browser (fill in the three values):
 
 ```
-https://api.telegram.org/bot<TOKEN>/setWebhook?url=<WORKER_URL>&secret_token=<WEBHOOK_SECRET>&allowed_updates=["message"]
+https://api.telegram.org/bot<TOKEN>/setWebhook?url=<WORKER_URL>&secret_token=<WEBHOOK_SECRET>&allowed_updates=["message","callback_query"]
 ```
 
-It should answer `{"ok":true,"result":true,"description":"Webhook was set"}`.
+It should answer `{"ok":true,"result":true,"description":"Webhook was set"}`. `callback_query` is what a tap on a
+digest button sends; add `"channel_post"` to the list if the bot lives in a channel.
+
+**Already set up before the buttons existed?** Check once what Telegram delivers:
+
+```
+https://api.telegram.org/bot<TOKEN>/getWebhookInfo
+```
+
+If `allowed_updates` is listed and lacks `"callback_query"` (the earlier version of this step registered only
+`["message"]`), open the `setWebhook` link above again with the same URL and secret: taps are otherwise never delivered
+and the buttons just spin. A webhook registered without `allowed_updates` already receives them. Leaving the parameter
+out of a new `setWebhook` call keeps the previous list, so always spell it out.
 
 ## 5. Stop the hourly polling
 GitHub repository → **Settings → Secrets and variables → Actions → Variables → New variable**:
-`TELEGRAM_WEBHOOK` = `true`. Scheduled polls are then skipped (skipped jobs bill nothing).
+`TELEGRAM_WEBHOOK` = `true`. Scheduled polls are then skipped (skipped jobs bill nothing), and the scraper's digests
+carry one-tap buttons: a number per job, and under the number you tap ✅ Applied, 🙈 Hide, ❓ Why (with ↩️ to undo).
+Only the Worker can answer a tap, which is why the buttons wait for this variable. Only the owner's taps count: in a
+group, set `TELEGRAM_OWNER_ID` (see *Which chat?* below), or every tap is refused.
+Without the bucket of step 6 a tap still works, the slow way: it starts the commands workflow like the typed command
+(reply in about a minute), and ↩️ Undo needs the bucket.
 
 ## 6. Bind the bucket: instant replies and a private hand-over
 This one binding does two things. It lets the Worker read `state/index.json` and read/write `state/prefs.json`, which
@@ -122,7 +139,9 @@ whether that chat is the configured one. Then:
   there) and the Worker secret (messages from there are obeyed). They must be identical.
 - A private chat with the bot is the simplest choice: its id is also your user id, so you are obeyed everywhere.
 - If you choose a group or channel (ids start with `-100`), also add the Worker secret `TELEGRAM_OWNER_ID` with
-  **your user id**, so you are still obeyed when you write to the bot privately.
+  **your user id**, so you are still obeyed when you write to the bot privately. Digest buttons need it too: a tap
+  changes your applications, so only the owner's taps count, and without `TELEGRAM_OWNER_ID` the owner is the group
+  itself, which never taps; every tap is then refused (the button stops spinning, nothing changes).
 - Replies always go to `TELEGRAM_CHAT_ID`, wherever you wrote from.
 
 ## If the bot is in a group or a channel rather than a private chat
@@ -130,7 +149,7 @@ whether that chat is the configured one. Then:
   the Worker. In BotFather: `/setprivacy` → choose the bot → **Disable**, then remove the bot from the group and add
   it again (the setting applies on joining).
 - **Channel:** the bot must be an administrator; posts arrive as `channel_post`, which the Worker accepts.
-- The `setWebhook` URL should list the update types you need, e.g. `allowed_updates=["message","channel_post"]`.
+- The `setWebhook` URL should list the update types you need, e.g. `allowed_updates=["message","callback_query","channel_post"]`.
 - The Worker logs `ignored update {...}` with the reason (Observability tab) whenever it drops something.
 
 ## Test

@@ -24,7 +24,7 @@ from ..insights import fx, radar, signals, timing, visa, yields
 from ..insights.learning import apply_learning, build_model, forget
 from ..insights.prospects import ProspectBackend
 from ..insights.sponsors import SponsorRegistry, annotate_record
-from ..models import SourceResult
+from ..models import TIER_HIGH, SourceResult
 from ..notifications.commands import HELP, CommandProcessor
 from ..notifications.telegram import TelegramNotifier, format_digest, format_job_message
 from ..notifications.weekly import format_follow_ups, format_weekly
@@ -318,7 +318,14 @@ class Pipeline:
         if notifier is None and settings.telegram_configured and not settings.dry_run:
             notifier = TelegramNotifier(settings.telegram_bot_token, settings.telegram_chat_id,
                                         delay_s=settings.telegram_delay_s, sleep=self.sleep)
-        for message, batch in self._alert_messages(selected):
+        if writes_allowed and selected and notifier is not None and settings.telegram_buttons and settings.alert_format != "individual":
+            # a tap usually comes right after the ring: the Worker must already know this run's jobs, not only after
+            # the reminders, snapshots and reports below (the final write still refreshes the counts)
+            try:
+                self._write_index(manager, report, state)
+            except (StorageError, ConcurrentModificationError) as exc:
+                log.warning("index not published before the alerts: %s", type(exc).__name__)
+        for number, (message, batch, buttons) in enumerate(self._alert_messages(selected)):
             if settings.dry_run:
                 print("\n--- DRY RUN ALERT ---\n" + message)
                 counts["alerts_pending"] += len(batch)
@@ -326,7 +333,9 @@ class Pipeline:
             if notifier is None:
                 counts["alerts_pending"] += len(batch)
                 continue
-            ok, error = notifier.send(message)
+            # a digest rings once, on its first part, and only for a High match; the other parts arrive quietly
+            loud = any(r.get("tier") == TIER_HIGH for r in batch) and (number == 0 or settings.alert_format == "individual")
+            ok, error = notifier.send(message, reply_markup=buttons, silent=not loud)
             if ok:
                 for rec in batch:
                     mark_notified(rec, utcnow())
@@ -657,7 +666,7 @@ class Pipeline:
             try:
                 text = signals.format_signals(signals.check(ctx, state))
                 if text:
-                    counts["market_signals_sent"] = int(notifier.send(text)[0])
+                    counts["market_signals_sent"] = int(notifier.send(text, silent=True)[0])
             except Exception as exc:
                 log.warning("market signals skipped: %s", type(exc).__name__)
         if self.settings.monthly_radar:
@@ -667,7 +676,7 @@ class Pipeline:
                 if last is None or self.now - last >= timedelta(days=30):
                     prefs = load_prefs(manager)
                     data = radar.compute(state["jobs"], radar.my_skills(self.settings, prefs), self.now)
-                    if data["jobs"] >= radar.MIN_JOBS and notifier.send(radar.format_radar(data))[0]:
+                    if data["jobs"] >= radar.MIN_JOBS and notifier.send(radar.format_radar(data), silent=True)[0]:
                         maintenance["last_radar"] = to_iso(self.now)
                         counts["radar_sent"] = 1
             except Exception as exc:
@@ -705,17 +714,19 @@ class Pipeline:
             return False
         if text is None:
             return False
-        ok, _ = notifier.send(text)
+        ok, _ = notifier.send(text, silent=True)
         if ok:
             maintenance["last_weekly"] = to_iso(self.now)
         return ok
 
-    def _alert_messages(self, selected: list[dict]) -> list[tuple[str, list[dict]]]:
-        """Messages to send this run, each with the records it covers (marked notified only on delivery)."""
+    def _alert_messages(self, selected: list[dict]) -> list[tuple[str, list[dict], dict | None]]:
+        """Messages to send this run, each with the records it covers (marked notified only on delivery) and its
+        buttons, which only a digest has, and only when the Worker is there to answer them."""
         if self.settings.alert_format == "individual":
-            return [(format_job_message(rec, update=bool(rec.get("notified") and rec.get("pending_update_alert"))), [rec])
+            return [(format_job_message(rec, update=bool(rec.get("notified") and rec.get("pending_update_alert"))), [rec], None)
                     for rec in selected]
-        return format_digest(selected, now=self.now)
+        parts = format_digest(selected, now=self.now, with_keyboard=True)
+        return [(text, recs, buttons if self.settings.telegram_buttons else None) for text, recs, buttons in parts]
 
     def _write_artifacts(self, manager: StateManager, report: dict, outcome, ctx: RunContext, state: dict) -> None:
         day = self.now.strftime("%Y-%m-%d")
@@ -729,10 +740,7 @@ class Pipeline:
             full = dict(report, counts=dict(report["counts"]), diagnostics=diagnostics_rows(outcome.evaluated))
             manager.write_json(f"runs/{day}/{self.run_id}.json.gz", full, compress=True)
             manager.write_json("runs/latest.json", dict(report, counts=dict(report["counts"])), compress=False)
-            # read model for the Cloudflare Worker's instant replies
-            prefs = load_prefs(manager)
-            manager.write_json(INDEX_SUFFIX, build_index(state, self.settings, report, self.now, HELP, views=self._views(manager, state, prefs),
-                                                         skills=radar.my_skills(self.settings, prefs)), compress=False)
+            self._write_index(manager, report, state)
             maintenance = state.setdefault("maintenance", {})
             last = parse_datetime(maintenance.get("last_cleanup"))
             if last is None or self.now - last > timedelta(hours=24):
@@ -745,6 +753,12 @@ class Pipeline:
         except (StorageError, ConcurrentModificationError) as exc:
             log.warning("writing run artifacts failed: %s", exc)
             report["artifact_error"] = str(exc)
+
+    def _write_index(self, manager: StateManager, report: dict, state: dict) -> None:
+        """The read model for the Cloudflare Worker's instant replies and digest buttons."""
+        prefs = load_prefs(manager)
+        manager.write_json(INDEX_SUFFIX, build_index(state, self.settings, report, self.now, HELP, views=self._views(manager, state, prefs),
+                                                     skills=radar.my_skills(self.settings, prefs)), compress=False)
 
     def _views(self, manager: StateManager, state: dict, prefs: dict | None = None) -> dict:
         """Replies formatted here so the Worker can send them instantly ({command: html})."""

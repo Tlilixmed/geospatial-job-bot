@@ -280,11 +280,23 @@ and the step follows from the status on record. `/ask` is wired on both sides.
   Center` now stores the canonical name the radar counts. Term extraction skips the Arabic patterns for text without Arabic
   letters; scoring is still about 1.4× slower than before F69 (281 term patterns instead of 189).
 
+### Telegram, second pass: loudness and digest buttons (2026-10-10)
+
+- **F73 · Worker `reply()` answered any failure, a 429 included, with an immediate plain resend showing literal `&amp;`, and logged nothing when that failed too; loudness was tied to the markup (every HTML reply rang, the watchdog and "Worker error" were silent); `/hide` of a hidden job wrote prefs again · [fixed]** Now: one resend of the same HTML after `retry_after` (at most 5 s), decoded plain text only on "can't parse entities", a log line for the rest, about 1 s between parts. `telegram()` takes an explicit `silent`: replies to a command and "On it" are quiet; mail outcomes, the watchdog and errors ring. Python digests ring once, on the first part, and only with a High match; Possible-only digests, continuation parts, the weekly summary, the radar and market signals are quiet; deadline reminders ring. `link_preview_options` replaces `disable_web_page_preview` on both sides.
+- **F74 · digest buttons, second review: without the `INBOX` binding every Applied/Hide tap failed with a generic toast; Undo with no index asked Python for an `/unapply` it does not have; a stale label ("1🙈" after a typed `/unhide`) answered "Already done" and changed nothing; a keyboard Telegram refuses blocked the digest for good; toasts were cut through an emoji; the index reached the Worker only after the reminders and reports, so a tap right after the ring went the slow way · [fixed]** Now: without the bucket a tap hands the typed command to Python; Undo works from the preferences alone and is never handed over; taps always act on the stored state (an unchanged state is still not written) and relabel from it; a refused keyboard is dropped and the message sent without it; toasts are cut between characters; a run that sends buttons publishes the index before the alerts, and again at the end with the final counts.
+
 ### Opportunities recorded (not bugs)
 
-- **O1 · inline Yes/No buttons for writes derived from free text, and buttons under digests (`callback_query`) · [idea]** The
-  question and typo guards (F59) remove the dangerous cases; buttons would remove typing codes altogether. Needs
-  `allowed_updates` to include `callback_query` and a Worker handler.
+- **O1 · inline Yes/No buttons for writes derived from free text, and buttons under digests (`callback_query`) · [partly done]**
+  Digests carry a number per entry (8 per row, none above 90 buttons, on the last part of a split message, only with
+  `TELEGRAM_WEBHOOK=true`); a tap opens one action row: ✅ Applied, 🙈 Hide (every posting of a grouped entry), ❓ Why,
+  ✖, then ↩️ Undo applied (only a bare "applied" with no later history) or ↩️ Unhide. `callback_data` holds only the action
+  and the codes; the Worker answers the owner's taps alone (owner and chat both checked), answers each exactly once,
+  redraws the keyboard from the one the tap came with (opening and closing never read R2), retries a lost race once,
+  treats "message is not modified" as done, and hands codes missing from the index to Python as the tapped command under
+  the update's own id. Setups registered with `allowed_updates=["message"]` must register again (`cloudflare/README.md`
+  step 4). `python -m geojobbot set-commands` publishes the "/" menu (12 commands, EN/FR/AR, scoped to the bot's chat).
+  Still open: Yes/No buttons for free-text writes, and buttons on `/jobs` replies (with O2 paging).
 - **O2 · "more" / "next" paging · [idea]** Long replies are no longer lost or cut through a tag (F64); paging on demand is still open.
 - **O3 · conversation memory ("why 2", "hide the third one") · [idea]**
 - **O4 · sponsorship-first ordering inside a tier, a small bonus for a strong visa route · [idea]**

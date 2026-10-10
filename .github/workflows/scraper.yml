@@ -77,6 +77,8 @@ jobs:
           R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          # true once the Cloudflare Worker owns the webhook: digests then carry one-tap buttons it answers
+          TELEGRAM_WEBHOOK: ${{ vars.TELEGRAM_WEBHOOK }}
           CLOUDFLARE_AI_TOKEN: ${{ secrets.CLOUDFLARE_AI_TOKEN }}
           CANDIDATE_PROFILE: ${{ secrets.CANDIDATE_PROFILE }}
           USAJOBS_API_KEY: ${{ secrets.USAJOBS_API_KEY }}
