@@ -31,7 +31,7 @@ Finds relevant GIS / geospatial / surveying / LiDAR / remote-sensing jobs from l
 | Board discovery | `commoncrawl`, search backends, career pages, generic pages | Discovers *new* company boards and adds them to a persistent registry. |
 | Career pages + sitemaps | `career_sites` | Configured company pages: JSON-LD jobs, embedded ATS boards, job links, job sitemaps. |
 | Generic extraction | `generic_pages` | Any queued public job page: JSON-LD `JobPosting` → embedded JSON → structured HTML. ATS URLs are fetched through the ATS API instead. |
-| Geospatial boards | `career_sites` (GEO CAREERS), `rss_feeds` (GoGeomatics, GISjobs.com) | GEO CAREERS is the largest geospatial-only board: 700+ postings with structured data, read through its sitemap newest-first. |
+| Geospatial boards | `career_sites` (GEO CAREERS), `rss_feeds` (GoGeomatics, GISjobs.com, GeoRezo, GSA-UK) | GEO CAREERS is the largest geospatial-only board: 700+ postings with structured data, read through its sitemap newest-first. |
 | Official employment services | `bundesagentur`, `francetravail`, `jobbank` | Germany's public job API (no key; German-language postings skipped), France Travail (free key, newest first) and Canada's Job Bank with its French twin Guichet-Emplois (search pages; the posting's schema.org RDFa gives the full text). |
 | Keyless aggregator | `freehire` | freehire.dev: about four million open postings read from company ATS boards and partner feeds (Adzuna, WhatJobs, EURES…), with full descriptions and no key. Queried by title, newest first, four terms per run on rotation. Its own AI fields (visa sponsorship, relocation) are not trusted: the text goes through this bot's wording rules. |
 | Community | `hn_hiring` | Hacker News "Who is hiring?" monthly thread through the free Algolia API, once a day, strict geospatial filter. |
@@ -439,7 +439,7 @@ In a dry run, alerts are printed rather than sent and no state is written, unles
 
 - ATS slugs per provider. For Workday, paste the career-site URL.
 - `[[career_sites]]` with an optional `job_url_pattern`, `sitemap` and `max_pages`. Add `source_type = "feed"` for a job board's search page (shipped: Keejob keyword searches): its postings then carry feed authority in fusion and the board's name is never used as the employer.
-- `[[rss_feeds]]` (shipped: GoGeomatics, GISjobs.com, Tunisie Travail searches). Job Bank's Atom feeds answered without entries for every query when checked on 2026-09-20, so the `jobbank` backend reads its search pages instead.
+- `[[rss_feeds]]` (shipped: GoGeomatics, GISjobs.com, GeoRezo, GSA-UK, Tunisie Travail searches). Job Bank's Atom feeds answered without entries for every query when checked on 2026-09-20, so the `jobbank` backend reads its search pages instead.
 - extra search queries
 
 > Every ATS slug shipped in `sources.toml` was checked against the live public APIs on 2026-09-16 (the file lists the job count per board). Companies change ATS providers, so run `validate-sources` or check the run summary after editing and fix or remove anything reported `INVALID`. SmartRecruiters and Workable answer with an empty list for unknown accounts, so confirm a non-empty board before adding one there.
