@@ -3,11 +3,12 @@ from __future__ import annotations
 
 import logging
 
-from .base import ObjectStore, StorageError
+from .base import ConcurrentModificationError, ObjectStore, StorageError
 
 log = logging.getLogger(__name__)
 
 MISSING_CODES = {"NoSuchKey", "404", "NotFound"}
+PRECONDITION_CODES = {"PreconditionFailed", "412"}
 
 
 def build_r2_client(endpoint_url: str, access_key_id: str, secret_access_key: str):
@@ -59,19 +60,27 @@ class R2Store(ObjectStore):
         return StorageError(f"R2 {action} failed: {type(exc).__name__} {_error_code(exc)}".strip())
 
     def get_bytes(self, key: str) -> bytes | None:
+        return self.get_tagged(key)[0]
+
+    def get_tagged(self, key: str) -> tuple[bytes | None, str | None]:
         try:
             response = self.client.get_object(Bucket=self.bucket, Key=key)
-            return response["Body"].read()
+            etag = response.get("ETag")
+            return response["Body"].read(), (etag.strip('"') if etag else None)
         except Exception as exc:  # botocore ClientError / connection errors
             if _error_code(exc) in MISSING_CODES:
                 log.debug("R2 get %s: %s %s", key, type(exc).__name__, _error_code(exc))
-                return None
+                return None, None
             raise self._wrap(f"get {key}", exc) from exc
 
-    def put_bytes(self, key: str, data: bytes, content_type: str = "application/octet-stream") -> str | None:
+    def put_bytes(self, key: str, data: bytes, content_type: str = "application/octet-stream", *,
+                  if_match: str | None = None) -> str | None:
+        kwargs = {"IfMatch": f'"{if_match}"'} if if_match else {}  # boto3 >= 1.35.69; R2 answers 412 on a mismatch
         try:
-            response = self.client.put_object(Bucket=self.bucket, Key=key, Body=data, ContentType=content_type)
+            response = self.client.put_object(Bucket=self.bucket, Key=key, Body=data, ContentType=content_type, **kwargs)
         except Exception as exc:
+            if if_match and _error_code(exc) in PRECONDITION_CODES:
+                raise ConcurrentModificationError(f"{key} changed since it was read") from exc
             raise self._wrap(f"put {key}", exc) from exc
         etag = response.get("ETag") if isinstance(response, dict) else None
         return etag.strip('"') if etag else None

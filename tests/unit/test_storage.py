@@ -26,6 +26,41 @@ def test_store_contract(store):
     assert store.get_bytes("a/b.json") is None
 
 
+def test_conditional_put_is_refused_when_the_object_changed(store):
+    assert store.get_tagged("prefs.json") == (None, None)
+    store.put_bytes("prefs.json", b'{"v":1}')
+    data, etag = store.get_tagged("prefs.json")
+    assert data == b'{"v":1}' and etag == store.head("prefs.json")["etag"]
+    newer = store.put_bytes("prefs.json", b'{"v":2}', if_match=etag)           # nobody wrote in between
+    store.put_bytes("prefs.json", b'{"v":3,"worker":true}')                    # the Worker writes
+    with pytest.raises(ConcurrentModificationError):
+        store.put_bytes("prefs.json", b'{"v":4}', if_match=newer)              # our copy is stale now
+    assert store.get_bytes("prefs.json") == b'{"v":3,"worker":true}'           # nothing was written over it
+    with pytest.raises(ConcurrentModificationError):
+        store.put_bytes("gone.json", b"{}", if_match=etag)                     # deleted meanwhile
+
+
+def test_r2_sends_if_match_and_maps_412_to_a_conflict():
+    """Against botocore's own request model (Stubber): IfMatch is a known PutObject parameter (botocore >= 1.35.69)."""
+    from botocore.stub import Stubber
+
+    from geojobbot.storage.r2 import build_r2_client
+
+    client = build_r2_client("https://example.r2.cloudflarestorage.com", "id", "secret")
+    store = R2Store("b", client=client)
+    with Stubber(client) as stub:
+        stub.add_response("put_object", {"ETag": '"new"'}, {"Bucket": "b", "Key": "state/prefs.json", "Body": b"{}",
+                                                            "ContentType": "application/json", "IfMatch": '"old"'})
+        stub.add_client_error("put_object", service_error_code="PreconditionFailed", http_status_code=412)
+        stub.add_response("put_object", {"ETag": '"plain"'}, {"Bucket": "b", "Key": "runs/latest.json", "Body": b"{}",
+                                                              "ContentType": "application/json"})
+        assert store.put_bytes("state/prefs.json", b"{}", "application/json", if_match="old") == "new"
+        with pytest.raises(ConcurrentModificationError):
+            store.put_bytes("state/prefs.json", b"{}", "application/json", if_match="new")
+        assert store.put_bytes("runs/latest.json", b"{}", "application/json") == "plain"  # no condition unless asked
+        stub.assert_no_pending_responses()
+
+
 def test_missing_state_with_previous_runs_refuses_to_start_fresh(store):
     store.put_bytes("runs/latest.json", b"{}")
     with pytest.raises(StateCorruptError, match="refusing to start fresh"):

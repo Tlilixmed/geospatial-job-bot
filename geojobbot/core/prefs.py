@@ -29,9 +29,15 @@ def default_prefs() -> dict:
     }
 
 
-def load_prefs(manager) -> dict:
-    prefs = default_prefs()
-    stored = manager.read_json(PREFS_SUFFIX)
+class Prefs(dict):
+    """The preferences plus the ETag they were read at: saving is refused when the Worker wrote in between."""
+
+    etag: str | None = None
+
+
+def load_prefs(manager) -> Prefs:
+    prefs = Prefs(default_prefs())
+    stored, prefs.etag = manager.read_json_tagged(PREFS_SUFFIX)
     if isinstance(stored, dict):  # keys this version does not know (the Worker or a newer version wrote them) are kept
         prefs.update({k: v for k, v in stored.items() if v is not None or k not in prefs})
     for key, kind in (("muted", list), ("hidden", list), ("watch", list), ("applied", dict), ("hidden_info", dict)):
@@ -41,7 +47,14 @@ def load_prefs(manager) -> dict:
 
 
 def save_prefs(manager, prefs: dict) -> None:
-    manager.write_json(PREFS_SUFFIX, {**prefs, "updated_at": to_iso(utcnow())}, compress=False)
+    """Conditional write: raises ConcurrentModificationError when the stored file changed since `prefs` was read
+    (a /applied tap or a recorded interview from the Worker would otherwise be erased). Preferences that were not
+    read from the store, or read while it had none, are written as they are (R2 does not document If-None-Match: *
+    on PutObject, so the very first write cannot be made conditional)."""
+    etag = manager.write_json(PREFS_SUFFIX, {**prefs, "updated_at": to_iso(utcnow())}, compress=False,
+                              if_match=getattr(prefs, "etag", None))
+    if isinstance(prefs, Prefs):
+        prefs.etag = etag  # the next save of this copy is made against our own write
 
 
 def apply_prefs(settings, prefs: dict) -> None:

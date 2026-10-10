@@ -24,6 +24,7 @@ from ..insights import prospects, radar, signals, timing, visa, yields
 from ..insights.learning import MIN_LABELS, build_model, describe_model, snapshot
 from ..matching.profile import TECH_SKILLS
 from ..models import TIER_HIGH, TIER_POSSIBLE
+from ..storage.base import ConcurrentModificationError
 from ..utils.dates import parse_datetime, to_iso, utcnow
 from ..utils.text import fold, job_code
 from .intents import interpret
@@ -128,13 +129,8 @@ class CommandProcessor:
                 continue
             if not text:
                 continue
-            try:
-                self._fresh_prefs()
-                replies = self.handle(text)
-            except Exception as exc:  # one bad command must not block the rest
-                log.exception("command failed")
-                replies = [f"⚠️ That command failed ({type(exc).__name__}). /help lists what I understand."]
-            counts["prefs_saved"] += self._save_if_changed()  # before the (slow) replies: the window for a lost update stays small
+            replies, saved = self._execute(text)
+            counts["prefs_saved"] += saved
             for reply in replies:
                 ok, error = self.notifier.send(reply)
                 if not ok:
@@ -143,6 +139,24 @@ class CommandProcessor:
         if last is not None:  # confirm, so no poller sees these updates again
             self._api("getUpdates", offset=int(last) + 1, limit=1, timeout=0)
         return counts
+
+    def _execute(self, text: str, hint: str = "") -> tuple[list[str], int]:
+        """Handle one message and save what it changed, before any reply is sent. When the Worker wrote the
+        preferences between our read and our write (the conditional put refuses), the message is run once more on a
+        fresh copy: nothing has been said yet, so the user only ever sees the answer that was saved."""
+        for attempt in (1, 2):
+            try:
+                self._fresh_prefs()
+                replies = self.handle(text, hint)
+            except Exception as exc:  # one bad command must not block the rest
+                log.exception("command failed")
+                replies = [f"⚠️ That command failed ({type(exc).__name__}). /help lists what I understand."]
+            try:
+                return replies, self._save_if_changed()  # before the (slow) replies: the window for a lost update stays small
+            except ConcurrentModificationError:
+                log.info("preferences changed meanwhile (attempt %d)", attempt)
+                self.prefs, self._dirty = load_prefs(self.manager), False
+        return ["⚠️ Your preferences were being changed at the same moment. Nothing was lost; please send that again."], 0
 
     def _fresh_prefs(self) -> None:
         """Read the stored preferences again before a message is handled: the Worker writes them at any moment, and a
@@ -194,14 +208,9 @@ class CommandProcessor:
         """Execute one message handed over directly (the Cloudflare Worker webhook path, where Telegram
         no longer serves getUpdates). The caller has already verified the chat. `hint` is the Worker's
         optional AI reading of a free-text message."""
-        try:
-            self._fresh_prefs()
-            replies = self.handle(text.strip(), hint)
-        except Exception as exc:
-            log.exception("command failed")
-            replies = [f"⚠️ That command failed ({type(exc).__name__}). /help lists what I understand."]
+        replies, saved = self._execute(text.strip(), hint)
         counts = Counter(commands=1)
-        counts["prefs_saved"] += self._save_if_changed()
+        counts["prefs_saved"] += saved
         for reply in replies:
             ok, error = self.notifier.send(reply)
             if not ok:

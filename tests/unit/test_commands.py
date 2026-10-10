@@ -254,6 +254,43 @@ def test_a_read_only_command_never_saves_a_stale_copy_over_the_workers_write():
     assert stored["hidden"] == ["a:1"] and stored["muted"] == ["leidos", "esri"] and stored["from_a_newer_version"] == {"kept": True}
 
 
+def test_a_worker_write_during_a_command_is_kept_and_the_command_is_run_again_on_it():
+    from geojobbot.core.prefs import save_prefs
+
+    proc, replies, _, manager = setup([], [job("a:1", "GIS Analyst")])
+    save_prefs(manager, load_prefs(manager))  # the file exists: the very first write is unconditional
+    handle, calls = proc.handle, []
+
+    def racing(text, hint=""):
+        calls.append(text)
+        answer = handle(text, hint)
+        if len(calls) == 1:  # the Worker records an interview between our read and our write
+            theirs = load_prefs(manager)
+            theirs["applied"]["a:1"] = {"title": "GIS Analyst", "status": "interview"}
+            save_prefs(manager, theirs)
+        return answer
+
+    proc.handle = racing
+    counts = proc.run_text("/mute leidos")
+    stored = load_prefs(manager)
+    assert calls == ["/mute leidos", "/mute leidos"] and counts["prefs_saved"] == 1
+    assert stored["muted"] == ["leidos"] and stored["applied"]["a:1"]["status"] == "interview"  # both writes survive
+    assert len(replies.sent) == 1  # one answer, sent after the save that counted
+
+    def always_racing(text, hint=""):
+        answer = handle(text, hint)
+        theirs = load_prefs(manager)
+        theirs["hidden"] = theirs["hidden"] + [text]
+        save_prefs(manager, theirs)
+        return answer
+
+    proc.handle = always_racing
+    counts = proc.run_text("/mute esri")
+    stored = load_prefs(manager)
+    assert counts["prefs_saved"] == 0 and stored["muted"] == ["leidos"] and len(stored["hidden"]) == 2
+    assert "changed at the same moment" in replies.sent[-1]
+
+
 def test_a_message_left_in_the_inbox_for_days_is_not_run():
     import json
 

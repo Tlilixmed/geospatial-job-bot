@@ -26,7 +26,7 @@ from .scrapers.ats.detect import detect, parse_workday_url, BoardRef
 from .scrapers.ats.more_ats import all_adapters
 from .scrapers.base import RunContext
 from .scrapers.generic import extract_jobs
-from .storage.state import StateManager
+from .storage.state import ConcurrentModificationError, StateManager
 from .utils.dates import utcnow
 from .utils.http import FetchError, HttpClient
 from .utils.location import parse_location
@@ -218,6 +218,13 @@ def cmd_selftest_r2(settings, args) -> int:
         steps.append(("put", True))
         steps.append(("head", (store.head(key) or {}).get("size") == len(payload)))
         steps.append(("get round-trip", store.get_bytes(key) == payload))
+        # preferences are saved with If-Match: the bucket must accept the right ETag and refuse a stale one
+        steps.append(("conditional put", bool(store.put_bytes(key, payload, "application/gzip", if_match=store.get_tagged(key)[1]))))
+        try:
+            store.put_bytes(key, payload, "application/gzip", if_match="0" * 32)
+            steps.append(("stale If-Match refused", False))
+        except ConcurrentModificationError:
+            steps.append(("stale If-Match refused", True))
         steps.append(("copy", store.copy(key, key + ".copy") is None))
         steps.append(("list", key in store.list_keys(key.rsplit("/", 1)[0] + "/")))
         steps.append(("delete", store.delete_keys([key, key + ".copy"]) == 2))

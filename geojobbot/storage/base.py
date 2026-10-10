@@ -13,6 +13,10 @@ class StorageError(Exception):
     """Storage is unreachable or returned an unexpected error (NOT 'object missing')."""
 
 
+class ConcurrentModificationError(Exception):
+    """The object changed since it was read: a conditional write (if_match) was refused."""
+
+
 class ObjectStore(ABC):
     name = "abstract"
 
@@ -21,8 +25,14 @@ class ObjectStore(ABC):
         """Return object bytes, or None if the object does not exist. Raise StorageError otherwise."""
 
     @abstractmethod
-    def put_bytes(self, key: str, data: bytes, content_type: str = "application/octet-stream") -> str | None:
-        """Write an object atomically and return its ETag (if known)."""
+    def get_tagged(self, key: str) -> tuple[bytes | None, str | None]:
+        """get_bytes plus the ETag the bytes were read at, for a later put_bytes(..., if_match=etag)."""
+
+    @abstractmethod
+    def put_bytes(self, key: str, data: bytes, content_type: str = "application/octet-stream", *,
+                  if_match: str | None = None) -> str | None:
+        """Write an object atomically and return its ETag (if known). With if_match the write happens only while the
+        stored object still has that ETag; otherwise ConcurrentModificationError is raised and nothing is written."""
 
     @abstractmethod
     def head(self, key: str) -> dict | None:
@@ -66,8 +76,17 @@ class LocalStore(ObjectStore):
         except OSError as exc:
             raise StorageError(str(exc)) from exc
 
-    def put_bytes(self, key: str, data: bytes, content_type: str = "application/octet-stream") -> str | None:
+    def get_tagged(self, key: str) -> tuple[bytes | None, str | None]:
+        data = self.get_bytes(key)
+        return data, (self._etag(data) if data is not None else None)
+
+    def put_bytes(self, key: str, data: bytes, content_type: str = "application/octet-stream", *,
+                  if_match: str | None = None) -> str | None:
         path = self._path(key)
+        if if_match is not None:  # emulates R2's If-Match (check, then replace: enough for tests and one local process)
+            current = self.head(key)
+            if current is None or current["etag"] != if_match:
+                raise ConcurrentModificationError(f"{key} changed since it was read")
         path.parent.mkdir(parents=True, exist_ok=True)
         fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".tmp-")
         try:
