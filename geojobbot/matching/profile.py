@@ -159,6 +159,9 @@ INTERNSHIP_TITLES = [
     "Working Student", "Student", "Summer Student", "Werkstudent", "Praktikum", "Praktikant", "Graduate Program",
     "Stagiaire", "Stage", "Stage PFE", "PFE", "Alternance", "Alternant", "Alternante", "Apprenti", "Apprentie",
     "Étudiant", "Étudiante", "Becario", "Prácticas",
+    # GeoRezo tags: "[Altern]" apprenticeship, "[VSC]" civic volunteering, PhD and post-doc positions
+    "Altern", "VSC", "Volontariat", "Service civique", "Thèse", "Doctorat", "Doctorant", "Doctorante",
+    "Post-doctorat", "Postdoctorat", "Post-doc", "Postdoc",
 ]
 # Negative titles that are overridden when the title itself is clearly geospatial
 # (e.g. "GIS Architect" or "Enterprise Geospatial Architect").

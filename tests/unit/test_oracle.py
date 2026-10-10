@@ -317,7 +317,7 @@ def test_closing_date_in_the_past_drops_the_posting(end, kept):
 def test_fields_text_and_salary_from_the_detail():
     result, _ = fetch(wsp_session(lambda f: listing(1, [WSP_ROWS[0]])))
     job = result.jobs[0]
-    assert job.native_id == "oracle:emit.ca3:97345" and job.source_job_id == "97345" and job.source_name == "oracle"
+    assert job.native_id == "oracle:emit.ca3:97345" and job.source_job_id == "oracle:emit.ca3:97345" and job.source_name == "oracle"
     assert job.company == "WSP" and result.company == "WSP"  # the career page's name: LegalEmployer is null
     assert job.url == job.apply_url == f"{WSP}/hcmUI/CandidateExperience/en/sites/CX_2001/job/97345"
     assert job.location_raw == "Vancouver, BC, Canada; Terrace, BC, Canada"
@@ -478,3 +478,25 @@ def test_hot_oracle_board_still_fetches_a_linked_job():
     ctx.pages.add(url, origin="career_page", geo_context=True)
     out = GenericPagesBackend(all_adapters()).run(ctx)
     assert [j.native_id for j in out.jobs] == ["oracle:emit.ca3:97345"] and out.details["api_fetched"] == 1
+
+
+def test_two_tenants_sharing_a_requisition_number_stay_two_jobs():
+    from conftest import NOW
+    from geojobbot.core.fusion import fuse
+    from geojobbot.models import RawJob
+
+    adapter = OracleAdapter()
+    wsp = adapter._to_raw("emit.fa.ca3.oraclecloud.com", "emit.ca3", "CX_2001", row(2544, "GIS Technician"), None, "WSP", True)
+    baker = adapter._to_raw("ebxs.fa.us2.oraclecloud.com", "ebxs.us2", "CX_2", row(2544, "Senior Surveyor"), None, "Michael Baker", True)
+    assert isinstance(wsp, RawJob) and wsp.source_job_id == "oracle:emit.ca3:2544"
+    assert sorted(f.canonical_id for f in fuse([wsp, baker], {}, NOW)) == ["oracle:ebxs.us2:2544", "oracle:emit.ca3:2544"]
+
+
+def test_the_detail_budget_goes_to_geospatial_titles_first():
+    # "GIS" also finds gas-insulated-switchgear substation jobs: their generic titles come first in the site's order
+    rows = [row(1, "Substation Design Engineer"), row(2, "Protection and Control Engineer"), row(3, "Senior GIS Analyst")]
+    details = {str(i): dict(WSP_97345, Id=str(i), Title=r["Title"]) for i, r in zip((1, 2, 3), rows)}
+    session = wsp_session(lambda f: listing(3, rows), details=details)
+    fetch(session, settings=make_settings(max_detail_fetches_per_board=1))
+    read = [finder(c[1])["Id"] for c in session.calls if "recruitingCEJobRequisitionDetails" in c[1]]
+    assert read == ["3"]

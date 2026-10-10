@@ -26,6 +26,7 @@ import html as html_lib
 import re
 from urllib.parse import quote
 
+from ...matching.matcher import classify_title
 from ...models import RawJob
 from ...utils.dates import parse_datetime
 from ...utils.http import FetchError
@@ -38,6 +39,7 @@ from .more_ats import WORKDAY_SEARCH_TERMS
 ORACLE_PAGE = 200            # the server serves at most 200 rows, whatever limit is asked
 ORACLE_FULL_SITE_MAX = 600   # a site this small is read in full (3 calls); larger ones are searched by keyword
 ORACLE_TERM_PAGES = 2        # 1 on a board without geospatial context: only geospatial titles pass there anyway
+TITLE_RANK = {"direct": 0, "adjacent": 1, "geo_title": 2, "geo_term": 3, "generic": 4}  # detail budget order
 ORACLE_SEARCH_TERMS = [*WORKDAY_SEARCH_TERMS, "SIG"]  # SIG: Québec postings are written in French
 API = "hcmRestApi/resources/latest"
 SITE_NUMBER_RE = re.compile(rf'data-sitenumber="({ORACLE_SITE})"')
@@ -136,7 +138,10 @@ class OracleAdapter(ATSAdapter):
             location_raw=_location(row) or _location(info), workplace_type=_first((row, info), "WorkplaceType"),
             employment_type=_first((row, info), "JobSchedule", "JobType", "ContractType"),
             posted_at=posted, posted_at_reliable=posted is not None,
-            native_id=f"oracle:{tenant}:{job_id}", source_job_id=job_id, extraction_method="api", geo_context=geo_context,
+            # requisition ids are small numbers per tenant: a bare one would become the key "oracle:{Id}" in fusion and
+            # merge two employers' postings that happen to share it
+            native_id=f"oracle:{tenant}:{job_id}", source_job_id=f"oracle:{tenant}:{job_id}", extraction_method="api",
+            geo_context=geo_context,
         )
 
     def _detail(self, ctx: RunContext, host: str, site: str, job_id: str) -> dict | None:
@@ -205,6 +210,7 @@ class OracleAdapter(ATSAdapter):
         result = BoardResult(status, listed=total, company=company, error=error)
         budget = ctx.settings.max_detail_fetches_per_board
         fetched = 0
+        candidates = []
         for job_id, row in rows.items():
             title = (row.get("Title") or "").strip()
             # the probe's newest postings of a large site are not search hits: WSP's would let every "Engineer" through
@@ -212,6 +218,11 @@ class OracleAdapter(ATSAdapter):
             if not ctx.prefilter(title, context):
                 result.prefiltered_out += 1
                 continue
+            candidates.append((job_id, row, context))
+        # The detail budget goes to geospatial titles first: "GIS" also finds gas-insulated-switchgear substation jobs,
+        # whose generic titles would otherwise use up the 30 details of a run ahead of the GIS and survey postings.
+        candidates.sort(key=lambda c: TITLE_RANK.get(classify_title((c[1].get("Title") or ""))[0], len(TITLE_RANK)))
+        for job_id, row, context in candidates:
             native = f"oracle:{tenant}:{job_id}"
             if ctx.knows_text(native):
                 result.jobs.append(self._to_raw(host, tenant, site, row, None, company, context))  # still open; text on file

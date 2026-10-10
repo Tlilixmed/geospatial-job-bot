@@ -303,3 +303,33 @@ def test_a_quota_bound_api_that_failed_is_not_asked_again_every_run():
         Pipeline(make_settings(), store=R2Store("b", client=s3), backends=[Metered()], notifier=FakeNotifier(), now=NOW + timedelta(minutes=minutes),
                  http_session=FakeSession(), sleep=lambda x: None).run()
         assert Metered.calls == expected, minutes
+
+
+def test_a_french_board_gives_the_town_from_the_title_and_its_tags_reach_the_internship_filter():
+    from geojobbot.matching.matcher import classify_title
+    from geojobbot.matching.profile import INTERNSHIP_TITLES
+    from geojobbot.scrapers.feeds import place_from_title
+
+    cases = {
+        "[CDI] Geomaticien/ne - REDON (35)": "REDON, France",
+        "[INTERIM] Technicien SIG, Nantes (44)": "Nantes, France",
+        "[CDI] Charge d etudes cartographie - Angers(49)": "Angers, France",
+        "[CDD 20 mois] Ingenieur d etudes Observatoire Pau (64)": "Pau, France",
+        "[CDI] Geomaticien Corse (2A)": "Corse, France",
+        "[CDD] Technicien(ne) Terrain Gps (h/f) - (27)": "France",   # no town given
+        "[CDI] Developpeur F/H (69)": "France",                     # a gender mark is not a town
+        "[AUTRES] Teledetection CIRAD / UMR TETIS - France": "France",
+    }
+    assert {t: place_from_title(t, "France") for t in cases} == cases
+    rss = ('<rss><channel><item><title><![CDATA[[CDI] Géomaticien H/F - Angers (49)]]></title>'
+           '<link>https://georezo.net/forum/viewtopic.php?pid=1#p1</link><description>x</description></item></channel></rss>')
+    job = RssFeedBackend.parse(rss.encode(), {"name": "georezo", "url": "https://georezo.net/extern.php", "country": "France",
+                                              "place_in_title": True})[0]
+    assert job.location_raw == "Angers, France" and job.title == "[CDI] Géomaticien H/F - Angers (49)"
+    assert RssFeedBackend.parse(rss.encode(), {"name": "other", "url": "https://x.example/feed"})[0].location_raw == ""  # opt-in only
+    extra = tuple(INTERNSHIP_TITLES)
+    for tagged in ("[Altern] Geomaticien (F/M/X) - Nimes (30)", "[VSC] Soutien Geomatique - ONF Guadeloupe",
+                   "[CDD] Post-doctorat - SIG et Electromobilite (60)", "[THESE] Télédétection des forêts"):
+        assert classify_title(tagged, extra)[3], tagged
+    for fine in ("[CDI] Geomaticien·ne - Caen (14)", "Alternative Energy GIS Analyst"):
+        assert classify_title(fine, extra)[3] is None, fine

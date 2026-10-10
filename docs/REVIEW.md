@@ -328,6 +328,22 @@ and the step follows from the status on record. `/ask` is wired on both sides.
   for WSP, 283 for "GIS" on both pages, and a page past the end is empty); `SCORER_VERSION` 3 is only referenced by
   name in the other branches' tests; button taps handed to Python run through the conditional prefs write of F76.
 
+### Final review of the integrated branch (2026-10-10)
+
+- **F80 · Oracle jobs carried a tenant-less key · [fixed]** The adapter gave the bare requisition number as the source id;
+  fusion turns an id without a colon into "oracle:{Id}", so two tenants posting requisition 2544 would have fused into one
+  job. The source id is now the full `oracle:{pod}.{dc}:{Id}`.
+- **F81 · WSP's detail budget went to substation engineers · [fixed]** "GIS" also finds gas-insulated-switchgear jobs, whose
+  generic titles came first in the site's order and used up the 30 detail requests of a run. Candidates are now read in
+  title order: direct geospatial roles first, generic titles last.
+- **F82 · GeoRezo: apprenticeships alerted as High, and no place on any of its jobs · [fixed]** Its titles carry tags
+  ("[Altern]", "[VSC]", "[THESE]", post-doctorates) that the internship filter did not know, and end with the town and
+  département ("- Angers (49)"), which the bot ignored: every alert said "Location not specified". The tags join the
+  internship titles; a feed can set `country` and `place_in_title` to read the town (GeoRezo does).
+- **Left as they are:** the slow Python replies still ring while the Worker's instant ones are silent (a reply that took a
+  minute is worth a sound); sixteen Workday boards take several minutes a run (about 70 s each in the dry run, mostly
+  detail requests that `knows_text` saves on later runs): watch `skipped_for_time` in the run summary.
+
 ### Opportunities recorded (not bugs)
 
 - **O1 · inline Yes/No buttons for writes derived from free text, and buttons under digests (`callback_query`) · [partly done]**
@@ -357,7 +373,7 @@ and the step follows from the status on record. `/ask` is wired on both sides.
 
 ## State of the review
 
-Every row above has a status. 79 findings: 78 fixed, 1 recorded as an idea (F7). Tests went from 280 to 792 (Python) and from 17
+Every row above has a status. 82 findings: 81 fixed, 1 recorded as an idea (F7). Tests went from 280 to 795 (Python) and from 17
 to 39 (Worker). Not verifiable from the development machine, and therefore to watch in the next runs: the AI model chain
 (the token lives in GitHub secrets; the last model of the chain is the one that worked before), France Travail live answers,
 and the first run after deployment, which rescores stored matches (`rescored_from_text` in the run summary) and may carry

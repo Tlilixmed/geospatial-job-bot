@@ -320,6 +320,22 @@ def repair_xml_entities(body: bytes) -> bytes:
     return _NAMED_ENTITY_RE.sub(substitute, body)
 
 
+# "[CDI] Geomaticien/ne - REDON (35)", "Technicien SIG, Nantes (44)", "GEOMATICIEN H/F - Angers(49)", "... - (27)":
+# a French board's title ends with the town and the département number
+_DEPT = r"\((\d{2,3}|2[ab])\)\s*$"
+FR_PLACE_AFTER_DASH_RE = re.compile(r"(?:\s[-–]\s*|,\s*)([^-–,()\[\]]{2,50}?)\s*" + _DEPT, re.I)
+FR_PLACE_LAST_WORD_RE = re.compile(r"\s([^\s()\[\]/-]{2,30})\s*" + _DEPT, re.I)
+GENDER_MARK_RE = re.compile(r"\b(?:h/f|f/h|f/m|m/f|f/m/x|h/f/x)\b", re.I)
+
+
+def place_from_title(title: str, country: str) -> str:
+    """"Lyon, France" from a title that ends with "- Lyon (69)" or "... Pau (64)"; just the country when the town is
+    missing or unreadable ("... (h/f) - (27)")."""
+    match = FR_PLACE_AFTER_DASH_RE.search(title or "") or FR_PLACE_LAST_WORD_RE.search(title or "")
+    town = (match.group(1) or "").strip(" -–,/") if match else ""
+    return f"{town}, {country}" if town and not GENDER_MARK_RE.search(town) else country
+
+
 class RssFeedBackend(Backend):
     """Generic RSS/Atom feeds listed in sources.toml [[rss_feeds]] (name, url, source_type, geospatial).
 
@@ -370,10 +386,12 @@ class RssFeedBackend(Backend):
             touched = None if posted else parse_datetime(find("{http://www.w3.org/2005/Atom}updated"))  # not a posting date
             if not title:
                 continue
+            # a board that serves one country and writes the town into the title (GeoRezo: "... - Angers (49)")
+            location = place_from_title(title, feed["country"]) if feed.get("place_in_title") and feed.get("country") else ""
             jobs.append(RawJob(
                 source_type=feed.get("source_type", "feed"), source_name=f"rss:{feed.get('name', 'feed')}",
                 source_url=feed["url"], title=title, company=feed.get("company"), url=link or None,
-                apply_url=link or None, description=html_to_text(desc), posted_at=posted or touched,
+                apply_url=link or None, description=html_to_text(desc), location_raw=location, posted_at=posted or touched,
                 posted_at_reliable=posted is not None, native_id=_link_native(link),
                 source_job_id=find("guid", "{http://www.w3.org/2005/Atom}id") or None, extraction_method="api",
                 geo_context=bool(feed.get("geospatial", False)),
