@@ -53,7 +53,7 @@ Coverage therefore grows well beyond a fixed company list without hammering any 
 | Status | Meaning |
 |---|---|
 | `VALID` | The board exists; it may have zero jobs. |
-| `INVALID` | The ATS returned 404; the slug is wrong. For Oracle, the career site's public page names another site (the API itself answers any site number). |
+| `INVALID` | The ATS returned 404; the slug is wrong. For Oracle, the career site's public page redirects to another site (the API itself answers any site number). |
 | `EMPTY_UNVERIFIED` | The ATS returns an empty list for unknown boards too, so the bot can't tell whether the board exists (SmartRecruiters, Ashby). |
 | `SCHEMA_MISMATCH` | The response didn't have the expected structure. |
 | `ERROR` | A network, rate-limit or blocking failure. |

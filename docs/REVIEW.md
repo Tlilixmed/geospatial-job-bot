@@ -231,15 +231,23 @@ and the step follows from the status on record. `/ask` is wired on both sides.
   unsupported · [fixed]** `scrapers/ats/oracle.py` reads the Candidate Experience REST API (no login; robots.txt is 404).
   Checked live: `limit` is capped at 200, `hasMore` is always false (paging stops on `TotalJobsCount`), and the API answers
   *any* `siteNumber` with the tenant's default site (`CX_9999` returns WSP's jobs), so the site is checked against its
-  public page, which redirects an unknown site to the default one and names the site it serves (`data-sitenumber`); a
-  wrong site is `INVALID`, an unconfirmed one `EMPTY_UNVERIFIED`. Sites up to 600 postings are read whole; WSP is searched
-  by the Workday keywords plus "SIG" (17 list calls), and the generic titles among its newest 200 postings, which are no
+  public page, which redirects an unknown site to another one; a site redirected away is `INVALID`, an unconfirmed one
+  `EMPTY_UNVERIFIED`. Sites up to 600 postings are read whole; WSP is searched by the Workday keywords plus "SIG" (17 list
+  calls; one page per term on a rotation board), and the generic titles among its newest 200 postings, which are no
   search hits, need a geospatial title. French postings arrive in French without a language parameter (`Accept-Language:
   fr-CA` only swaps translated titles, same ids). Wired into detection (`oracle:{pod}.{dc}:{Id}`, career-page and Common
   Crawl link discovery: one index page holds 194 Oracle sites), fusion's native ids, config URL parsing
   (`parse_board_url`), the hot-board exemption for single job pages, and the search queries. The six Workday tenants were
   each validated live with `WorkdayAdapter`. Pay ranges stay in the description: the bot has no salary extraction from
   text yet (O7).
+  Review of the first version, checked live: 27 of those 194 sites are published under a code, not a number
+  (`gallifordtrycareers`, `Alta`, `Ford-Model-e`); their page is served in place and names the number behind it
+  (`data-sitenumber="CX_1"`), so comparing the two strings called them `INVALID`, and `siteNumber=Alta` lists the
+  tenant's default site (92 postings, not Alta's 25). Existence now follows the redirect, the list API gets the served
+  number and the public links keep the code. Detection cut hyphenated codes at the hyphen (`Ford`), missed
+  `/jobs/preview/{Id}` (66 Common Crawl URLs) and read requisition ids as digits only, so `AUR_NYF8B` had no native id and
+  `22000HXO` became `22000`: ids and codes now run to the end of their path segment (4,062 job URLs of that index page,
+  1 without an id: it has none). `og:site_name` loses stray separators ("FAB |" → "FAB").
 
 ### Opportunities recorded (not bugs)
 

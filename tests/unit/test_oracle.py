@@ -6,7 +6,7 @@ import pytest
 from conftest import GIS_DESCRIPTION, FakeResponse, FakeSession, make_ctx, make_settings
 
 from geojobbot.scrapers.ats.detect import BoardRef, detect, find_boards_in_text, parse_board_url, parse_oracle_url
-from geojobbot.scrapers.ats.oracle import ORACLE_SEARCH_TERMS, OracleAdapter
+from geojobbot.scrapers.ats.oracle import ORACLE_SEARCH_TERMS, OracleAdapter, _site_name
 
 WSP = "https://emit.fa.ca3.oraclecloud.com"
 MB = "https://ebxs.fa.us2.oraclecloud.com"
@@ -114,6 +114,26 @@ def list_calls(session):
      "&finder=findReqs;siteNumber=CX_2001,limit=200,offset=0,keyword=%22GIS%22,sortBy=POSTING_DATES_DESC", None, "emit.ca3/CX_2001"),
     (f"{MB}/{API}/recruitingCEJobRequisitionDetails?expand=all&onlyData=true&finder=ById;Id=%22309977%22,siteNumber=CX_2",
      "oracle:ebxs.us2:309977", "ebxs.us2/CX_2"),
+    # forms seen in Common Crawl: site codes with hyphens, /jobs/preview/, requisition ids that are not numbers
+    ("https://ejgo.fa.em2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/Farrans-Jobs/job/304/?utm_medium=jobshare",
+     "oracle:ejgo.em2:304", "ejgo.em2/Farrans-Jobs"),
+    ("https://efds.fa.em5.oraclecloud.com/hcmUI/CandidateExperience/en/sites/Ford-Model-e", None, "efds.em5/Ford-Model-e"),
+    ("https://efds.fa.em5.oraclecloud.com/hcmUI/CandidateExperience/en/sites/Ford-Model-e/job/55503",
+     "oracle:efds.em5:55503", "efds.em5/Ford-Model-e"),
+    ("https://edox.fa.ap1.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_3001/jobs/preview/19673/apply/email"
+     "?lastSelectedFacet=POSTING_DATE", "oracle:edox.ap1:19673", "edox.ap1/CX_3001"),
+    ("https://cbct.fa.em2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/gallifordtrycareers/job/3279",
+     "oracle:cbct.em2:3279", "cbct.em2/gallifordtrycareers"),
+    (f"{WSP}/hcmUI/CandidateExperience/en/sites/CX_2001/job/AUR_NYF8B", "oracle:emit.ca3:AUR_NYF8B", "emit.ca3/CX_2001"),
+    (f"{WSP}/hcmUI/CandidateExperience/en/sites/CX_2001/job/SER_WSPSE278340", "oracle:emit.ca3:SER_WSPSE278340", "emit.ca3/CX_2001"),
+    (f"{WSP}/hcmUI/CandidateExperience/en/sites/CX_2001/job/NZR_2511-7868", "oracle:emit.ca3:NZR_2511-7868", "emit.ca3/CX_2001"),
+    ("https://ejgk.fa.em2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_3/job/22000HXO",   # not cut to 22000
+     "oracle:ejgk.em2:22000HXO", "ejgk.em2/CX_3"),
+    (f"{WSP}/{API}/recruitingCEJobRequisitionDetails?expand=all&onlyData=true&finder=ById;Id=%22AUR_NYF8B%22,siteNumber=CX_2001",
+     "oracle:emit.ca3:AUR_NYF8B", "emit.ca3/CX_2001"),
+    ("https://ejgo.fa.em2.oraclecloud.com/" + API + "/recruitingCEJobRequisitions?onlyData=true"
+     "&finder=findReqs;siteNumber=Farrans-Jobs,limit=200", None, "ejgo.em2/Farrans-Jobs"),
+    (f"{WSP}/hcmUI/CandidateExperience/en/sites/CX_2001/job/", None, "emit.ca3/CX_2001"),  # no id
     # not a Candidate Experience URL
     ("https://www.oraclecloud.com/careers", None, None),
     (f"{WSP}/hcmUI/faces/FuseWelcome", None, None),
@@ -145,8 +165,10 @@ def test_config_board_urls(ats, value, slug):
 
 def test_career_page_links_register_oracle_boards():
     html = (f'<a href="{WSP}/hcmUI/CandidateExperience/en/sites/CX_2001">Search jobs</a>'
-            f'<a href="{MB}/hcmUI/CandidateExperience/en/sites/CX_2/requisitions/preview/309977?keyword=gis&amp;mode=location">GIS</a>')
-    assert {b.key for b in find_boards_in_text(html)} == {"oracle:emit.ca3/cx_2001", "oracle:ebxs.us2/cx_2"}
+            f'<a href="{MB}/hcmUI/CandidateExperience/en/sites/CX_2/requisitions/preview/309977?keyword=gis&amp;mode=location">GIS</a>'
+            '<a href="https://ejgo.fa.em2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/Farrans-Jobs/requisitions">Jobs</a>')
+    assert {b.key for b in find_boards_in_text(html)} == {"oracle:emit.ca3/cx_2001", "oracle:ebxs.us2/cx_2",
+                                                          "oracle:ejgo.em2/farrans-jobs"}
 
 
 def test_sources_toml_oracle_and_workday_entries_all_parse():
@@ -212,6 +234,19 @@ def test_large_site_is_searched_by_keyword_two_pages_at_most_never_over_200_a_ca
     assert {c["limit"] for c in calls} == {"200"}
     assert all(c["sortBy"] == "POSTING_DATES_DESC" for c in calls)
     assert result.listed == 4049
+
+
+def test_rotation_board_reads_one_page_per_term():
+    # a large discovered site keeps geospatial titles only: the newest 200 hits of each term are enough
+    def lists(f):
+        if f.get("keyword") is None:
+            return listing(910, [row(1, "Accountant")])
+        return listing(683, [row(f"{f['keyword']}-{f['offset']}-{i}", "Payroll Clerk") for i in range(200)])
+
+    session = wsp_session(lists, details={})
+    fetch(session, geo=False, settings=make_settings(max_detail_fetches_per_board=0))
+    calls = list_calls(session)
+    assert len(calls) == 1 + len(ORACLE_SEARCH_TERMS) and {c["offset"] for c in calls} == {"0"}
 
 
 def test_same_posting_found_by_two_keywords_is_read_once():
@@ -310,14 +345,76 @@ def test_michael_baker_detail_by_url():
     assert OracleAdapter().fetch_job(ctx, f"{MB}/hcmUI/CandidateExperience/en/sites/CX_2") is None  # no job id
 
 
+def test_job_url_with_a_requisition_id_that_is_not_a_number():
+    # live: WSP lists AUR_NYF8B; reading it as "AUR" or nothing would fetch another posting or none
+    session = FakeSession({
+        f"{WSP}/{API}/recruitingCEJobRequisitionDetails?": FakeResponse(200, {"items": [dict(WSP_97345, Id="AUR_NYF8B")]}),
+        f"{WSP}/hcmUI/CandidateExperience/en/sites/CX_2001": FakeResponse(200, site_page("CX_2001")),
+    })
+    url = f"{WSP}/hcmUI/CandidateExperience/en/sites/CX_2001/job/AUR_NYF8B/?utm_medium=jobshare"
+    job = OracleAdapter().fetch_job(make_ctx(session), url)[0]
+    assert finder(session.calls[0][1])["Id"] == "AUR_NYF8B"
+    assert job.native_id == "oracle:emit.ca3:AUR_NYF8B" == detect(job.url)[0]
+
+
 # ------------------------------------------------------------------ board validation
 def test_made_up_site_is_invalid_although_the_api_would_answer():
     # live: siteNumber=CX_9999 returns WSP's jobs; the career page redirects to the default site and names it
-    session = FakeSession({f"{WSP}/hcmUI/CandidateExperience/en/sites/CX_9999": FakeResponse(200, site_page("CX_2001")),
+    session = FakeSession({f"{WSP}/hcmUI/CandidateExperience/en/sites/CX_9999": FakeResponse(
+                               200, site_page("CX_2001"), url=f"{WSP}/hcmUI/CandidateExperience/en/sites/CX_2001"),
                            f"{WSP}/{API}/": listing(283, WSP_ROWS)})
     result, _ = fetch(session, slug="emit.ca3/CX_9999")
     assert result.status == "INVALID" and "CX_9999" in result.error
     assert not [c for c in session.calls if "hcmRestApi" in c[1]]
+
+
+# live 2026-10-10: what each career page answered (requested site -> site in the final URL, data-sitenumber)
+@pytest.mark.parametrize("host, asked, landed, number, status", [
+    ("emit.fa.ca3", "CX_2001", "CX_2001", "CX_2001", "VALID"),
+    ("emit.fa.ca3", "cx_2001", "CX_2001", "CX_2001", "VALID"),                          # 302 to its own spelling
+    ("emit.fa.ca3", "CX_9999", "CX_2001", "CX_2001", "INVALID"),                        # 302 to the default site
+    ("cbct.fa.em2", "gallifordtrycareers", "gallifordtrycareers", "CX_1", "VALID"),     # a code, served in place
+    ("cbct.fa.em2", "NoSuchSite123", "gallifordtrycareers", "CX_1", "INVALID"),
+    ("hdjm.fa.ca2", "Alta", "Alta", "CX", "VALID"),
+    ("ejgo.fa.em2", "Farrans-Jobs", "Farrans-Jobs", "CX_4", "VALID"),
+    ("ejgo.fa.em2", "CX_1", "Farrans-Jobs", "CX_4", "INVALID"),                         # not a site of this tenant
+    ("ejgo.fa.em2", "CX_4", "Farrans-Jobs", "CX_4", "VALID"),                           # a number sent to its own code
+    ("efds.fa.em5", "Ford-Model-e", "Ford-Model-e", "CX_5001", "VALID"),
+])
+def test_site_codes_are_served_in_place_and_the_api_gets_their_number(host, asked, landed, number, status):
+    base = f"https://{host}.oraclecloud.com"
+    session = FakeSession({
+        f"{base}/hcmUI/CandidateExperience/en/sites/{asked}": FakeResponse(
+            200, site_page(number, "Galliford Try"), url=f"{base}/hcmUI/CandidateExperience/en/sites/{landed}"),
+        f"{base}/{API}/recruitingCEJobRequisitions?": listing(1, [row("AUR_NYF8B", "GIS Analyst")]),
+        f"{base}/{API}/recruitingCEJobRequisitionDetails?": FakeResponse(200, {"items": [WSP_97345], "count": 1}),
+    })
+    pod, _, dc = host.split(".")
+    result, _ = fetch(session, slug=f"{pod}.{dc}/{asked}")
+    assert result.status == status
+    calls = [finder(c[1]) for c in session.calls if "hcmRestApi" in c[1]]
+    if status == "INVALID":
+        assert not calls
+        return
+    assert {c["siteNumber"] for c in calls} == {number}       # siteNumber=Alta would list the default site's jobs
+    job = result.jobs[0]
+    assert job.company == "Galliford Try"
+    assert job.url == f"{base}/hcmUI/CandidateExperience/en/sites/{asked}/job/AUR_NYF8B"  # the public link keeps the code
+    assert detect(job.url) == (job.native_id, BoardRef("oracle", f"{pod}.{dc}/{asked}"))  # and leads back to the job
+
+
+@pytest.mark.parametrize("og, name", [
+    ("WSP", "WSP"),
+    ("Michael Baker International", "Michael Baker International"),
+    ("Ford Model-e U.S.", "Ford Model-e U.S."),
+    ("FAB |", "FAB"),                       # live, First Abu Dhabi Bank
+    ("| Careers - ", "Careers"),
+    ("Ipsos &amp; Co", "Ipsos & Co"),
+    ("|", None),
+    ("X", None),
+])
+def test_employer_name_from_the_site_page(og, name):
+    assert _site_name(site_page("CX_1", og)) == name
 
 
 @pytest.mark.parametrize("page, rows, status", [

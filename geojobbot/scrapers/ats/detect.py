@@ -58,9 +58,13 @@ def parse_workday_url(url: str) -> BoardRef | None:
 
 
 ORACLE_HOST_RE = re.compile(r"^([a-z0-9-]+)\.fa\.([a-z0-9-]+)\.oraclecloud\.com$")
-# /hcmUI/CandidateExperience/{lang}/sites/{site}[/job/{Id} | /requisitions/preview/{Id}]
-ORACLE_PAGE_RE = re.compile(r"^/hcmUI/CandidateExperience/[A-Za-z]{2}(?:[-_][A-Za-z]{2,4})?/sites/([A-Za-z0-9_]+)"
-                            r"(?:/(?:requisitions/)?(?:job|preview)/(\d+))?")
+# a site is a number (CX_2001) or a code the tenant chose (gallifordtrycareers, Ford-Model-e); requisition ids are
+# strings too (WSP's AUR_NYF8B): both run to the end of their path segment, never cut short
+ORACLE_SITE = r"[A-Za-z0-9_-]+"
+ORACLE_ID = r"[A-Za-z0-9_.-]+"
+# /hcmUI/CandidateExperience/{lang}/sites/{site}[/job/{Id} | /jobs/preview/{Id} | /requisitions/preview/{Id}]
+ORACLE_PAGE_RE = re.compile(rf"^/hcmUI/CandidateExperience/[A-Za-z]{{2}}(?:[-_][A-Za-z]{{2,4}})?/sites/({ORACLE_SITE})(?=/|$)"
+                            rf"(?:/(?:job|(?:jobs/|requisitions/)?preview)/({ORACLE_ID})(?=/|$))?")
 
 
 def _oracle(parts) -> tuple[str | None, BoardRef | None]:
@@ -77,8 +81,8 @@ def _oracle(parts) -> tuple[str | None, BoardRef | None]:
     elif "/hcmRestApi/" in parts.path and "/recruitingCEJobRequisition" in parts.path:
         # API: ...recruitingCEJobRequisitions?finder=findReqs;siteNumber=CX_1,... or ...Details?finder=ById;Id="9",siteNumber=CX_1
         finder = (parse_qs(parts.query).get("finder") or [""])[0]
-        site_m = re.search(r"\bsiteNumber=([A-Za-z0-9_]+)", finder)
-        id_m = re.search(r'\bId="?(\d+)', finder)
+        site_m = re.search(rf"\bsiteNumber=({ORACLE_SITE})", finder)
+        id_m = re.search(rf'\bId="?({ORACLE_ID})', finder)
         site, job_id = site_m.group(1) if site_m else None, id_m.group(1) if id_m else None
     return (f"oracle:{tenant}:{job_id}" if job_id else None), (BoardRef("oracle", f"{tenant}/{site}") if site else None)
 

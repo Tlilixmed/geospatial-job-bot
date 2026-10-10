@@ -11,8 +11,11 @@ Verified live 2026-10-10 (WSP emit.ca3/CX_2001, Michael Baker ebxs.us2/CX_2):
 - `limit` is capped at 200 without an error; the total is items[0].TotalJobsCount; the top-level `hasMore` is always
   false, so paging stops on the total. Without `expand=requisitionList...` the rows are missing.
 - The API answers any siteNumber (a made-up one returns the tenant's default site), so it cannot say whether a site
-  exists. The public site page can: it redirects an unknown site to the default one and names the site it serves
-  in `data-sitenumber`. It also carries the employer's name (`og:site_name`); the rows' LegalEmployer is usually null.
+  exists. The public site page can: it redirects an unknown site to another one (CX_9999 -> CX_2001). Many tenants
+  publish their site under a code (cbct.em2 gallifordtrycareers, hdjm.ca2 Alta): that page is served in place and names
+  the site number behind it in `data-sitenumber` (CX_1, CX), which is the one the list API wants (siteNumber=Alta
+  lists the default site's 92 postings, CX Alta's own 25). The detail API ignores siteNumber. The page also carries
+  the employer's name (`og:site_name`, "FAB |" on one tenant); the rows' LegalEmployer is usually null.
 - Postings written in French come back in French without any language parameter; `Accept-Language: fr-CA` only
   swaps in translated titles of bilingual postings, with the same ids, so the default language is kept.
 - robots.txt is 404 on the pods; responses are no-store without an ETag.
@@ -29,23 +32,24 @@ from ...utils.http import FetchError
 from ...utils.text import html_to_text, prettify_slug
 from ..base import RunContext
 from .base import ATSAdapter, BoardResult
-from .detect import BoardRef, detect
+from .detect import ORACLE_SITE, BoardRef, detect
 from .more_ats import WORKDAY_SEARCH_TERMS
 
 ORACLE_PAGE = 200            # the server serves at most 200 rows, whatever limit is asked
 ORACLE_FULL_SITE_MAX = 600   # a site this small is read in full (3 calls); larger ones are searched by keyword
-ORACLE_TERM_PAGES = 2
+ORACLE_TERM_PAGES = 2        # 1 on a board without geospatial context: only geospatial titles pass there anyway
 ORACLE_SEARCH_TERMS = [*WORKDAY_SEARCH_TERMS, "SIG"]  # SIG: Québec postings are written in French
 API = "hcmRestApi/resources/latest"
-SITE_NUMBER_RE = re.compile(r'data-sitenumber="([A-Za-z0-9_]+)"')
+SITE_NUMBER_RE = re.compile(rf'data-sitenumber="({ORACLE_SITE})"')
 SITE_NAME_RE = re.compile(r'<meta\s+property="og:site_name"\s+content="([^"]+)"', re.I)
+LANDED_SITE_RE = re.compile(rf"/sites/({ORACLE_SITE})(?=/|$|[?#])")
 
 
 def _host(ref: BoardRef) -> tuple[str, str, str]:
     """BoardRef slug "emit.ca3/CX_2001" -> (host, tenant, site)."""
     tenant, site = ref.slug.split("/", 1)
     pod, dc = tenant.split(".")
-    if not pod or not dc or not re.fullmatch(r"[A-Za-z0-9_]+", site):
+    if not pod or not dc or not re.fullmatch(ORACLE_SITE, site):
         raise ValueError(ref.slug)
     return f"{pod}.fa.{dc}.oraclecloud.com", tenant.lower(), site
 
@@ -54,6 +58,13 @@ def _location(item: dict) -> str:
     places = [item.get("PrimaryLocation") or ""]
     places += [loc.get("Name") or "" for loc in item.get("secondaryLocations") or [] if isinstance(loc, dict)]
     return "; ".join(dict.fromkeys(p for p in places if p))
+
+
+def _site_name(page: str) -> str | None:
+    """The employer's name from og:site_name, without the separators some tenants leave in it ("FAB |")."""
+    found = SITE_NAME_RE.search(page)
+    name = html_lib.unescape(found.group(1)).strip(" \t|·•:–—-") if found else ""
+    return name if sum(c.isalpha() for c in name) >= 2 else None
 
 
 def _first(sources: tuple[dict, ...], *keys: str) -> str | None:
@@ -76,19 +87,24 @@ class OracleAdapter(ATSAdapter):
     @staticmethod
     def _detail_url(host: str, site: str, job_id: str) -> str:
         return (f"https://{host}/{API}/recruitingCEJobRequisitionDetails?expand=all&onlyData=true"
-                f"&finder=ById;Id=%22{job_id}%22,siteNumber={site}")
+                f"&finder=ById;Id=%22{quote(job_id, safe='')}%22,siteNumber={site}")
 
     @staticmethod
-    def _site(ctx: RunContext, host: str, site: str) -> tuple[bool | None, str | None]:
-        """(does the career site exist, the employer's name). None when the page could not tell."""
+    def _site(ctx: RunContext, host: str, site: str) -> tuple[bool | None, str | None, str | None]:
+        """(does the career site exist, the site number the list API wants, the employer's name); None when the page
+        could not tell. An unknown site redirects to another one; a site code is served in place under its number."""
         try:
-            page = ctx.client.get(f"https://{host}/hcmUI/CandidateExperience/en/sites/{site}").text
+            response = ctx.client.get(f"https://{host}/hcmUI/CandidateExperience/en/sites/{site}")
         except FetchError as exc:
-            return (False if exc.kind == "NOT_FOUND" else None), None
+            return (False if exc.kind == "NOT_FOUND" else None), None, None
+        page = response.text
         served = SITE_NUMBER_RE.search(page)
-        name = SITE_NAME_RE.search(page)
-        name = html_lib.unescape(name.group(1)).strip() if name else None
-        return (served.group(1).lower() == site.lower() if served else None), name or None
+        if not served:
+            return None, None, _site_name(page)
+        landed = LANDED_SITE_RE.search(response.url or "")
+        # site names are not case-sensitive (cx_2001 redirects to CX_2001)
+        exists = site.lower() in {served.group(1).lower(), landed.group(1).lower() if landed else ""}
+        return exists, served.group(1), _site_name(page)
 
     @staticmethod
     def _page(ctx: RunContext, url: str) -> tuple[int, list[dict]] | None:
@@ -137,13 +153,14 @@ class OracleAdapter(ATSAdapter):
             host, tenant, site = _host(ref)
         except ValueError:
             return BoardResult("INVALID", error="oracle slug must be pod.dc/site, e.g. emit.ca3/CX_2001")
-        exists, site_name = self._site(ctx, host, site)
+        exists, number, site_name = self._site(ctx, host, site)
         if exists is False:
             return BoardResult("INVALID", error=f"career site {site} not found (the API would answer with another site)")
+        number = number or site  # the API's site; public links keep the URL's own (a code such as gallifordtrycareers)
         company = company_hint or site_name
         rows: dict[str, dict] = {}
         try:
-            probe = self._page(ctx, self._list_url(host, site, 0, None))
+            probe = self._page(ctx, self._list_url(host, number, 0, None))
         except FetchError as exc:
             return self.error_result(exc)
         if probe is None:
@@ -155,14 +172,16 @@ class OracleAdapter(ATSAdapter):
         whole = total <= ORACLE_FULL_SITE_MAX
         hits_by_term: set[str] = set()
         # a small site is read whole; a large one by keyword, on top of its newest 200 postings from the probe
+        # a rotation board keeps geospatial titles only, which the newest page of hits holds: half the calls
+        term_pages = ORACLE_TERM_PAGES if geo_context else 1
         searches = [(None, range(ORACLE_PAGE, total, ORACLE_PAGE))] if whole else [
-            (term, range(0, ORACLE_PAGE * ORACLE_TERM_PAGES, ORACLE_PAGE)) for term in ORACLE_SEARCH_TERMS]
+            (term, range(0, ORACLE_PAGE * term_pages, ORACLE_PAGE)) for term in ORACLE_SEARCH_TERMS]
         for term, offsets in searches:
             if error or ctx.out_of_time(150):
                 break
             for offset in offsets:
                 try:
-                    page = self._page(ctx, self._list_url(host, site, offset, term))
+                    page = self._page(ctx, self._list_url(host, number, offset, term))
                 except FetchError as exc:
                     error = str(exc)
                     break
@@ -201,7 +220,7 @@ class OracleAdapter(ATSAdapter):
                 continue  # read at a later run, like Workday's
             fetched += 1
             try:
-                detail = self._detail(ctx, host, site, job_id)
+                detail = self._detail(ctx, host, number, job_id)
             except FetchError:
                 detail = None
             if detail is None:
@@ -219,10 +238,10 @@ class OracleAdapter(ATSAdapter):
             return None
         host, tenant, site = _host(board)
         job_id = native.rsplit(":", 1)[1]
-        detail = self._detail(ctx, host, site, job_id)
+        detail = self._detail(ctx, host, site, job_id)  # the detail API ignores siteNumber: a site code does as well
         if not detail or not detail.get("Title") or self._expired(ctx, detail):
             return []
         company = (ctx.registry.entry(board.key) or {}).get("company") if ctx.registry else None
         if not company:
-            company = self._site(ctx, host, site)[1]
+            company = self._site(ctx, host, site)[2]
         return [self._to_raw(host, tenant, site, {"Id": job_id}, detail, company, False)]
