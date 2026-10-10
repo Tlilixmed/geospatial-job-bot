@@ -98,11 +98,14 @@ class FakeS3:
         self._check()
         if Key not in self.objects:
             raise FakeClientError("NoSuchKey", 404)
-        return {"Body": io.BytesIO(self.objects[Key])}
+        import hashlib
+        return {"Body": io.BytesIO(self.objects[Key]), "ETag": '"%s"' % hashlib.md5(self.objects[Key]).hexdigest()}
 
-    def put_object(self, Bucket, Key, Body, ContentType=None):
+    def put_object(self, Bucket, Key, Body, ContentType=None, IfMatch=None):
         self._check()
         import hashlib
+        if IfMatch is not None and (Key not in self.objects or IfMatch != '"%s"' % hashlib.md5(self.objects[Key]).hexdigest()):
+            raise FakeClientError("PreconditionFailed", 412)  # what R2 answers when the object changed
         self.objects[Key] = bytes(Body)
         return {"ETag": '"%s"' % hashlib.md5(Body).hexdigest()}
 

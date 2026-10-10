@@ -26,7 +26,7 @@ import re
 from datetime import timedelta
 
 from ..utils.dates import parse_datetime, utcnow
-from .base import ObjectStore, StorageError
+from .base import ConcurrentModificationError, ObjectStore, StorageError  # noqa: F401 - re-exported
 
 log = logging.getLogger(__name__)
 
@@ -35,10 +35,6 @@ REQUIRED_KEYS = ("schema_version", "jobs", "boards", "sources", "page_cache", "c
 
 
 class StateCorruptError(Exception):
-    pass
-
-
-class ConcurrentModificationError(Exception):
     pass
 
 
@@ -97,6 +93,7 @@ class StateManager:
         self.first_run = False
         self.restored_from_backup: str | None = None
         self._backed_up_this_run = False
+        self.sizes: dict[str, int] = {}  # bytes of the last write per key: the run summary reports state and index sizes
 
     def key(self, suffix: str) -> str:
         return f"{self.prefix}{suffix}"
@@ -207,6 +204,7 @@ class StateManager:
         if head.get("size") not in (None, 0, len(payload)):
             raise StateCorruptError(f"{self.state_key} read back with {head['size']} bytes, wrote {len(payload)}")
         self.etag = etag or head["etag"]
+        self.sizes[self.state_key] = len(payload)
         log.info("state saved: %s (%d bytes, %d jobs)", self.state_key, len(payload), len(state.get("jobs", {})))
         return self.etag
 
@@ -220,14 +218,17 @@ class StateManager:
             log.warning("backup pruning failed: %s", exc)
 
     # ------------------------------------------------------------------ artifacts
-    def write_json(self, suffix: str, obj, *, compress: bool) -> str:
+    def write_json(self, suffix: str, obj, *, compress: bool, compact: bool = False, if_match: str | None = None) -> str | None:
+        """Write an artifact and return its new ETag. compact: no whitespace at all (the index the Worker parses on
+        every message); if_match: refuse with ConcurrentModificationError when the object changed since it was read."""
         key = self.key(suffix)
-        body = json.dumps(obj, ensure_ascii=False, indent=None if compress else 2, default=str).encode("utf-8")
+        body = json.dumps(obj, ensure_ascii=False, indent=None if compress or compact else 2,
+                          separators=(",", ":") if compact else None, default=str).encode("utf-8")
         if compress:
-            self.store.put_bytes(key, gzip.compress(body, mtime=0), "application/gzip")
-        else:
-            self.store.put_bytes(key, body, "application/json")
-        return key
+            body = gzip.compress(body, mtime=0)
+        etag = self.store.put_bytes(key, body, "application/gzip" if compress else "application/json", if_match=if_match)
+        self.sizes[key] = len(body)
+        return etag
 
     def write_jsonl_gz(self, suffix: str, rows: list[dict]) -> str:
         key = self.key(suffix)
@@ -236,12 +237,16 @@ class StateManager:
         return key
 
     def read_json(self, suffix: str):
-        data = self.store.get_bytes(self.key(suffix))
+        return self.read_json_tagged(suffix)[0]
+
+    def read_json_tagged(self, suffix: str) -> tuple[object, str | None]:
+        """The document and the ETag it was read at (None, None when it does not exist)."""
+        data, etag = self.store.get_tagged(self.key(suffix))
         if data is None:
-            return None
+            return None, None
         if data[:2] == b"\x1f\x8b":
             data = gzip.decompress(data)
-        return json.loads(data.decode("utf-8"))
+        return json.loads(data.decode("utf-8")), etag
 
     def cleanup_retention(self, raw_days: int, run_days: int, now=None) -> dict:
         """Delete dated objects older than the retention windows."""

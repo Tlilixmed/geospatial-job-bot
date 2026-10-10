@@ -15,7 +15,7 @@ Findings are numbered `F1, F2…` and carry their evidence, so a fix can be trac
 | # | Step | Code | Status |
 |---|---|---|---|
 | 1 | Load state from R2 (backups, ETag, refusal to start fresh) | `storage/state.py` `StateManager.load` | [ok] HEAD diagnosis, backups, conflict file, read-back. GET and HEAD are two calls (the ETag could belong to a newer object); harmless while the scraper workflow runs one at a time |
-| 2 | Pending Telegram commands, then overlay preferences on settings | `_process_commands`, `core/prefs.py` | [fixed] F44, F58 |
+| 2 | Pending Telegram commands, then overlay preferences on settings | `_process_commands`, `core/prefs.py` | [fixed] F44, F58, F76 |
 | 3 | Build backends (config + watch list + sponsor data for the prospector) | `build_backends` | [ok] |
 | 4 | Discovery phase, parallel | `_run_phase("discovery")` | [fixed] F45, F46, F48, F53, F55 |
 | 5 | Extraction phase, parallel | `_run_phase("extraction")` | [fixed] F47, F49–F52, F54, F56, F57 |
@@ -31,11 +31,11 @@ Findings are numbered `F1, F2…` and carry their evidence, so a fix can be trac
 | 15 | Deadlines and reposts | `_timing`, `insights/timing.py` | [fixed] F19–F21 |
 | 16 | Salaries in euros | `_salaries`, `insights/fx.py` | [fixed] F22, F23, F38 |
 | 17 | Prune state, checkpoint save | `core/jobs.prune_state`, `StateManager.save` | [ok] |
-| 18 | Alert selection (tiers, watch list, mutes, cap), digest, delivery marking | `core/jobs.select_alerts`, `notifications/telegram.py` | [fixed] F39, F44, F60, F64 |
+| 18 | Alert selection (tiers, watch list, mutes, cap), digest, delivery marking | `core/jobs.select_alerts`, `notifications/telegram.py` | [fixed] F39, F44, F60, F64, F73, F74 |
 | 19 | Weekly summary, follow-ups, deadline reminders | `_weekly_summary`, `_follow_ups`, `_deadline_reminders` | [ok] reminders use the same muting rule now (F60) |
 | 20 | Insights: procurement signals, EU tenders, monthly radar | `_insights`, `insights/signals.py`, `insights/radar.py` | [fixed] F43 |
 | 21 | Health notices | `core/health.py` | [ok] |
-| 22 | Final save, run report, raw snapshots, Worker index, retention | `_write_artifacts`, `core/index.py`, `core/report.py` | [fixed] F37, F63 |
+| 22 | Final save, run report, raw snapshots, Worker index, retention | `_write_artifacts`, `core/index.py`, `core/report.py` | [fixed] F37, F63, F78 |
 
 ## 2. Sources
 
@@ -47,7 +47,7 @@ Findings are numbered `F1, F2…` and carry their evidence, so a fix can be trac
 | Generic page extraction (JSON-LD, embedded JSON, HTML) | `scrapers/pages.GenericPagesBackend`, `scrapers/generic.py` | none | budgeted | [fixed] F32; RDFa postings are read now |
 | Board discovery: Common Crawl, SearXNG, DuckDuckGo | `scrapers/search.py` | none | every run | [ok] F43 (board counting); Common Crawl loop already checks the clock |
 | Remotive, Jobicy, Himalayas, Arbeitnow, RemoteOK | `scrapers/feeds.py` | none | 4–12 h | [ok] |
-| RSS: GoGeomatics, GISjobs, Job Bank ×3, Guichet-Emplois ×3, Tunisie Travail ×5 | `scrapers/feeds.RssFeedBackend` | none | every run | [fixed] F48: the six Job Bank / Guichet-Emplois feeds are empty for every query (checked live 2026-09-20) and were replaced by the `jobbank` backend; F53, F55 |
+| RSS: GoGeomatics, GISjobs, GeoRezo, GSA-UK, Job Bank ×3, Guichet-Emplois ×3, Tunisie Travail ×5 | `scrapers/feeds.RssFeedBackend` | none | every run | [fixed] F48: the six Job Bank / Guichet-Emplois feeds are empty for every query (checked live 2026-09-20) and were replaced by the `jobbank` backend; F53, F55 |
 | JobSpy: Indeed, LinkedIn | `scrapers/feeds.JobSpyBackend` | none | 4 h | [skip] not reviewed this round: a thin wrapper over a third-party scraper (python-jobspy); what it returns goes through the same title filter, fusion and scoring as everything else |
 | Adzuna, Jooble, JSearch | `scrapers/feeds.py` | yes | 4 h | [fixed] F53, F54, F57 |
 | USAJOBS, ReliefWeb | `scrapers/feeds.py` | yes (not set) | 4–6 h | [fixed] F55; ReliefWeb RSS without an appname recorded as O8 |
@@ -81,10 +81,10 @@ Findings are numbered `F1, F2…` and carry their evidence, so a fix can be trac
 | Part | Where | Status |
 |---|---|---|
 | Scraper workflow (cron 2 h, push, stale-commit guard, keep-alive) | `.github/workflows/scraper.yml` | [ok] new variables passed through (`AI_MODELS`, `AI_SECOND_CHANCES_PER_RUN`…); `AI_TIME_BUDGET_SECONDS` added |
-| Commands workflow (webhook dispatch, private inbox) | `.github/workflows/commands.yml` | [fixed] F65: inbox items older than six hours are reported, not run |
+| Commands workflow (webhook dispatch, private inbox) | `.github/workflows/commands.yml` | [fixed] F65: inbox items older than six hours are reported, not run; F77 |
 | Tests workflow (pytest + node) | `.github/workflows/tests.yml` | [ok] |
-| Worker: webhook, instant replies, prefs writes, dashboard, watchdog, email | `cloudflare/worker.js` | [fixed] F58, F60–F67 |
-| Storage: R2, local, backups, conflicts, retention | `geojobbot/storage/` | [ok] see step 1 |
+| Worker: webhook, instant replies, prefs writes, dashboard, run filler and watchdog, email | `cloudflare/worker.js` | [fixed] F58, F60–F67, F73–F75, F78 |
+| Storage: R2, local, backups, conflicts, retention | `geojobbot/storage/` | [fixed] F76 (conditional put); see step 1 |
 | HTTP client: delays, retries, robots, challenge detection, size limits | `geojobbot/utils/http.py`, `utils/robots.py` | [fixed] F51, F52 |
 | Secrets and logging redaction | `config.py`, `pipeline.SecretRedactingFilter` | [ok] no secret reaches a log line or an error text in the paths touched this round |
 
@@ -183,6 +183,9 @@ just before the digest. Descriptions follow an edited posting, survive a failed 
 - **F54 · quota-bound backends retried every run after a failure (min interval measured from last success) with 3 HTTP retries each; Adzuna 30 calls a run against 250/day and 25/minute · [fixed]**
 - **F55 · loops without a time-budget check (RSS, USAJOBS, Common Crawl retries) could starve extraction · [fixed]**
 - **F56 · ATS detail budget always spent on the same first 30 postings (Esri has 451); Workday read only the first 20 hits per term · [fixed]**
+  Completed 2026-10-10: the first fix still stopped after two pages, because Workday reports `total` on the offset-0 page
+  only (0 after; checked live on trimble: 143, then 0 with 20 rows) and serves a small result set again at every later
+  offset. The total is read from page 0, and a page that brings no new path ends the term.
 - **F57 · France Travail: 31-day window, relevance sort; JSearch `date_posted=month` · [fixed]**
 
 **How the sources batch was fixed (F45–F57), and one thing the review had not listed.** While checking the detail budgets
@@ -285,6 +288,34 @@ and the step follows from the status on record. `/ask` is wired on both sides.
 - **F73 · Worker `reply()` answered any failure, a 429 included, with an immediate plain resend showing literal `&amp;`, and logged nothing when that failed too; loudness was tied to the markup (every HTML reply rang, the watchdog and "Worker error" were silent); `/hide` of a hidden job wrote prefs again · [fixed]** Now: one resend of the same HTML after `retry_after` (at most 5 s), decoded plain text only on "can't parse entities", a log line for the rest, about 1 s between parts. `telegram()` takes an explicit `silent`: replies to a command and "On it" are quiet; mail outcomes, the watchdog and errors ring. Python digests ring once, on the first part, and only with a High match; Possible-only digests, continuation parts, the weekly summary, the radar and market signals are quiet; deadline reminders ring. `link_preview_options` replaces `disable_web_page_preview` on both sides.
 - **F74 · digest buttons, second review: without the `INBOX` binding every Applied/Hide tap failed with a generic toast; Undo with no index asked Python for an `/unapply` it does not have; a stale label ("1🙈" after a typed `/unhide`) answered "Already done" and changed nothing; a keyboard Telegram refuses blocked the digest for good; toasts were cut through an emoji; the index reached the Worker only after the reminders and reports, so a tap right after the ring went the slow way · [fixed]** Now: without the bucket a tap hands the typed command to Python; Undo works from the preferences alone and is never handed over; taps always act on the stored state (an unchanged state is still not written) and relabel from it; a refused keyboard is dropped and the message sent without it; toasts are cut between characters; a run that sends buttons publishes the index before the alerts, and again at the end with the final counts.
 
+### Cadence and data safety (research of 2026-10-10, `architecture_verdict`)
+
+- **F75 · the scraper ran at about 40% of its schedule, and the safety net never fired · [fixed]** Between 2026-09-19 and
+  2026-10-10 GitHub ran 100 of 255 two-hourly slots (median gap 5.1 h, max 8.9 h); `commands.yml` at :17 is dropped as
+  often, so the minute is not the cause. The last `workflow_dispatch` was on 2026-09-18: the watchdog's Cron Trigger
+  was probably never configured, and its alert was a silent message. The Worker cron (`41 * * * *`) is now a filler: it reads the
+  index's upload time with `head()` (no parse), and when it is 1.75 h old and no scraper run is queued or in progress it
+  re-enables and dispatches `scraper.yml`. A crash before the index is written backs off 1, 2, 4 h and stops after four
+  starts (critique 4.4); six hours of silence ring once, giving up rings once more, recovery is reported quietly. A
+  dispatch GitHub refuses (expired or under-scoped token) is kept in `state/watchdog.json`: it rings at once with the
+  HTTP status, the 6-hour alert names it instead of "the run did not finish", and it does not count toward the four
+  starts, so the filler resumes by itself once the token is replaced (review of the branch).
+- **F76 · Python wrote `prefs.json` blind · [fixed]** F58 made the Worker's writes conditional, not Python's: a `/applied`
+  tap or an interview recorded from mail landing between Python's read and its PUT was erased. `get_tagged` returns the
+  ETag, `put_bytes(if_match=)` sends `IfMatch` (boto3 >= 1.35.69, checked with a botocore Stubber; 1.34 rejects the
+  parameter), a 412 is `ConcurrentModificationError`, and the command runs once more on the fresh copy before any reply
+  is sent. `selftest-r2` checks the precondition on the real bucket (a refused right ETag is a FAIL line, and the test
+  object is still deleted). The very first write stays unconditional (R2 does not document `If-None-Match: *` on
+  PutObject). The interview sheet `/outcome code interview` asks for is drafted after the save, so a retry repeats
+  only the prefs change, never the Workers AI call.
+- **F77 · a skipped scheduled `commands.yml` run could replace a pending inbox dispatch · [fixed]** The default
+  `queue: single` keeps one pending run per group; `queue: max` keeps up to 100 (inferred from the docs, not reproduced).
+- **F78 · the Worker's index was pretty-printed, parsed twice on the shortcut path, and never measured · [fixed]**
+  `state/index.json` is written without whitespace (about 40% smaller), the shortcut path hands the parsed index to
+  `answerFast`, and the run summary and `runs/latest.json` give the gzipped state and index sizes, warning above 8 MB
+  and 1 MB. The index is written in its own step: a failed index write no longer takes the run report with it, and
+  the summary says so.
+
 ### Opportunities recorded (not bugs)
 
 - **O1 · inline Yes/No buttons for writes derived from free text, and buttons under digests (`callback_query`) · [partly done]**
@@ -303,7 +334,9 @@ and the step follows from the status on record. `/ask` is wired on both sides.
 - **O5 · rescore stored jobs when rules change · [done]** `SCORER_VERSION`, `rescore_stored`, place re-read.
 - **O6 · a bonus and badge for French or Arabic postings · [idea]**
 - **O7 · salary as a structured fact at ingestion · [idea]**
-- **O8 · new sources · [partly done]** Job Bank search pages (done). WSP and Michael Baker on Oracle Recruiting Cloud (done, F68). Still open, each verified to exist: ReliefWeb RSS (no appname
+- **O8 · new sources · [partly done]** Job Bank search pages (done). WSP and Michael Baker on Oracle Recruiting Cloud
+  (done, F68). GeoRezo (French geomatics jobs, full text, 50 entries) and GSA-UK (10 entries, titles filtered) RSS feeds
+  (done 2026-10-10, robots.txt allows both). Still open, each verified to exist: ReliefWeb RSS (no appname
   needed), Le Forem open data (Wallonia), AfDB vacancies RSS, AECOM on SmartRecruiters (needs `q=`).
 - **O9 · Greenhouse `?content=true` · [skip]** `knows_text` makes detail requests proportional to *new* postings, for every ATS, so
   the one-call variant is no longer needed.

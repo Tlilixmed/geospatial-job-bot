@@ -34,6 +34,13 @@ def test_r2_object_roundtrip():
         assert store.head(prefix + "a.bin")["size"] == 9
         store.copy(prefix + "a.bin", prefix + "b.bin")
         assert sorted(store.list_keys(prefix)) == [prefix + "a.bin", prefix + "b.bin"]
+        data, etag = store.get_tagged(prefix + "a.bin")  # the preferences are saved with If-Match
+        newer = store.put_bytes(prefix + "a.bin", b"v2", "application/octet-stream", if_match=etag)
+        assert newer and newer != etag
+        from geojobbot.storage.base import ConcurrentModificationError
+        with pytest.raises(ConcurrentModificationError):
+            store.put_bytes(prefix + "a.bin", b"v3", "application/octet-stream", if_match=etag)
+        assert store.get_bytes(prefix + "a.bin") == b"v2"
     finally:
         store.delete_keys(store.list_keys(prefix))
     assert store.list_keys(prefix) == []

@@ -173,6 +173,18 @@ url = "https://www.gisjobs.com/rssjobs"
 source_type = "feed"
 geospatial = true
 
+[[rss_feeds]]
+name = "georezo"       # GeoRezo job-offers forum (France, French): full post text, about 40 geomatics jobs a month
+url = "https://georezo.net/extern.php?fid=10&show=50"
+source_type = "feed"
+geospatial = true
+
+[[rss_feeds]]
+name = "gsa-uk"        # Geospatial Survey Association (UK) job board; partly non-survey roles, so titles are filtered
+url = "https://www.gsa-uk.org.uk/job-opportunities/feed/"
+source_type = "feed"
+geospatial = false
+
 # Government of Canada Job Bank (EN) and Guichet-Emplois (FR): their Atom feeds still answer, but without entries, so
 # they are read from the search pages by the "jobbank" backend (geojobbot/scrapers/official.py).
 

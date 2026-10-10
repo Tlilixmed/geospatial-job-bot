@@ -63,6 +63,31 @@ def test_jobspy_location_specs():
     assert JobSpyBackend.location_specs(make_settings(jobspy_locations=[])) == [("Remote", "usa")]
 
 
+def test_georezo_and_gsa_feeds_are_configured_and_their_shapes_parse():
+    """Shapes as served on 2026-10-10: GeoRezo (PunBB extern.php, CDATA titles, French), GSA-UK (WordPress)."""
+    from geojobbot.config import Settings, load_sources
+
+    feeds = {f["name"]: f for f in load_sources(Settings().sources_file)["rss_feeds"]}
+    assert feeds["georezo"]["url"] == "https://georezo.net/extern.php?fid=10&show=50" and feeds["georezo"]["geospatial"] is True
+    assert feeds["gsa-uk"]["url"] == "https://www.gsa-uk.org.uk/job-opportunities/feed/" and feeds["gsa-uk"]["geospatial"] is False
+    georezo = ('<?xml version="1.0" encoding="UTF-8"?><rss version="2.0" xmlns:dc="http://purl.org/dc/elements/1.1/"><channel>'
+               '<item><title><![CDATA[[FPT/CDD] Gestionnaire SIG - Rouen (76)]]></title>'
+               '<link>https://georezo.net/forum/viewtopic.php?pid=378472#p378472</link>'
+               '<description><![CDATA[<p>Administration de la base <strong>PostGIS</strong> et de QGIS Server.</p>]]></description>'
+               '<pubDate>Fri, 09 Oct 2026 19:09:29 +0200</pubDate></item></channel></rss>').encode()
+    gsa = ('<?xml version="1.0" encoding="UTF-8"?><rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/">'
+           '<channel><item><title>Geospatial Surveyor /Senior Surveyor</title>'
+           '<link>https://www.gsa-uk.org.uk/job-opportunities/geospatial-surveyor-senior-surveyor/</link>'
+           '<pubDate>Fri, 09 Oct 2026 12:45:08 +0000</pubDate><description>Excerpt [&#8230;]</description>'
+           '<content:encoded><![CDATA[<p>Topographic and measured building surveys with Leica and Trimble GNSS.</p>]]></content:encoded>'
+           '</item></channel></rss>').encode()
+    (rezo,) = RssFeedBackend.parse(georezo, feeds["georezo"])
+    assert rezo.title == "[FPT/CDD] Gestionnaire SIG - Rouen (76)" and rezo.source_name == "rss:georezo" and rezo.geo_context
+    assert "PostGIS" in rezo.description and rezo.posted_at.isoformat() == "2026-10-09T19:09:29+02:00"
+    (surveyor,) = RssFeedBackend.parse(gsa, feeds["gsa-uk"])
+    assert surveyor.description.startswith("Topographic and measured") and not surveyor.geo_context  # titles are filtered
+
+
 def test_rss_wordpress_content_encoded_preferred_and_excerpts_queue_the_page():
     rss = ('<rss xmlns:content="http://purl.org/rss/1.0/modules/content/"><channel><item><title>Geomatics Engineer</title>'
            '<link>https://gogeomatics.ca/job/x/</link><description>short</description>'

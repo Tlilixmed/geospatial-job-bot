@@ -27,18 +27,26 @@ function makeIndex(jobs) {
 
 function harness({ index, prefs, ai, inbox = true, prefix = "", telegramAnswer } = {}) {
   const objects = new Map();
-  if (index) objects.set(`${prefix}state/index.json`, JSON.stringify(index));
+  const uploaded = new Map();  // what R2's head() reports; an index starts out uploaded when it says it was generated
+  if (index) {
+    objects.set(`${prefix}state/index.json`, JSON.stringify(index));
+    uploaded.set(`${prefix}state/index.json`, new Date(index.generated_at));
+  }
   if (prefs) objects.set(`${prefix}state/prefs.json`, JSON.stringify(prefs));
   const sent = [];  // sendMessage bodies
   const calls = [];  // every Bot API call: { method, body }
   const dispatched = [];
+  const requests = [];  // "METHOD url" of every GitHub request
+  const runs = { queued: 0, in_progress: 0 };  // scraper runs GitHub reports
+  const github = { dispatchStatus: 204 };
   const reads = [];
   const writes = [];
   const env = { TELEGRAM_BOT_TOKEN: "T", TELEGRAM_CHAT_ID: "42", WEBHOOK_SECRET: "s3cret", GITHUB_TOKEN: "gh", GITHUB_REPO: "o/r" };
   if (inbox) {
     env.INBOX = {
       get: async (key) => { reads.push(key); return objects.has(key) ? { json: async () => JSON.parse(objects.get(key)) } : null; },
-      put: async (key, value) => { writes.push(key); objects.set(key, value); },
+      head: async (key) => (objects.has(key) ? { uploaded: uploaded.get(key) || new Date() } : null),
+      put: async (key, value) => { writes.push(key); objects.set(key, value); uploaded.set(key, new Date()); },
     };
   }
   if (prefix) env.STATE_PREFIX = prefix;
@@ -51,8 +59,19 @@ function harness({ index, prefs, ai, inbox = true, prefix = "", telegramAnswer }
       if (method === "sendMessage") sent.push(body);
       const answer = telegramAnswer && telegramAnswer(method, body, calls);
       if (answer) return { ok: answer.status === 200, status: answer.status, json: async () => answer.body };
-    } else if (body) dispatched.push(body);  // PUT …/enable has no body
-    return { ok: true, status: 200 };
+      return { ok: true, status: 200 };
+    }
+    requests.push(`${init.method} ${url}`);
+    if (body) dispatched.push(body);  // PUT …/enable and GET …/runs have no body
+    const asked = String(url).match(/[?&]status=(\w+)/);
+    if (asked) return { ok: true, status: 200, json: async () => ({ total_count: runs[asked[1]], workflow_runs: [] }) };
+    const status = String(url).endsWith("/dispatches") ? github.dispatchStatus : 204;
+    return { ok: status < 300, status };
+  };
+  /** The index as R2's head() reports it: uploaded `hours` ago. */
+  const indexAge = (hours) => {
+    if (!objects.has(`${prefix}state/index.json`)) objects.set(`${prefix}state/index.json`, JSON.stringify(makeIndex([])));
+    uploaded.set(`${prefix}state/index.json`, new Date(Date.now() - hours * HOUR));
   };
   let updateId = 100;
   async function say(text, { chat = 42, from = 42, secret = "s3cret" } = {}) {
@@ -83,7 +102,7 @@ function harness({ index, prefs, ai, inbox = true, prefix = "", telegramAnswer }
   const tick = async () => { const pending = []; await worker.scheduled({}, env, { waitUntil: (x) => pending.push(x) }); await Promise.all(pending); };
   const get = (path) => worker.fetch(new Request("https://worker.example" + path), env, { waitUntil() {} });
   const of = (method) => calls.filter((c) => c.method === method).map((c) => c.body);
-  return { say, tap, get, tick, env, sent, calls, of, reads, writes, dispatched, stored, objects };
+  return { say, tap, get, tick, env, sent, calls, of, reads, writes, dispatched, stored, objects, requests, runs, github, indexAge };
 }
 
 test("/jobs is answered from the index without starting a workflow", async () => {
@@ -138,6 +157,11 @@ test("plain words work, with an echo of what was understood", async () => {
   await h.say("/help");
   assert.equal(h.sent[3].text, "HELP TEXT /jobs");
   assert.equal(h.dispatched.length, 0);
+  const get = h.env.INBOX.get;
+  const reads = [];
+  h.env.INBOX.get = async (key) => { reads.push(key); return get(key); };
+  await h.say("top 3");
+  assert.equal(reads.filter((key) => key === "state/index.json").length, 1);  // read and parsed once for a shortcut
 });
 
 test("/hide, /applied and /outcome write the same prefs schema Python uses", async () => {
@@ -306,25 +330,124 @@ test("the dashboard is off without a key, private with one, and cannot be broken
   assert.doesNotThrow(() => new Function(script));  // the inline script parses
 });
 
-test("watchdog: silent scraper is restarted once per interval, announced once, and recovery is reported", async () => {
-  const fresh = harness({ index: makeIndex([]) });
+test("filler: an index 1.75 h old starts the scraper, unless a run is queued or in progress", async () => {
+  const fresh = harness({ index: { ...makeIndex([]), generated_at: iso(9) } });
+  fresh.indexAge(0.5);  // its upload time counts, not what it says inside
   await fresh.tick();
-  assert.equal(fresh.sent.length + fresh.dispatched.length, 0);
+  assert.equal(fresh.sent.length + fresh.requests.length, 0);
+  assert.equal(fresh.stored("state/watchdog.json"), null);  // nothing changed: no R2 write either
 
-  const stale = makeIndex([]);
-  stale.generated_at = iso(9);
-  const h = harness({ index: stale });
+  const h = harness({ index: makeIndex([]) });
+  h.indexAge(1.5);
   await h.tick();
-  assert.match(h.sent[0].text, /No scraper run for 9 hours/);
-  assert.deepEqual(h.dispatched.at(-1), { ref: "main" });
+  assert.equal(h.requests.length, 0);
+  h.indexAge(2);
+  for (const busy of ["queued", "in_progress"]) {
+    h.runs[busy] = 1;
+    await h.tick();
+    assert.equal(h.dispatched.length, 0, busy);
+    h.runs[busy] = 0;
+  }
+  assert.ok(h.requests.includes("GET https://api.github.com/repos/o/r/actions/workflows/scraper.yml/runs?status=queued&per_page=1"));
+  assert.ok(h.requests.includes("GET https://api.github.com/repos/o/r/actions/workflows/scraper.yml/runs?status=in_progress&per_page=1"));
+  await h.tick();
+  assert.deepEqual(h.dispatched, [{ ref: "main" }]);
+  assert.ok(h.requests.includes("PUT https://api.github.com/repos/o/r/actions/workflows/scraper.yml/enable"));  // the re-enable stays
+  assert.equal(h.sent.length, 0);  // filling a gap is routine: nothing is said
   assert.equal(h.stored("state/watchdog.json").kicks, 1);
-  await h.tick();  // too soon to try again, and nothing is said twice
+  await h.tick();  // the run has not written the index yet: no second run within the hour
+  assert.equal(h.dispatched.length, 1);
+  h.objects.set("state/watchdog.json", JSON.stringify({ ...h.stored("state/watchdog.json"), last_kick: iso(0.5) }));
+  h.indexAge(0.2);  // the run wrote the index a while after it was started
+  await h.tick();
+  assert.equal(h.stored("state/watchdog.json").kicks, 0);
+  assert.equal(h.sent.length, 0);
+});
+
+test("watchdog: a scraper that crashes is started again after 1, 2 and 4 hours, then left alone; one ring, then recovery", async () => {
+  const h = harness({ index: makeIndex([]) });
+  const lastKick = (hoursAgo) => {  // let time pass since the last run the Worker started
+    const memo = h.stored("state/watchdog.json");
+    h.objects.set("state/watchdog.json", JSON.stringify({ ...memo, last_kick: iso(hoursAgo) }));
+  };
+  const steps = [  // [index age, hours since the last kick (null: as it is), runs started so far, rings so far]
+    [2, null, 1, 0],
+    [3, 0.5, 1, 0],    // too soon
+    [3, 1, 2, 0],      // 1 hour after the first
+    [4, 1.5, 2, 0],    // 2 hours are due after the second
+    [5, 2, 3, 0],
+    [6.5, 1, 3, 1],    // six hours of silence ring once, while waiting
+    [8, 3, 3, 1],      // 4 hours are due after the third
+    [9, 4, 4, 2],      // the fourth and last: said once more
+    [12, 8, 4, 2],     // given up: nothing more is started or said
+    [20, 16, 4, 2],
+  ];
+  for (const [age, since, started, rings] of steps) {
+    h.indexAge(age);
+    if (since !== null) lastKick(since);
+    await h.tick();
+    assert.equal(h.dispatched.length, started, `age ${age}`);
+    assert.equal(h.sent.length, rings, `age ${age}`);
+  }
+  assert.match(h.sent[0].text, /^⚠️ No scraper run for 7 hours\. The run I started did not finish/);
+  assert.match(h.sent[1].text, /Still no scraper run after 4 attempts/);
+  for (const ringing of h.sent) assert.ok(ringing.parse_mode === "HTML" && !ringing.disable_notification);  // these ring
+  h.indexAge(0.1);  // someone fixed it: a run wrote the index
+  await h.tick();
+  assert.match(h.sent[2].text, /running again/);
+  assert.equal(h.sent[2].disable_notification, true);  // good news is quiet
+  assert.deepEqual({ ...h.stored("state/watchdog.json"), last_kick: undefined }, { alerted: false, kicks: 0, last_kick: undefined });
+  h.indexAge(2);
+  await h.tick();  // and the filler works again at once
+  assert.equal(h.dispatched.length, 5);
+});
+
+test("watchdog: no index at all, and a dispatch GitHub refuses, ring at once", async () => {
+  const h = harness({});
+  h.github.dispatchStatus = 403;
+  await h.tick();
   assert.equal(h.sent.length, 1);
-  assert.equal(h.stored("state/watchdog.json").kicks, 1);
-  h.objects.set("state/index.json", JSON.stringify(makeIndex([])));
+  assert.match(h.sent[0].text, /^⚠️ No scraper run for a long time\. GitHub refused to start the scraper \(HTTP 403\)\. Check the Worker's GITHUB_TOKEN/);
+  assert.equal(h.stored("state/watchdog.json").refused, 403);
+  const ok = harness({});
+  await ok.tick();
+  assert.match(ok.sent[0].text, /^🛟 No scraper run for a long time\. I re-enabled the schedule and started a run myself\./);
+});
+
+test("watchdog: a token GitHub refuses rings at once, is named again at six hours, and never exhausts the starts", async () => {
+  const h = harness({ index: makeIndex([]) });
+  h.github.dispatchStatus = 401;  // an expired fine-grained token
+  const tries = () => h.dispatched.length;
+  const steps = [  // [index age, dispatches tried so far, rings so far]
+    [2, 1, 1],     // the first refusal rings at once, with the cause
+    [3, 2, 1],     // tried again each hour (nothing ran, nothing to wait for), but not said again
+    [4, 3, 1],
+    [5, 4, 1],
+    [6.5, 5, 2],   // six hours of silence: the alert names the refusal, not a run that "did not finish"
+    [8, 6, 2],
+    [12, 7, 2],    // more than MAX_KICKS refusals: still trying, since none of them counted
+  ];
+  for (const [age, tried, rings] of steps) {
+    h.indexAge(age);
+    await h.tick();
+    assert.equal(tries(), tried, `age ${age}`);
+    assert.equal(h.sent.length, rings, `age ${age}`);
+  }
+  assert.match(h.sent[0].text, /^⚠️ GitHub refused to start the scraper \(HTTP 401\)\. Check the Worker's GITHUB_TOKEN/);
+  assert.match(h.sent[1].text, /^⚠️ No scraper run for 7 hours\. GitHub refused to start the scraper \(HTTP 401\)/);
+  for (const ringing of h.sent) assert.ok(ringing.parse_mode === "HTML" && !ringing.disable_notification);
+  assert.equal(h.stored("state/watchdog.json").kicks || 0, 0);
+  h.github.dispatchStatus = 204;  // the token was replaced: the filler recovers by itself
   await h.tick();
-  assert.match(h.sent[1].text, /running again/);
-  assert.deepEqual(h.stored("state/watchdog.json"), {});
+  assert.equal(tries(), 8);
+  assert.match(h.sent[2].text, /GitHub accepts my scraper starts again/);
+  assert.equal(h.sent[2].disable_notification, true);
+  const memo = h.stored("state/watchdog.json");
+  assert.equal(memo.kicks, 1);
+  assert.equal(memo.refused, undefined);
+  h.indexAge(0.1);
+  await h.tick();
+  assert.match(h.sent[3].text, /running again/);
 });
 
 function mail({ from, subject, body }) {

@@ -1,6 +1,7 @@
 """End-to-end pipeline tests with injected backends, fake HTTP, fake R2 and fake Telegram."""
 from datetime import timedelta
 
+import pytest
 from conftest import GIS_DESCRIPTION, NOW, FakeResponse, FakeS3, FakeSession, make_settings
 
 from geojobbot.core.pipeline import Pipeline, build_backends
@@ -264,3 +265,60 @@ def test_run_publishes_the_index_the_worker_answers_from():
     assert entry["id"] == "static:1" and entry["code"] == job_code("static:1") and entry["tier"] == "high"
     assert entry["t"] == "GIS Analyst" and entry["c"] == "Acme" and entry["url"] == "https://acme.example/jobs/1"
     assert entry["rel"] is True and entry["seen"] and entry["bd"]["title"] > 0 and entry["src"] == ["static"]
+    raw = s3.objects["state/index.json"]
+    assert b"\n" not in raw and b'", "' not in raw and b'": ' not in raw  # compact: the Worker parses it on every message
+    assert b'": ' in s3.objects["runs/latest.json"]                     # the other artifacts stay readable
+    latest = StateManager(R2Store("b", client=s3)).read_json("runs/latest.json")
+    assert latest["storage"]["index_bytes"] == len(raw)
+    assert latest["storage"]["state_bytes"] > 0  # gzipped bytes of the state saved before the artifacts
+
+
+def test_the_run_report_survives_an_index_that_cannot_be_stored_or_built(monkeypatch):
+    from conftest import FakeClientError
+
+    from geojobbot.core import pipeline
+    from geojobbot.core.report import build_summary
+
+    class IndexRefused(FakeS3):
+        def put_object(self, Bucket, Key, Body, ContentType=None, IfMatch=None):
+            if Key == "state/index.json":
+                raise FakeClientError("InternalError", 500)
+            return super().put_object(Bucket, Key, Body, ContentType, IfMatch)
+
+    s3 = IndexRefused()
+    code, report = run(s3, [StaticBackend("feed", [gis_raw()])], FakeNotifier())
+    assert code == 0 and "state/index.json" not in s3.objects
+    latest = StateManager(R2Store("b", client=s3)).read_json("runs/latest.json")
+    assert latest["artifact_error"].startswith("state/index.json") and latest["storage"]["index_bytes"] is None
+    assert latest["storage"]["state_bytes"] > 0 and any(k.startswith("runs/2") for k in s3.objects)
+    summary = build_summary(report)
+    assert "index not written" in summary and "WARNING: artifacts not written: state/index.json" in summary
+
+    def broken(*args, **kwargs):
+        raise KeyError("a bug")
+
+    monkeypatch.setattr(pipeline, "build_index", broken)
+    s3 = FakeS3()
+    with pytest.raises(KeyError):  # a bug still fails the run loudly...
+        run(s3, [StaticBackend("feed", [gis_raw()])], FakeNotifier())
+    latest = StateManager(R2Store("b", client=s3)).read_json("runs/latest.json")  # ...after the report is written
+    assert latest["artifact_error"] == "state/index.json not built (KeyError)"
+
+
+def test_run_summary_reports_sizes_and_warns_above_the_limits():
+    from geojobbot.core.report import build_markdown, build_summary
+
+    base = {"run_id": "r", "sources": [], "counts": {}, "storage": {"backend": "r2", "loaded": True, "saved": True}}
+    cases = [  # (state bytes, index bytes, warnings expected)
+        (None, None, []),
+        (2_100_000, 640_000, []),
+        (8_000_001, 640_000, ["the state is 8.00 MB gzipped (warning above 8.00 MB)"]),
+        (2_100_000, 1_200_000, ["state/index.json is 1.20 MB (warning above 1.00 MB)"]),
+    ]
+    for state_bytes, index_bytes, expected in cases:
+        report = dict(base, storage=dict(base["storage"], state_bytes=state_bytes, index_bytes=index_bytes))
+        summary = build_summary(report)
+        warnings = [line for line in summary.splitlines() if "WARNING" in line]
+        assert len(warnings) == len(expected) and all(e in w for e, w in zip(expected, warnings)), (state_bytes, index_bytes, warnings)
+        assert ("Sizes: state 2,100,000 bytes gzipped" in summary) == (state_bytes == 2_100_000)
+        assert ("### ⚠️ Storage size" in build_markdown(report)) == bool(expected)

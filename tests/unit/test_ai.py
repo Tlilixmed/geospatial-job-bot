@@ -196,3 +196,45 @@ def test_interview_sheet_and_speculative_application():
     assert interpret("prepare me for the interview " + code, lambda t: t == code) == ("prep", code)
     assert interpret("write to geofit expert") == ("approach", "geofit expert")
     assert interpret("candidature spontanée pour Geofit") == ("approach", "Geofit")
+
+
+def test_a_conflict_repeats_the_outcome_but_not_the_interview_sheet():
+    from test_commands import job, setup
+
+    from geojobbot.core.prefs import load_prefs, save_prefs
+    from geojobbot.utils.text import job_code
+
+    proc, replies, _, manager = setup([], [job("a:1", "GIS Analyst", company="Acme")])
+    save_prefs(manager, load_prefs(manager))  # the file exists: writes are conditional from here on
+    proc.ai, session = ai_with(["LIKELY QUESTIONS: Tell us about your LiDAR work -> the TerraScan project"])
+    handle, calls = proc.handle, []
+
+    def racing(text, hint=""):
+        calls.append(text)
+        answer = handle(text, hint)
+        if len(calls) == 1:  # the Worker writes between our read and our write
+            theirs = load_prefs(manager)
+            theirs["muted"] = ["leidos"]
+            save_prefs(manager, theirs)
+        return answer
+
+    proc.handle = racing
+    counts = proc.run_text(f"/outcome {job_code('a:1')} interview")
+    stored = load_prefs(manager)
+    assert len(calls) == 2 and counts["prefs_saved"] == 1
+    assert stored["applied"]["a:1"]["status"] == "interview" and stored["muted"] == ["leidos"]
+    assert len(session.calls) == 1  # the AI draft was written once, after the save that counted
+    assert "An interview!" in replies.sent[-2] and "LIKELY QUESTIONS" in replies.sent[-1]
+
+    def always_racing(text, hint=""):
+        answer = handle(text, hint)
+        theirs = load_prefs(manager)
+        theirs["hidden"] = theirs["hidden"] + [text]
+        save_prefs(manager, theirs)
+        return answer
+
+    proc.handle = always_racing
+    proc.run_text(f"/outcome {job_code('a:1')} offer")
+    proc.run_text(f"/outcome {job_code('a:1')} interview")
+    assert len(session.calls) == 1  # a message that is never saved never pays for a draft
+    assert "please send that again" in replies.sent[-1]

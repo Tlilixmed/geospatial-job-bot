@@ -730,6 +730,20 @@ class Pipeline:
 
     def _write_artifacts(self, manager: StateManager, report: dict, outcome, ctx: RunContext, state: dict) -> None:
         day = self.now.strftime("%Y-%m-%d")
+        # read model for the Cloudflare Worker's instant replies; compact, because the Worker parses it on every
+        # message within a 10 ms CPU budget (Workers Free). Written first, so the run report can give its size, and
+        # on its own: the run report must survive an index that could not be built or stored.
+        index_bug = None
+        try:
+            self._write_index(manager, report, state)
+        except (StorageError, ConcurrentModificationError) as exc:
+            log.warning("writing state/index.json failed: %s", exc)
+            report["artifact_error"] = f"state/index.json: {exc}"
+        except Exception as exc:  # a bug in build_index: raised again once the run report is written
+            index_bug = exc
+            report["artifact_error"] = f"state/index.json not built ({type(exc).__name__})"
+        report["storage"].update(state_bytes=manager.sizes.get(manager.state_key),
+                                 index_bytes=manager.sizes.get(manager.key(INDEX_SUFFIX)))
         try:
             if self.settings.store_raw_snapshots:
                 for source, rows in ctx.snapshots.items():
@@ -740,7 +754,6 @@ class Pipeline:
             full = dict(report, counts=dict(report["counts"]), diagnostics=diagnostics_rows(outcome.evaluated))
             manager.write_json(f"runs/{day}/{self.run_id}.json.gz", full, compress=True)
             manager.write_json("runs/latest.json", dict(report, counts=dict(report["counts"])), compress=False)
-            self._write_index(manager, report, state)
             maintenance = state.setdefault("maintenance", {})
             last = parse_datetime(maintenance.get("last_cleanup"))
             if last is None or self.now - last > timedelta(hours=24):
@@ -752,13 +765,15 @@ class Pipeline:
                 manager.save(state, self.run_id)
         except (StorageError, ConcurrentModificationError) as exc:
             log.warning("writing run artifacts failed: %s", exc)
-            report["artifact_error"] = str(exc)
+            report["artifact_error"] = "; ".join(filter(None, (report.get("artifact_error"), str(exc))))
+        if index_bug is not None:
+            raise index_bug
 
     def _write_index(self, manager: StateManager, report: dict, state: dict) -> None:
-        """The read model for the Cloudflare Worker's instant replies and digest buttons."""
+        """The read model for the Cloudflare Worker's instant replies and digest buttons (compact: see _write_artifacts)."""
         prefs = load_prefs(manager)
         manager.write_json(INDEX_SUFFIX, build_index(state, self.settings, report, self.now, HELP, views=self._views(manager, state, prefs),
-                                                     skills=radar.my_skills(self.settings, prefs)), compress=False)
+                                                     skills=radar.my_skills(self.settings, prefs)), compress=False, compact=True)
 
     def _views(self, manager: StateManager, state: dict, prefs: dict | None = None) -> dict:
         """Replies formatted here so the Worker can send them instantly ({command: html})."""
