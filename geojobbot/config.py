@@ -106,6 +106,7 @@ class Settings:
     telegram_bot_token: str | None = None
     telegram_chat_id: str | None = None
     telegram_delay_s: float = 1.2
+    telegram_buttons: bool = False  # digest buttons: only the Worker (webhook) can answer a tap
     alert_format: str = "digest"  # digest: one numbered list per run | individual: one message per job
 
     # discovery budgets
@@ -266,6 +267,7 @@ def load_settings() -> Settings:
     s.telegram_bot_token = env_str("TELEGRAM_BOT_TOKEN")
     s.telegram_chat_id = env_str("TELEGRAM_CHAT_ID")
     s.telegram_delay_s = max(1.2, env_float("TELEGRAM_DELAY_SECONDS", s.telegram_delay_s))
+    s.telegram_buttons = env_bool("TELEGRAM_WEBHOOK", s.telegram_buttons)
     s.alert_format = (env_str("ALERT_FORMAT", s.alert_format) or s.alert_format).lower()
     if s.alert_format not in ("digest", "individual"):
         raise ValueError(f"ALERT_FORMAT must be 'digest' or 'individual', got {s.alert_format!r}")

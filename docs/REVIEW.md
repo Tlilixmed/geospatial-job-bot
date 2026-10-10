@@ -212,6 +212,7 @@ and Adzuna stays under 25 calls a minute. France Travail is asked newest-first, 
 - **F65 · `/threshold 75.5` stored Possible ≥ 5 in the Worker; `/range` parity; a message left in the inbox after a failed dispatch executed days later · [fixed]**
 - **F66 · dashboard: malformed percent-encoding in the key threw (HTTP 500 reveals the dashboard is on); view anchors not restricted to http(s); `/outcome code constructor` accepted a prototype key · [fixed]**
 - **F67 · Worker `/why` lacked the deadline/repost/skills line; tie order, signals selection and snapshot sizes differed slightly between the two sides · [fixed]**
+- **F68 · Worker `reply()` answered any failure, a 429 included, with an immediate plain resend showing literal `&amp;`, and logged nothing when that failed too; loudness was tied to the markup (every HTML reply rang, the watchdog and "Worker error" were silent); `/hide` of a hidden job wrote prefs again · [fixed]** Now: one resend of the same HTML after `retry_after` (at most 5 s), decoded plain text only on "can't parse entities", a log line for the rest, about 1 s between parts. `telegram()` takes an explicit `silent`: replies to a command and "On it" are quiet; mail outcomes, the watchdog and errors ring. Python digests ring once, on the first part, and only with a High match; Possible-only digests, continuation parts, the weekly summary, the radar and market signals are quiet; deadline reminders ring. `link_preview_options` replaces `disable_web_page_preview` on both sides.
 
 **How the Telegram batch was fixed (F58–F67).** Free text: typo repair opens views but never writes (writes are matched on
 the words as typed), and a question never writes ("can you hide a3f9c?" is a request, not a question); "resume", "prefer",
@@ -225,9 +226,16 @@ and the step follows from the status on record. `/ask` is wired on both sides.
 
 ### Opportunities recorded (not bugs)
 
-- **O1 · inline Yes/No buttons for writes derived from free text, and buttons under digests (`callback_query`) · [idea]** The
-  question and typo guards (F59) remove the dangerous cases; buttons would remove typing codes altogether. Needs
-  `allowed_updates` to include `callback_query` and a Worker handler.
+- **O1 · inline Yes/No buttons for writes derived from free text, and buttons under digests (`callback_query`) · [partly done]**
+  Digests carry a number per entry (8 per row, none above 90 buttons, on the last part of a split message, only with
+  `TELEGRAM_WEBHOOK=true`); a tap opens one action row: ✅ Applied, 🙈 Hide (every posting of a grouped entry), ❓ Why,
+  ✖, then ↩️ Undo applied (only a bare "applied" with no later history) or ↩️ Unhide. `callback_data` holds only the action
+  and the codes; the Worker answers the owner's taps alone (owner and chat both checked), answers each exactly once,
+  redraws the keyboard from the one the tap came with (opening and closing never read R2), retries a lost race once,
+  treats "message is not modified" as done, and hands codes missing from the index to Python as the tapped command under
+  the update's own id. Setups registered with `allowed_updates=["message"]` must register again (`cloudflare/README.md`
+  step 4). `python -m geojobbot set-commands` publishes the "/" menu (12 commands, EN/FR/AR, scoped to the bot's chat).
+  Still open: Yes/No buttons for free-text writes, and buttons on `/jobs` replies (with O2 paging).
 - **O2 · "more" / "next" paging · [idea]** Long replies are no longer lost or cut through a tag (F64); paging on demand is still open.
 - **O3 · conversation memory ("why 2", "hide the third one") · [idea]**
 - **O4 · sponsorship-first ordering inside a tier, a small bonus for a strong visa route · [idea]**
@@ -243,8 +251,8 @@ and the step follows from the status on record. `/ask` is wired on both sides.
 
 ## State of the review
 
-Every row above has a status. 67 findings: 66 fixed, 1 recorded as an idea (F7). Tests went from 280 to 464 (Python) and from 17
-to 23 (Worker). Not verifiable from the development machine, and therefore to watch in the next runs: the AI model chain
+Every row above has a status. 68 findings: 67 fixed, 1 recorded as an idea (F7). Tests went from 280 to 475 (Python) and from 17
+to 32 (Worker). Not verifiable from the development machine, and therefore to watch in the next runs: the AI model chain
 (the token lives in GitHub secrets; the last model of the chain is the one that worked before), France Travail live answers,
 and the first run after deployment, which rescores stored matches (`rescored_from_text` in the run summary) and may carry
 over alerts that were held back earlier (`carried_over`).

@@ -241,6 +241,19 @@ def cmd_selftest_telegram(settings, args) -> int:
     return 0 if ok else 1
 
 
+def cmd_set_commands(settings, args) -> int:
+    """Publish the bot's command menu (once, by hand: python -m geojobbot set-commands)."""
+    if not settings.telegram_configured:
+        print("Telegram is not configured (TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID)")
+        return 1
+    from .notifications.telegram import publish_commands
+    steps = publish_commands(settings.telegram_bot_token, settings.telegram_chat_id,
+                             (os.environ.get("TELEGRAM_OWNER_ID") or "").strip() or None)
+    for name, ok, detail in steps:
+        print(f"  {'PASS' if ok else 'FAIL'}  {name}{f': {detail}' if detail else ''}")
+    return 0 if all(ok for _, ok, _ in steps) else 1
+
+
 def cmd_commands(settings, args) -> int:
     """Poll Telegram once, execute pending commands and reply (used by .github/workflows/commands.yml)."""
     if not settings.telegram_configured:
@@ -298,6 +311,7 @@ def main(argv=None) -> int:
     p.add_argument("--grep")
     sub.add_parser("selftest-r2")
     sub.add_parser("selftest-telegram")
+    sub.add_parser("set-commands")
     p = sub.add_parser("commands")
     p.add_argument("--text", help="execute this message instead of polling Telegram")
     args = parser.parse_args(argv)
@@ -309,7 +323,7 @@ def main(argv=None) -> int:
     _setup_logging(settings)
     handlers = {"run": cmd_run, None: cmd_run, "validate-sources": cmd_validate, "diagnose": cmd_diagnose,
                 "score": cmd_score, "inspect": cmd_inspect, "selftest-r2": cmd_selftest_r2,
-                "selftest-telegram": cmd_selftest_telegram, "commands": cmd_commands}
+                "selftest-telegram": cmd_selftest_telegram, "set-commands": cmd_set_commands, "commands": cmd_commands}
     return handlers[args.command](settings, args)
 
 

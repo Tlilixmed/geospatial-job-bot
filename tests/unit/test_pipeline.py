@@ -31,11 +31,13 @@ class CrashingBackend(Backend):
 class FakeNotifier:
     def __init__(self, fail=False):
         self.sent, self.fail = [], fail
+        self.options = []  # (reply_markup, silent) of each message sent
 
-    def send(self, text):
+    def send(self, text, reply_markup=None, silent=False):
         if self.fail:
             return False, "HTTP 502: Bad Gateway"
         self.sent.append(text)
+        self.options.append((reply_markup, silent))
         return True, None
 
 
@@ -175,10 +177,26 @@ def test_individual_format_sends_one_message_per_job():
     assert len(n.sent) == 2 and all("HIGH MATCH" in message for message in n.sent)
 
 
+def test_digest_buttons_need_the_webhook_and_only_the_first_part_with_a_high_match_rings():
+    n = FakeNotifier()
+    run(FakeS3(), [StaticBackend("feed", many_jobs(5))], n)
+    assert n.options == [(None, False)]  # polling only: nobody would answer a tap, so no buttons
+    n = FakeNotifier()
+    run(FakeS3(), [StaticBackend("feed", many_jobs(30))], n, telegram_buttons=True, max_alerts_per_run=30)
+    assert len(n.sent) > 1
+    assert [silent for _, silent in n.options] == [False] + [True] * (len(n.sent) - 1)
+    labels = [b["text"] for markup, _ in n.options for row in markup["inline_keyboard"] for b in row]
+    assert labels == [str(i) for i in range(1, 31)]  # numbering runs across parts, like the entries
+    n = FakeNotifier()
+    run(FakeS3(), [StaticBackend("feed", many_jobs(2))], n, high_threshold=100, notify_possible=True)
+    assert "2 possible" in n.sent[0] and n.options == [(None, True)]  # Possible matches only: no ring
+
+
 def test_weekly_summary_sent_once_per_week():
     s3, n = FakeS3(), FakeNotifier()
     _, report = run(s3, [StaticBackend("feed", many_jobs(1))], n, weekly_summary=True)
     assert report["counts"]["weekly_summary_sent"] == 1 and any("Weekly job summary" in m for m in n.sent)
+    assert n.options[n.sent.index(next(m for m in n.sent if "Weekly job summary" in m))][1] is True  # quiet
     n2 = FakeNotifier()
     _, report = run(s3, [StaticBackend("feed", many_jobs(1))], n2, now=NOW + timedelta(days=2), weekly_summary=True)
     assert report["counts"]["weekly_summary_sent"] == 0 and n2.sent == []

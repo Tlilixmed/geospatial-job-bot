@@ -1,10 +1,11 @@
 import re
 from datetime import datetime, timezone
 
+import pytest
 import requests
 from conftest import FakeResponse, FakeSession
 
-from geojobbot.notifications.telegram import MAX_MESSAGE, TelegramNotifier, format_digest, format_job_message
+from geojobbot.notifications.telegram import MAX_MESSAGE, TelegramNotifier, digest_keyboard, format_digest, format_job_message
 
 STAMP = datetime(2026, 9, 16, 18, 0, tzinfo=timezone.utc)
 
@@ -120,3 +121,93 @@ def test_long_replies_are_split_between_blocks_and_bad_markup_is_sent_plain():
     assert TelegramNotifier(TOKEN, "1", session=s, sleep=lambda x: None, delay_s=0).send("<b>Esri</b> pays <50k &amp; more")[0]
     plain = s.calls[1][2]
     assert "parse_mode" not in plain and plain["text"] == "Esri pays <50k & more"
+
+
+# ------------------------------------------------------------------ digest buttons (REVIEW O1)
+CALLBACK_RE = re.compile(r"^([mahurwx])\|((?:[0-9a-f]{5}){0,3})$")  # the Worker's CALLBACK_RE
+
+
+def button(number, *codes):
+    return {"text": str(number), "callback_data": "m|" + "".join(codes)}
+
+
+@pytest.mark.parametrize("numbered, rows", [
+    ([], None),
+    ([(1, [])], None),  # a record without an id has no code, hence no button
+    ([(1, ["75288"])], [[button(1, "75288")]]),
+    ([(4, ["75288", "450f5", "a0193"]), (5, []), (6, ["a9a87"])], [[button(4, "75288", "450f5", "a0193"), button(6, "a9a87")]]),
+    ([(n, ["75288"]) for n in range(1, 10)], [[button(n, "75288") for n in range(1, 9)], [button(9, "75288")]]),
+    ([(n, ["75288"]) for n in range(1, 91)], [[button(n, "75288") for n in range(r, min(r + 8, 91))] for r in range(1, 91, 8)]),
+    ([(n, ["75288"]) for n in range(1, 92)], None),  # 91 buttons: over the cap, so no keyboard at all
+])
+def test_digest_keyboard_golden(numbered, rows):
+    markup = digest_keyboard(numbered)
+    assert markup == (None if rows is None else {"inline_keyboard": rows})
+    for row in (markup or {}).get("inline_keyboard", []):
+        assert len(row) <= 8
+        for b in row:
+            assert CALLBACK_RE.match(b["callback_data"]) and len(b["callback_data"].encode()) <= 64
+
+
+def test_digest_with_keyboard_numbers_each_part_and_groups_codes():
+    same = [rec(title="GIS Data Analyst", company="Pomerleau", canonical_id=f"p:{i}") for i in range(1, 5)]
+    parts = format_digest(same + [rec(title="LiDAR Technician", company="ScanCo", canonical_id="s:1")], now=STAMP, with_keyboard=True)
+    (text, covered, markup), = parts
+    assert len(covered) == 5 and "×4" in text
+    assert markup == {"inline_keyboard": [[button(1, "75288", "450f5", "a0193"), button(2, "a9a87")]]}  # three codes at most
+    many = [rec(title=f"GIS Analyst {i} " + "x" * 160, canonical_id=f"x:{i}") for i in range(40)]
+    parts = format_digest(many, now=STAMP, with_keyboard=True)
+    assert len(parts) > 1
+    for text, _, markup in parts:  # each part's buttons are the numbers that part shows
+        shown = re.findall(r"^(\d+)\. <b>", text, flags=re.M)
+        assert [b["text"] for row in markup["inline_keyboard"] for b in row] == shown
+    assert [len(p) for p in format_digest(many, now=STAMP)] == [2] * len(parts)  # without it: the usual pairs
+
+
+def test_send_puts_buttons_on_the_last_part_and_rings_only_once():
+    blocks = [f"{i}. <b>GIS Analyst {i}</b>\n   " + "detail " * 40 for i in range(40)]
+    text = "\n\n".join(blocks)
+    markup = {"inline_keyboard": [[button(1, "75288")]]}
+    s = FakeSession({URL: FakeResponse(200, {"ok": True})})
+    assert TelegramNotifier(TOKEN, "1", session=s, sleep=lambda x: None, delay_s=0).send(text, reply_markup=markup)[0]
+    payloads = [call[2] for call in s.calls]
+    assert len(payloads) > 1
+    assert [p.get("reply_markup") for p in payloads] == [None] * (len(payloads) - 1) + [markup]
+    assert [p.get("disable_notification", False) for p in payloads] == [False] + [True] * (len(payloads) - 1)
+    assert all(p["link_preview_options"] == {"is_disabled": True} and "disable_web_page_preview" not in p for p in payloads)
+    s = FakeSession({URL: FakeResponse(200, {"ok": True})})
+    TelegramNotifier(TOKEN, "1", session=s, sleep=lambda x: None, delay_s=0).send("weekly", silent=True)
+    assert s.calls[0][2]["disable_notification"] is True and "reply_markup" not in s.calls[0][2]
+    # the plain-text fallback keeps the buttons and the loudness of the original
+    s = FakeSession({URL: [FakeResponse(400, {"ok": False, "description": "Bad Request: can't parse entities"}), FakeResponse(200, {"ok": True})]})
+    TelegramNotifier(TOKEN, "1", session=s, sleep=lambda x: None, delay_s=0).send("<b>x", reply_markup=markup, silent=True)
+    assert s.calls[1][2]["reply_markup"] == markup and s.calls[1][2]["disable_notification"] is True
+
+
+def test_command_menu_is_published_per_chat_and_language_and_the_default_list_removed():
+    from geojobbot.notifications.commands import HELP
+    from geojobbot.notifications.telegram import BOT_COMMANDS, publish_commands
+
+    api = f"https://api.telegram.org/bot{TOKEN}/"
+    assert len(BOT_COMMANDS) == 12
+    for command, *descriptions in BOT_COMMANDS:
+        assert re.fullmatch(r"[a-z0-9_]{1,32}", command) and (f"/{command}" in HELP or command == "help")  # one the bot answers
+        assert all(1 <= len(d) <= 256 for d in descriptions)
+    s = FakeSession({api + "setMyCommands": FakeResponse(200, {"ok": True, "result": True}),
+                     api + "getMyCommands": FakeResponse(200, {"ok": True, "result": [{"command": "start", "description": "x"}]}),
+                     api + "deleteMyCommands": FakeResponse(200, {"ok": True, "result": True})})
+    steps = publish_commands(TOKEN, "-1001234", "4242", session=s)
+    sets = [call[2] for call in s.calls if call[1].endswith("/setMyCommands")]
+    assert [(p["scope"], p.get("language_code")) for p in sets] == [
+        ({"type": "chat", "chat_id": chat}, language) for chat in ("-1001234", "4242") for language in (None, "fr", "ar")]
+    assert [c["command"] for c in sets[1]["commands"]] == [c[0] for c in BOT_COMMANDS]
+    assert sets[2]["commands"][0]["description"] == "أفضل الوظائف المناسبة حاليًا"
+    assert s.calls[-1][1].endswith("/deleteMyCommands") and all(ok for _, ok, _ in steps)
+    assert not any("1234" in name or "4242" in name for name, _, _ in steps)  # chat ids are not printed
+    # a private chat: one scope; nothing left over: nothing deleted; a refusal is reported without the token
+    s = FakeSession({api + "setMyCommands": FakeResponse(400, {"ok": False, "description": f"Bad Request: chat not found bot{TOKEN}"}),
+                     api + "getMyCommands": FakeResponse(200, {"ok": True, "result": []})})
+    steps = publish_commands(TOKEN, "4242", "4242", session=s)
+    assert len(steps) == 3 and not any(ok for _, ok, _ in steps)
+    assert all(TOKEN not in detail and "chat not found" in detail for _, _, detail in steps)
+    assert not any(call[1].endswith("/deleteMyCommands") for call in s.calls)
