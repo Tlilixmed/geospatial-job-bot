@@ -192,6 +192,25 @@ def test_digest_buttons_need_the_webhook_and_only_the_first_part_with_a_high_mat
     assert "2 possible" in n.sent[0] and n.options == [(None, True)]  # Possible matches only: no ring
 
 
+def test_the_worker_knows_the_jobs_of_a_digest_before_its_buttons_can_be_tapped():
+    s3 = FakeS3()
+    known = []
+
+    class Tapper(FakeNotifier):  # what the Worker would read the moment the digest arrives
+        def send(self, text, reply_markup=None, silent=False):
+            if reply_markup:
+                index = StateManager(R2Store("b", client=s3)).read_json("state/index.json") or {"jobs": []}
+                codes = {job["code"] for job in index["jobs"]}
+                tapped = [b["callback_data"][2:7] for row in reply_markup["inline_keyboard"] for b in row]
+                known.append(all(code in codes for code in tapped))
+            return super().send(text, reply_markup, silent)
+
+    run(s3, [StaticBackend("feed", many_jobs(3))], Tapper(), telegram_buttons=True)
+    assert known == [True]
+    index = StateManager(R2Store("b", client=s3)).read_json("state/index.json")
+    assert index["run"]["alerted"] == 3  # the final write still carries the counts of the whole run
+
+
 def test_weekly_summary_sent_once_per_week():
     s3, n = FakeS3(), FakeNotifier()
     _, report = run(s3, [StaticBackend("feed", many_jobs(1))], n, weekly_summary=True)

@@ -487,6 +487,12 @@ function setHidden(prefs, job, hide, now) {
   return true;
 }
 
+/** The id of a recorded application from the code Python derives from it (for a job that left the index). */
+async function appliedId(prefs, code) {
+  for (const key of Object.keys(prefs.applied)) if (await codeOf(key) === code.toLowerCase()) return key;
+  return undefined;
+}
+
 /** Commands that change preferences. Returns the reply, or null to let Python handle the message. */
 async function mutate(env, index, prefs, command, arg) {
   const now = new Date().toISOString();
@@ -533,8 +539,7 @@ async function mutate(env, index, prefs, command, arg) {
     answer = `✅ Marked as applied: <b>${esc(job.t)}</b>. Good luck! I'll check in with you in a week; tell me how it goes with /outcome ${job.code} interview|rejected|offer.`;
   } else if (command === "unapply" && arg) {  // the undo of a mistaken "Applied" tap; there is no typed command for it
     const job = findByCode(index, arg);
-    let id = job ? job.id : undefined;
-    if (!id) for (const key of Object.keys(prefs.applied)) if (await codeOf(key) === arg.toLowerCase()) { id = key; break; }
+    const id = job ? job.id : await appliedId(prefs, arg);
     const info = id ? prefs.applied[id] : undefined;
     if (!info) return ["That job isn't recorded as applied."];
     // only a bare "applied" is undone: an interview, an offer or a mail already on record is history, not a mistake
@@ -726,7 +731,13 @@ const TAP_COMMANDS = { a: "applied", h: "hide", u: "unhide", r: "unapply" };
 const isGridRow = (row) => row.length > 0 && row.every((b) => String(b.callback_data || "").startsWith("m|"));
 
 function answerCq(env, id, text, alert) {
-  return botApi(env, "answerCallbackQuery", { callback_query_id: id, text: plain(text).slice(0, 200), show_alert: Boolean(alert), cache_time: 0 });
+  // at most 200 characters, cut between characters: half an emoji from a job title would make the only answer fail
+  let toast = "";
+  for (const char of plain(text)) {
+    if (toast.length + char.length > 200) break;
+    toast += char;
+  }
+  return botApi(env, "answerCallbackQuery", { callback_query_id: id, text: toast, show_alert: Boolean(alert), cache_time: 0 });
 }
 
 /** The number button of the entry whose first code is `first`, and what its label says was done to it. */
@@ -819,15 +830,15 @@ async function handleCallback(env, update, cq) {
       ok = true;
       return;
     }
+    // No shortcut from the label: it may be stale (a typed /unhide), and an unchanged state is not written anyway.
     const command = TAP_COMMANDS[action];
-    if (grid && { a: grid.applied, h: grid.hidden, u: !grid.hidden, r: !grid.applied }[action]) {  // the label already says so
-      ok = true;
-      return await answer("Already done");
-    }
-    const index = await readJson(env, INDEX_KEY);
+    // without the bucket nothing can be read here: the typed command goes to Python, like any other
+    const stored = env.INBOX ? await readJson(env, INDEX_KEY) : null;
+    // undo needs only the preferences (the application is found by its code), so it works without an index too
+    const index = stored && Array.isArray(stored.jobs) ? stored : (env.INBOX && command === "unapply" ? { jobs: [] } : null);
     let prefs = null;
     let result = null;
-    if (index && Array.isArray(index.jobs)) {
+    if (index) {
       const change = (fresh) => (command === "hide" || command === "unhide"
         ? mutateMany(env, index, fresh, command, codes) : mutate(env, index, fresh, command, codes[0]));
       prefs = await loadPrefs(env);
@@ -835,18 +846,26 @@ async function handleCallback(env, update, cq) {
       if (result === CONFLICT) result = await change(prefs = await loadPrefs(env));  // once more, on the fresh copy
     }
     if (result === CONFLICT) return await answer("⚠️ Your preferences were being changed at the same moment. Nothing was lost; tap again.", true);
-    if (result === null) {  // an older job: the full state is Python's, which answers the typed command
-      await answer("Not in the current list; handing over to the full history.", true);
+    if (result === null && command === "unapply") {  // Python has no /unapply: never hand it over
+      return await answer("Undo needs the Worker's INBOX binding. Nothing was changed.", true);
+    }
+    if (result === null) {  // an older job, or no bucket: the full state is Python's, which answers the typed command
+      await answer("Passed on to the full history; the answer follows in about a minute.");
       await dispatchToPython(env, update, `/${command} ${codes[0]}`, "");
       ok = true;
       return;
     }
     await answer(result[0]);
     ok = true;
-    if (grid) {
-      const jobs = codes.map((code) => findByCode(index, code)).filter(Boolean);
-      const state = { applied: jobs.length > 0 && Object.hasOwn(prefs.applied, jobs[0].id),
-        hidden: jobs.length > 0 && jobs.every((job) => prefs.hidden.includes(job.id)) };
+    if (grid) {  // the label says what is really stored now, whatever it said before
+      const ids = [];
+      for (const code of codes) {
+        const job = findByCode(index, code);
+        const id = job ? job.id : await appliedId(prefs, code);
+        if (id) ids.push(id);
+      }
+      const state = { applied: ids.length > 0 && Object.hasOwn(prefs.applied, ids[0]),
+        hidden: ids.length > 0 && ids.every((id) => prefs.hidden.includes(id)) };
       await setKeyboard(env, message, keyboardFor(keyboard, grid, state, true));
     }
   } catch (error) {

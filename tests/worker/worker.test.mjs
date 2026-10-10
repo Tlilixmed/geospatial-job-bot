@@ -539,8 +539,8 @@ test("Applied writes the application, relabels the number, and a second tap writ
   assert.equal(keyboard.length, 2);  // the old action row was replaced, not kept
   assert.deepEqual(actionRowOf(keyboard).map((b) => b.callback_data), ["r|419b7", "h|419b7", "w|419b7", "x|"]);
   const writes = h.writes.length;
-  await h.tap("a|419b7", { keyboard });  // the label already says so: answered without touching R2
-  assert.equal(h.of("answerCallbackQuery")[1].text, "Already done");
+  await h.tap("a|419b7", { keyboard });  // a second tap: mutate sees the application and writes nothing
+  assert.match(h.of("answerCallbackQuery")[1].text, /^Already recorded: GIS Analyst · applied/);
   assert.equal(h.writes.length, writes);
   await h.tap("a|419b7", { keyboard: GRID });  // a stale label: mutate sees the application and writes nothing either
   assert.match(h.of("answerCallbackQuery")[2].text, /^Already recorded: GIS Analyst · applied/);
@@ -576,10 +576,11 @@ test("Hide acts on every posting of a grouped entry, once, and Unhide brings the
   assert.equal(keyboard[0][1].text, "2🙈");
   assert.deepEqual(actionRowOf(keyboard).map((b) => b.callback_data), ["u|2fd2a33338a518c", "w|2fd2a", "x|"]);
   await h.tap("h|2fd2a33338a518c", { keyboard });
-  assert.equal(h.of("answerCallbackQuery")[1].text, "Already done");
+  assert.equal(h.of("answerCallbackQuery")[1].text, "🙈 Hidden: Surveyor ×3");
+  assert.equal(h.writes.length, 1);  // already hidden: nothing written
   await h.tap("u|2fd2a33338a518c", { keyboard });
   assert.deepEqual(h.stored("state/prefs.json").hidden, []);
-  assert.equal(h.of("editMessageReplyMarkup")[1].reply_markup.inline_keyboard[0][1].text, "2");
+  assert.equal(h.of("editMessageReplyMarkup").at(-1).reply_markup.inline_keyboard[0][1].text, "2");
   assert.equal(h.writes.length, 2);
   // a typed /hide of a job that is already hidden writes nothing either
   await h.say("/hide 419b7");
@@ -643,8 +644,8 @@ test("a code that left the index goes to Python as the tapped command, under the
   const grid = [[{ text: "1", callback_data: "m|806ad" }]];
   await h.tap("h|806ad", { keyboard: grid });
   assert.equal(h.stored("inbox/000000000100.json").text, "/hide 806ad");
-  assert.equal(h.of("answerCallbackQuery")[0].show_alert, true);
-  assert.match(h.of("answerCallbackQuery")[0].text, /Not in the current list/);
+  assert.equal(h.of("answerCallbackQuery")[0].show_alert, false);  // "On it" follows as a message: a toast is enough
+  assert.match(h.of("answerCallbackQuery")[0].text, /^Passed on to the full history/);
   await h.tap("u|806ad", { keyboard: [[{ text: "1🙈", callback_data: "m|806ad" }]] });
   assert.equal(h.stored("inbox/000000000101.json").text, "/unhide 806ad");
   await h.tap("a|806ad", { keyboard: grid });
@@ -703,4 +704,61 @@ test("replies: silent answers, loud news, one retry after flood control, plain t
     assert.equal(refused.sent.length, 1);
     assert.ok(logged.some((line) => line.startsWith("reply not delivered") && line.includes("403")));
   });
+});
+
+test("without the INBOX binding a tap hands the typed command to Python; Undo is never handed over", async () => {
+  await capturingLogs(async (logged) => {
+    const h = harness({ index: buttonsIndex(), inbox: false });
+    await h.tap("a|419b7", { keyboard: GRID });
+    await h.tap("h|2fd2a33338a518c", { keyboard: GRID });
+    await h.tap("u|419b7", { keyboard: GRID });
+    assert.deepEqual(h.dispatched.map((d) => d.inputs.text), ["/applied 419b7", "/hide 2fd2a", "/unhide 419b7"]);
+    await h.tap("r|419b7", { keyboard: [[{ text: "1✅", callback_data: "m|419b7" }]] });
+    assert.equal(h.dispatched.length, 3);
+    const answers = h.of("answerCallbackQuery");
+    assert.equal(answers.length, 4);
+    assert.match(answers[3].text, /^Undo needs the Worker's INBOX binding/);
+    assert.equal(answers[3].show_alert, true);
+    assert.ok(!logged.some((line) => line.startsWith("callback error")));
+  });
+});
+
+test("Undo works from the preferences alone when the index is missing, and never asks Python for /unapply", async () => {
+  const applied = { "gh:acme:1": { title: "GIS Analyst", status: "applied", at: iso(5), history: [{ at: iso(5), status: "applied" }] } };
+  const h = harness({ prefs: { applied } });
+  await h.tap("r|419b7", { keyboard: [[{ text: "1✅", callback_data: "m|419b7" }]] });
+  assert.deepEqual(h.stored("state/prefs.json").applied, {});
+  assert.match(h.of("answerCallbackQuery")[0].text, /No longer marked as applied: GIS Analyst/);
+  assert.equal(h.of("editMessageReplyMarkup")[0].reply_markup.inline_keyboard[0][0].text, "1");
+  await h.tap("r|419b7", { keyboard: [[{ text: "1✅", callback_data: "m|419b7" }]] });
+  assert.equal(h.of("answerCallbackQuery")[1].text, "That job isn't recorded as applied.");
+  assert.deepEqual(h.dispatched, []);
+  assert.ok(![...h.objects.keys()].some((key) => key.startsWith("inbox/")));
+});
+
+test("a stale label is not trusted: Hide after a typed /unhide hides again", async () => {
+  const h = harness({ index: buttonsIndex() });
+  await h.tap("h|419b7", { keyboard: GRID });
+  const keyboard = h.of("editMessageReplyMarkup")[0].reply_markup.inline_keyboard;
+  assert.equal(keyboard[0][0].text, "1🙈");
+  await h.say("/unhide 419b7");
+  assert.deepEqual(h.stored("state/prefs.json").hidden, []);
+  await h.tap("h|419b7", { keyboard });  // the label still says hidden
+  assert.deepEqual(h.stored("state/prefs.json").hidden, ["gh:acme:1"]);
+  assert.match(h.of("answerCallbackQuery")[1].text, /^🙈 Hidden: GIS Analyst/);
+  // and Unhide from a label that says visible restores it, relabelling from what is stored
+  await h.tap("u|419b7", { keyboard: GRID });
+  assert.deepEqual(h.stored("state/prefs.json").hidden, []);
+  assert.equal(h.of("editMessageReplyMarkup").at(-1).reply_markup.inline_keyboard[0][0].text, "1");
+});
+
+test("a toast is cut at 200 characters between characters, never through an emoji", async () => {
+  const prefix = "✅ Marked as applied: ";
+  const title = `${"x".repeat(199 - prefix.length)}🌍 Survey`;  // the globe's first half would be character 200
+  const h = harness({ index: makeIndex([job("gh:acme:1", { t: title })]) });
+  await h.tap("a|419b7", { keyboard: GRID });
+  const [answer] = h.of("answerCallbackQuery");
+  assert.ok(answer.text.isWellFormed());
+  assert.equal(answer.text.length, 199);
+  assert.ok(answer.text.endsWith("x"));
 });

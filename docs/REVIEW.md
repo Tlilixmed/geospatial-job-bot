@@ -213,6 +213,7 @@ and Adzuna stays under 25 calls a minute. France Travail is asked newest-first, 
 - **F66 · dashboard: malformed percent-encoding in the key threw (HTTP 500 reveals the dashboard is on); view anchors not restricted to http(s); `/outcome code constructor` accepted a prototype key · [fixed]**
 - **F67 · Worker `/why` lacked the deadline/repost/skills line; tie order, signals selection and snapshot sizes differed slightly between the two sides · [fixed]**
 - **F68 · Worker `reply()` answered any failure, a 429 included, with an immediate plain resend showing literal `&amp;`, and logged nothing when that failed too; loudness was tied to the markup (every HTML reply rang, the watchdog and "Worker error" were silent); `/hide` of a hidden job wrote prefs again · [fixed]** Now: one resend of the same HTML after `retry_after` (at most 5 s), decoded plain text only on "can't parse entities", a log line for the rest, about 1 s between parts. `telegram()` takes an explicit `silent`: replies to a command and "On it" are quiet; mail outcomes, the watchdog and errors ring. Python digests ring once, on the first part, and only with a High match; Possible-only digests, continuation parts, the weekly summary, the radar and market signals are quiet; deadline reminders ring. `link_preview_options` replaces `disable_web_page_preview` on both sides.
+- **F69 · digest buttons, second review: without the `INBOX` binding every Applied/Hide tap failed with a generic toast; Undo with no index asked Python for an `/unapply` it does not have; a stale label ("1🙈" after a typed `/unhide`) answered "Already done" and changed nothing; a keyboard Telegram refuses blocked the digest for good; toasts were cut through an emoji; the index reached the Worker only after the reminders and reports, so a tap right after the ring went the slow way · [fixed]** Now: without the bucket a tap hands the typed command to Python; Undo works from the preferences alone and is never handed over; taps always act on the stored state (an unchanged state is still not written) and relabel from it; a refused keyboard is dropped and the message sent without it; toasts are cut between characters; a run that sends buttons publishes the index before the alerts, and again at the end with the final counts.
 
 **How the Telegram batch was fixed (F58–F67).** Free text: typo repair opens views but never writes (writes are matched on
 the words as typed), and a question never writes ("can you hide a3f9c?" is a request, not a question); "resume", "prefer",
@@ -251,8 +252,8 @@ and the step follows from the status on record. `/ask` is wired on both sides.
 
 ## State of the review
 
-Every row above has a status. 68 findings: 67 fixed, 1 recorded as an idea (F7). Tests went from 280 to 475 (Python) and from 17
-to 32 (Worker). Not verifiable from the development machine, and therefore to watch in the next runs: the AI model chain
+Every row above has a status. 69 findings: 68 fixed, 1 recorded as an idea (F7). Tests went from 280 to 478 (Python) and from 17
+to 36 (Worker). Not verifiable from the development machine, and therefore to watch in the next runs: the AI model chain
 (the token lives in GitHub secrets; the last model of the chain is the one that worked before), France Travail live answers,
 and the first run after deployment, which rescores stored matches (`rescored_from_text` in the run summary) and may carry
 over alerts that were held back earlier (`carried_over`).

@@ -184,6 +184,28 @@ def test_send_puts_buttons_on_the_last_part_and_rings_only_once():
     assert s.calls[1][2]["reply_markup"] == markup and s.calls[1][2]["disable_notification"] is True
 
 
+@pytest.mark.parametrize("bad_html", [False, True])
+def test_a_refused_keyboard_never_blocks_the_alert(bad_html, caplog):
+    def telegram(method, url, params, payload):  # refuses every keyboard (too many buttons, a malformed row)
+        if bad_html and payload.get("parse_mode"):
+            return FakeResponse(400, {"ok": False, "description": "Bad Request: can't parse entities"})
+        if "reply_markup" in payload:
+            return FakeResponse(400, {"ok": False, "description": "Bad Request: reply markup is too long"})
+        return FakeResponse(200, {"ok": True})
+
+    markup = {"inline_keyboard": [[button(1, "75288")]]}
+    s = FakeSession({URL: telegram})
+    assert TelegramNotifier(TOKEN, "1", session=s, sleep=lambda x: None, delay_s=0).send("<b>x</b>", reply_markup=markup, silent=True) == (True, None)
+    last = s.calls[-1][2]
+    assert "reply_markup" not in last and last["disable_notification"] is True
+    assert last.get("parse_mode") == (None if bad_html else "HTML")  # the form that got past the markup check
+    assert "buttons refused" in caplog.text and TOKEN not in caplog.text
+    # a refusal that is not about the request (the bot was blocked) is not retried without the buttons
+    s = FakeSession({URL: FakeResponse(403, {"ok": False, "description": "Forbidden: bot was blocked by the user"})})
+    ok, _ = TelegramNotifier(TOKEN, "1", session=s, sleep=lambda x: None, delay_s=0).send("x", reply_markup=markup)
+    assert not ok and len(s.calls) == 1
+
+
 def test_command_menu_is_published_per_chat_and_language_and_the_default_list_removed():
     from geojobbot.notifications.commands import HELP
     from geojobbot.notifications.telegram import BOT_COMMANDS, publish_commands

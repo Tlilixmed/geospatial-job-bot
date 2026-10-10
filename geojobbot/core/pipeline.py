@@ -320,6 +320,13 @@ class Pipeline:
         if notifier is None and settings.telegram_configured and not settings.dry_run:
             notifier = TelegramNotifier(settings.telegram_bot_token, settings.telegram_chat_id,
                                         delay_s=settings.telegram_delay_s, sleep=self.sleep)
+        if writes_allowed and selected and notifier is not None and settings.telegram_buttons and settings.alert_format != "individual":
+            # a tap usually comes right after the ring: the Worker must already know this run's jobs, not only after
+            # the reminders, snapshots and reports below (the final write still refreshes the counts)
+            try:
+                self._write_index(manager, report, state)
+            except (StorageError, ConcurrentModificationError) as exc:
+                log.warning("index not published before the alerts: %s", type(exc).__name__)
         for number, (message, batch, buttons) in enumerate(self._alert_messages(selected)):
             if settings.dry_run:
                 print("\n--- DRY RUN ALERT ---\n" + message)
@@ -735,10 +742,7 @@ class Pipeline:
             full = dict(report, counts=dict(report["counts"]), diagnostics=diagnostics_rows(outcome.evaluated))
             manager.write_json(f"runs/{day}/{self.run_id}.json.gz", full, compress=True)
             manager.write_json("runs/latest.json", dict(report, counts=dict(report["counts"])), compress=False)
-            # read model for the Cloudflare Worker's instant replies
-            prefs = load_prefs(manager)
-            manager.write_json(INDEX_SUFFIX, build_index(state, self.settings, report, self.now, HELP, views=self._views(manager, state, prefs),
-                                                         skills=radar.my_skills(self.settings, prefs)), compress=False)
+            self._write_index(manager, report, state)
             maintenance = state.setdefault("maintenance", {})
             last = parse_datetime(maintenance.get("last_cleanup"))
             if last is None or self.now - last > timedelta(hours=24):
@@ -751,6 +755,12 @@ class Pipeline:
         except (StorageError, ConcurrentModificationError) as exc:
             log.warning("writing run artifacts failed: %s", exc)
             report["artifact_error"] = str(exc)
+
+    def _write_index(self, manager: StateManager, report: dict, state: dict) -> None:
+        """The read model for the Cloudflare Worker's instant replies and digest buttons."""
+        prefs = load_prefs(manager)
+        manager.write_json(INDEX_SUFFIX, build_index(state, self.settings, report, self.now, HELP, views=self._views(manager, state, prefs),
+                                                     skills=radar.my_skills(self.settings, prefs)), compress=False)
 
     def _views(self, manager: StateManager, state: dict, prefs: dict | None = None) -> dict:
         """Replies formatted here so the Worker can send them instantly ({command: html})."""

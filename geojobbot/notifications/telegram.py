@@ -315,13 +315,20 @@ class TelegramNotifier:
         part whose markup Telegram refuses is sent again as plain text, so a reply is never lost to a stray '<'.
 
         `reply_markup` (the digest buttons) goes on the last part, under the entries it numbers. Only the first part
-        of a message that is not `silent` makes the phone ring: the rest arrive quietly."""
+        of a message that is not `silent` makes the phone ring: the rest arrive quietly. A keyboard Telegram refuses
+        is dropped, so an alert never depends on its buttons."""
         parts = split_message(text)
         for number, part in enumerate(parts):
-            extra = {"reply_markup": reply_markup if number == len(parts) - 1 else None, "silent": silent or number > 0}
-            ok, error = self._send_part(part, as_html=True, **extra)
+            markup = reply_markup if number == len(parts) - 1 else None
+            quiet = silent or number > 0
+            ok, error = self._send_part(part, True, markup, quiet)
+            as_html = True
             if not ok and error and "parse entities" in error.lower():
-                ok, error = self._send_part(html.unescape(re.sub(r"<[^>]+>", "", part)), as_html=False, **extra)
+                part, as_html = html.unescape(re.sub(r"<[^>]+>", "", part)), False
+                ok, error = self._send_part(part, as_html, markup, quiet)
+            if not ok and markup and error and error.startswith("HTTP 400"):
+                log.warning("buttons refused, message sent without them: %s", error)
+                ok, error = self._send_part(part, as_html, None, quiet)
             if not ok:
                 return False, error
         return True, None

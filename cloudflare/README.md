@@ -67,6 +67,8 @@ GitHub repository → **Settings → Secrets and variables → Actions → Varia
 carry one-tap buttons: a number per job, and under the number you tap ✅ Applied, 🙈 Hide, ❓ Why (with ↩️ to undo).
 Only the Worker can answer a tap, which is why the buttons wait for this variable. Only the owner's taps count: in a
 group, set `TELEGRAM_OWNER_ID` (see *Which chat?* below), or every tap is refused.
+Without the bucket of step 6 a tap still works, the slow way: it starts the commands workflow like the typed command
+(reply in about a minute), and ↩️ Undo needs the bucket.
 
 ## 6. Bind the bucket: instant replies and a private hand-over
 This one binding does two things. It lets the Worker read `state/index.json` and read/write `state/prefs.json`, which
