@@ -200,6 +200,7 @@ def test_the_worker_knows_the_jobs_of_a_digest_before_its_buttons_can_be_tapped(
     class Tapper(FakeNotifier):  # what the Worker would read the moment the digest arrives
         def send(self, text, reply_markup=None, silent=False):
             if reply_markup:
+                assert b'": ' not in s3.objects["state/index.json"]  # compact like the final copy (CPU budget)
                 index = StateManager(R2Store("b", client=s3)).read_json("state/index.json") or {"jobs": []}
                 codes = {job["code"] for job in index["jobs"]}
                 tapped = [b["callback_data"][2:7] for row in reply_markup["inline_keyboard"] for b in row]
@@ -298,11 +299,13 @@ def test_the_run_report_survives_an_index_that_cannot_be_stored_or_built(monkeyp
         raise KeyError("a bug")
 
     monkeypatch.setattr(pipeline, "build_index", broken)
-    s3 = FakeS3()
-    with pytest.raises(KeyError):  # a bug still fails the run loudly...
-        run(s3, [StaticBackend("feed", [gis_raw()])], FakeNotifier())
-    latest = StateManager(R2Store("b", client=s3)).read_json("runs/latest.json")  # ...after the report is written
-    assert latest["artifact_error"] == "state/index.json not built (KeyError)"
+    for buttons in (False, True):  # with buttons the index is also built before the alerts: it must not hold them back
+        s3, n = FakeS3(), FakeNotifier()
+        with pytest.raises(KeyError):  # a bug still fails the run loudly...
+            run(s3, [StaticBackend("feed", [gis_raw()])], n, telegram_buttons=buttons)
+        latest = StateManager(R2Store("b", client=s3)).read_json("runs/latest.json")  # ...after the report is written
+        assert latest["artifact_error"] == "state/index.json not built (KeyError)"
+        assert len(n.sent) == 1 and latest["counts"]["alerts_sent"] == 1, buttons
 
 
 def test_run_summary_reports_sizes_and_warns_above_the_limits():

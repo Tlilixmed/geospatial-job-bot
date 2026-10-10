@@ -31,11 +31,11 @@ Findings are numbered `F1, F2…` and carry their evidence, so a fix can be trac
 | 15 | Deadlines and reposts | `_timing`, `insights/timing.py` | [fixed] F19–F21 |
 | 16 | Salaries in euros | `_salaries`, `insights/fx.py` | [fixed] F22, F23, F38 |
 | 17 | Prune state, checkpoint save | `core/jobs.prune_state`, `StateManager.save` | [ok] |
-| 18 | Alert selection (tiers, watch list, mutes, cap), digest, delivery marking | `core/jobs.select_alerts`, `notifications/telegram.py` | [fixed] F39, F44, F60, F64, F73, F74 |
+| 18 | Alert selection (tiers, watch list, mutes, cap), digest, delivery marking | `core/jobs.select_alerts`, `notifications/telegram.py` | [fixed] F39, F44, F60, F64, F73, F74, F79 |
 | 19 | Weekly summary, follow-ups, deadline reminders | `_weekly_summary`, `_follow_ups`, `_deadline_reminders` | [ok] reminders use the same muting rule now (F60) |
 | 20 | Insights: procurement signals, EU tenders, monthly radar | `_insights`, `insights/signals.py`, `insights/radar.py` | [fixed] F43 |
 | 21 | Health notices | `core/health.py` | [ok] |
-| 22 | Final save, run report, raw snapshots, Worker index, retention | `_write_artifacts`, `core/index.py`, `core/report.py` | [fixed] F37, F63, F78 |
+| 22 | Final save, run report, raw snapshots, Worker index, retention | `_write_artifacts`, `core/index.py`, `core/report.py` | [fixed] F37, F63, F78, F79 |
 
 ## 2. Sources
 
@@ -83,7 +83,7 @@ Findings are numbered `F1, F2…` and carry their evidence, so a fix can be trac
 | Scraper workflow (cron 2 h, push, stale-commit guard, keep-alive) | `.github/workflows/scraper.yml` | [ok] new variables passed through (`AI_MODELS`, `AI_SECOND_CHANCES_PER_RUN`…); `AI_TIME_BUDGET_SECONDS` added |
 | Commands workflow (webhook dispatch, private inbox) | `.github/workflows/commands.yml` | [fixed] F65: inbox items older than six hours are reported, not run; F77 |
 | Tests workflow (pytest + node) | `.github/workflows/tests.yml` | [ok] |
-| Worker: webhook, instant replies, prefs writes, dashboard, run filler and watchdog, email | `cloudflare/worker.js` | [fixed] F58, F60–F67, F73–F75, F78 |
+| Worker: webhook, instant replies, prefs writes, dashboard, run filler and watchdog, email | `cloudflare/worker.js` | [fixed] F58, F60–F67, F73–F75, F78, F79 |
 | Storage: R2, local, backups, conflicts, retention | `geojobbot/storage/` | [fixed] F76 (conditional put); see step 1 |
 | HTTP client: delays, retries, robots, challenge detection, size limits | `geojobbot/utils/http.py`, `utils/robots.py` | [fixed] F51, F52 |
 | Secrets and logging redaction | `config.py`, `pipeline.SecretRedactingFilter` | [ok] no secret reaches a log line or an error text in the paths touched this round |
@@ -316,6 +316,18 @@ and the step follows from the status on record. `/ask` is wired on both sides.
   and 1 MB. The index is written in its own step: a failed index write no longer takes the run report with it, and
   the summary says so.
 
+### Integration of the 2026-10-10 branches (F68–F78)
+
+- **F79 · the four branches were built apart, and three of their meeting points were wrong once merged · [fixed]** The
+  digest buttons publish the index before the alerts, outside the step F78 guards: a bug in `build_index` stopped the
+  run before any alert went out (it is now logged there and raised by the final write, after the alerts and the run
+  report), and that early copy was pretty-printed (it goes through the same compact writer now). F73 made `telegram()`
+  ring unless told `silent`, while the filler's two recovery notes relied on the old rule that plain text is quiet:
+  they pass `silent` now, and `ring()` says `false` explicitly. Checked and left alone: Oracle needs nothing like the
+  Workday paging fix of F56 (live, 2026-10-10: `TotalJobsCount` is the same on every page, 4,049 at offsets 0 and 200
+  for WSP, 283 for "GIS" on both pages, and a page past the end is empty); `SCORER_VERSION` 3 is only referenced by
+  name in the other branches' tests; button taps handed to Python run through the conditional prefs write of F76.
+
 ### Opportunities recorded (not bugs)
 
 - **O1 · inline Yes/No buttons for writes derived from free text, and buttons under digests (`callback_query`) · [partly done]**
@@ -345,8 +357,8 @@ and the step follows from the status on record. `/ask` is wired on both sides.
 
 ## State of the review
 
-Every row above has a status. 71 findings: 70 fixed, 1 recorded as an idea (F7). Tests went from 280 to 692 (Python) and from 17
-to 23 (Worker). Not verifiable from the development machine, and therefore to watch in the next runs: the AI model chain
+Every row above has a status. 79 findings: 78 fixed, 1 recorded as an idea (F7). Tests went from 280 to 792 (Python) and from 17
+to 39 (Worker). Not verifiable from the development machine, and therefore to watch in the next runs: the AI model chain
 (the token lives in GitHub secrets; the last model of the chain is the one that worked before), France Travail live answers,
 and the first run after deployment, which rescores stored matches (`rescored_from_text` in the run summary) and may carry
 over alerts that were held back earlier (`carried_over`).

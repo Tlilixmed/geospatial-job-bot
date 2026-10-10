@@ -323,7 +323,7 @@ class Pipeline:
             # the reminders, snapshots and reports below (the final write still refreshes the counts)
             try:
                 self._write_index(manager, report, state)
-            except (StorageError, ConcurrentModificationError) as exc:
+            except Exception as exc:  # never holds the alerts back: the final write records it, and raises a bug again
                 log.warning("index not published before the alerts: %s", type(exc).__name__)
         for number, (message, batch, buttons) in enumerate(self._alert_messages(selected)):
             if settings.dry_run:
