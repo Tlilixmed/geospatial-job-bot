@@ -728,13 +728,16 @@ class Pipeline:
                         safe = source.replace(":", "_").replace("/", "_")
                         manager.write_jsonl_gz(f"raw/{day}/{self.run_id}/{safe}.jsonl.gz", rows)
                         report["storage"]["snapshots"] += 1
+            # read model for the Cloudflare Worker's instant replies; compact, because the Worker parses it on every
+            # message within a 10 ms CPU budget (Workers Free). Written first, so the run report can give its size.
+            prefs = load_prefs(manager)
+            manager.write_json(INDEX_SUFFIX, build_index(state, self.settings, report, self.now, HELP, views=self._views(manager, state, prefs),
+                                                         skills=radar.my_skills(self.settings, prefs)), compress=False, compact=True)
+            report["storage"].update(state_bytes=manager.sizes.get(manager.state_key),
+                                     index_bytes=manager.sizes.get(manager.key(INDEX_SUFFIX)))
             full = dict(report, counts=dict(report["counts"]), diagnostics=diagnostics_rows(outcome.evaluated))
             manager.write_json(f"runs/{day}/{self.run_id}.json.gz", full, compress=True)
             manager.write_json("runs/latest.json", dict(report, counts=dict(report["counts"])), compress=False)
-            # read model for the Cloudflare Worker's instant replies
-            prefs = load_prefs(manager)
-            manager.write_json(INDEX_SUFFIX, build_index(state, self.settings, report, self.now, HELP, views=self._views(manager, state, prefs),
-                                                         skills=radar.my_skills(self.settings, prefs)), compress=False)
             maintenance = state.setdefault("maintenance", {})
             last = parse_datetime(maintenance.get("last_cleanup"))
             if last is None or self.now - last > timedelta(hours=24):

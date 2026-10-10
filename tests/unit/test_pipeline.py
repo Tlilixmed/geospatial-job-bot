@@ -227,3 +227,28 @@ def test_run_publishes_the_index_the_worker_answers_from():
     assert entry["id"] == "static:1" and entry["code"] == job_code("static:1") and entry["tier"] == "high"
     assert entry["t"] == "GIS Analyst" and entry["c"] == "Acme" and entry["url"] == "https://acme.example/jobs/1"
     assert entry["rel"] is True and entry["seen"] and entry["bd"]["title"] > 0 and entry["src"] == ["static"]
+    raw = s3.objects["state/index.json"]
+    assert b"\n" not in raw and b'", "' not in raw and b'": ' not in raw  # compact: the Worker parses it on every message
+    assert b'": ' in s3.objects["runs/latest.json"]                     # the other artifacts stay readable
+    latest = StateManager(R2Store("b", client=s3)).read_json("runs/latest.json")
+    assert latest["storage"]["index_bytes"] == len(raw)
+    assert latest["storage"]["state_bytes"] > 0  # gzipped bytes of the state saved before the artifacts
+
+
+def test_run_summary_reports_sizes_and_warns_above_the_limits():
+    from geojobbot.core.report import build_markdown, build_summary
+
+    base = {"run_id": "r", "sources": [], "counts": {}, "storage": {"backend": "r2", "loaded": True, "saved": True}}
+    cases = [  # (state bytes, index bytes, warnings expected)
+        (None, None, []),
+        (2_100_000, 640_000, []),
+        (8_000_001, 640_000, ["the state is 8.00 MB gzipped (warning above 8.00 MB)"]),
+        (2_100_000, 1_200_000, ["state/index.json is 1.20 MB (warning above 1.00 MB)"]),
+    ]
+    for state_bytes, index_bytes, expected in cases:
+        report = dict(base, storage=dict(base["storage"], state_bytes=state_bytes, index_bytes=index_bytes))
+        summary = build_summary(report)
+        warnings = [line for line in summary.splitlines() if "WARNING" in line]
+        assert len(warnings) == len(expected) and all(e in w for e, w in zip(expected, warnings)), (state_bytes, index_bytes, warnings)
+        assert ("Sizes: state 2,100,000 bytes gzipped" in summary) == (state_bytes == 2_100_000)
+        assert ("### ⚠️ Storage size" in build_markdown(report)) == bool(expected)

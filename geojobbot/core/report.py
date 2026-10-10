@@ -37,6 +37,26 @@ def _status_line(result: dict) -> str:
     return f"  {result['name']}: {result['status']}{suffix}"
 
 
+STATE_WARN_BYTES = 8_000_000   # gzipped; ~210 B a job, so a pruning regression shows here long before R2 minds
+INDEX_WARN_BYTES = 1_000_000   # the Worker parses the index on every message, within 10 ms of CPU on Workers Free
+
+
+def _mb(size: int) -> str:
+    return f"{size / 1e6:.2f} MB"
+
+
+def size_warnings(report: dict) -> list[str]:
+    storage = report.get("storage") or {}
+    warnings = []
+    if (storage.get("state_bytes") or 0) > STATE_WARN_BYTES:
+        warnings.append(f"the state is {_mb(storage['state_bytes'])} gzipped (warning above {_mb(STATE_WARN_BYTES)}): "
+                        "check that old jobs are still pruned")
+    if (storage.get("index_bytes") or 0) > INDEX_WARN_BYTES:
+        warnings.append(f"state/index.json is {_mb(storage['index_bytes'])} (warning above {_mb(INDEX_WARN_BYTES)}): "
+                        "the Worker may run out of CPU; trim the near misses it lists")
+    return warnings
+
+
 def build_summary(report: dict) -> str:
     lines = ["=" * 60, "RUN SUMMARY", "=" * 60, f"Run {report.get('run_id')} · code {report.get('code') or 'local'}",
              "", "Sources:"]
@@ -100,6 +120,12 @@ def build_summary(report: dict) -> str:
         f"  State saved: {'YES' if report['storage']['saved'] else 'NO'}",
         f"  Raw snapshots stored: {report['storage'].get('snapshots', 0)}",
         f"  Jobs in state: {c.get('jobs_in_state', 0)}",
+    ]
+    storage = report["storage"]
+    if storage.get("state_bytes") or storage.get("index_bytes"):
+        lines.append(f"  Sizes: state {storage.get('state_bytes') or 0:,} bytes gzipped · index {storage.get('index_bytes') or 0:,} bytes")
+    lines += [f"  WARNING: {warning}" for warning in size_warnings(report)]
+    lines += [
         "",
         f"HTTP: {report.get('http', {}).get('requests', 0)} requests, "
         f"{report.get('http', {}).get('retries', 0)} retries, errors {report.get('http', {}).get('errors', {})}",
@@ -123,6 +149,8 @@ def build_markdown(report: dict) -> str:
     invalid = {k: v for k, v in report.get("invalid_configured", {}).items() if v}
     if invalid:
         md += ["", "### ⚠️ Invalid configured sources"] + [f"- **{k}**: {', '.join(v)}" for k, v in invalid.items()]
+    if size_warnings(report):
+        md += ["", "### ⚠️ Storage size"] + [f"- {warning}" for warning in size_warnings(report)]
     if report.get("fatal"):
         md += ["", f"### ❌ Fatal: {report['fatal']}"]
     md += ["", "```", build_summary(report), "```"]
