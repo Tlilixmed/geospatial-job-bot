@@ -21,7 +21,7 @@ Findings are numbered `F1, F2…` and carry their evidence, so a fix can be trac
 | 5 | Extraction phase, parallel | `_run_phase("extraction")` | [fixed] F47, F49–F52, F54, F56, F57 |
 | 6 | Raw volume per source recorded | `insights/yields.record_run` | [ok] |
 | 7 | Fusion: identity keys, grouping, field authority | `core/fusion.py` | [fixed] F31, F32, F34, F50 |
-| 8 | Scoring and state merge, change detection, AI veto carried over | `core/jobs.process_fused`, `matching/` | [fixed] F8–F17, F29, F30, F33, F68–F70, title-only sightings (see Sources notes) |
+| 8 | Scoring and state merge, change detection, AI veto carried over | `core/jobs.process_fused`, `matching/` | [fixed] F8–F17, F29, F30, F33, F68–F71, title-only sightings (see Sources notes) |
 | 9 | Descriptions of accepted jobs kept | `_keep_descriptions`, `core/descriptions.py` | [fixed] F36, F42 |
 | 10 | Sponsor registers: weekly refresh, lookup, bonus | `_sponsors`, `insights/sponsors.py` | [fixed] F24 |
 | 11 | Learning nudges | `_learning`, `insights/learning.py` | [fixed] F27, F38 |
@@ -241,6 +241,18 @@ and the step follows from the status on record. `/ask` is wired on both sides.
   and theodolite backed a "Surveyor" / "Mapping" title although they are rejected elsewhere (cameras, eye care, fleet
   software, metrology), while survey software and French survey works did not count. Two older windows (Google Earth
   Engine, Leaflet) crossed sentences; every window now stops at `.`, `;` and line ends.
+- **F71 · the new terms leaked into ordinary wording of other trades, each one enough to add a family to a generic title or
+  back a weak one · [fixed]** Found by two independent reviews of F68–F70: "Salary TBC, AutoCAD" read as Trimble Business
+  Center; "Microsoft Sentinel 3+ years" as the Sentinel-3 satellite; "multi-beam antennas for high data rate links" as
+  bathymetry; "détection réseaux" in a SOC (NDR, logs) as DT-DICT work; a warehouse WMS next to Kronos WFS as OGC services;
+  "Trimble GPS fleet tracking" as a survey instrument; "chaque classe a 12 élèves" as precision class A; museum "récolement
+  du fonds", "implantation de boîtiers GPS" and "implantation … de nos magasins" as survey works. Arabic went the other way:
+  "كمساح", "ومساح", "مساحو" and the titles "مدير المساحة", "مراقب مساحة", "مسؤول مساحة" were lost (the last three no longer
+  passed the title prefilter), while "مساحه" (area) and "مساحيق" (powders) still made a title geospatial. Each case is a
+  golden row; the corpus scores did not move (0 changes against F68–F70, so the 5 tier changes above stand). Bare `gps` and
+  `rtk` no longer back a weak title either (survey GPS, RTK GPS and GNSS still do), and `/skills add Trimble Business
+  Center` now stores the canonical name the radar counts. Term extraction skips the Arabic patterns for text without Arabic
+  letters; scoring is still about 1.4× slower than before F68 (281 term patterns instead of 189).
 
 ### Opportunities recorded (not bugs)
 
@@ -262,7 +274,7 @@ and the step follows from the status on record. `/ask` is wired on both sides.
 
 ## State of the review
 
-Every row above has a status. 70 findings: 69 fixed, 1 recorded as an idea (F7). Tests went from 280 to 635 (Python) and from 17
+Every row above has a status. 71 findings: 70 fixed, 1 recorded as an idea (F7). Tests went from 280 to 692 (Python) and from 17
 to 23 (Worker). Not verifiable from the development machine, and therefore to watch in the next runs: the AI model chain
 (the token lives in GitHub secrets; the last model of the chain is the one that worked before), France Travail live answers,
 and the first run after deployment, which rescores stored matches (`rescored_from_text` in the run summary) and may carry

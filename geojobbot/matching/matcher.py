@@ -194,10 +194,16 @@ def work_authorization(text: str, location: dict, cfg: P.MatchConfig) -> tuple[b
     return required, offered
 
 
+_ARABIC_RE = re.compile(f"[{ARABIC_LETTERS}]")
+
+
 @lru_cache(maxsize=None)
-def _compiled_terms(kind: str):
+def _compiled_terms(kind: str, arabic: bool = True):
+    """Each term with its patterns. Without Arabic letters in the text the Arabic patterns are left out: most postings
+    have none, and every pattern is a pass over the whole posting."""
     source = {"tech": P.TECH_SKILLS, "domain": P.DOMAIN_TERMS, "resp": P.RESPONSIBILITY_TERMS}[kind]
-    return [(term, [re.compile(p, re.IGNORECASE | re.DOTALL) for p in term.patterns]) for term in source]
+    return [(term, [re.compile(p, re.IGNORECASE | re.DOTALL) for p in term.patterns if arabic or not _ARABIC_RE.search(p)])
+            for term in source]
 
 
 def classify_title(title: str, extra_negatives: tuple[str, ...] = ()) -> tuple[str, int, str | None, str | None]:
@@ -263,7 +269,8 @@ def _qualifier(text: str, start: int, end: int) -> str | None:
 def extract_terms(text: str, kind: str) -> list[TermHit]:
     """Extract canonical terms (variants collapse to one canonical name; each counted once)."""
     hits: dict[str, TermHit] = {}
-    for term, patterns in _compiled_terms(kind):
+    compiled = _compiled_terms(kind, bool(_ARABIC_RE.search(text)))
+    for term, patterns in compiled:
         for rx in patterns:
             m = rx.search(text)
             if m:
@@ -271,7 +278,7 @@ def extract_terms(text: str, kind: str) -> list[TermHit]:
                                                _qualifier(text, m.start(), m.end()) if kind == "tech" else None)
                 break
     # context guards
-    for term, _ in _compiled_terms(kind):
+    for term, _ in compiled:
         if term.requires and term.canonical in hits and term.requires not in hits and not (
             term.requires == "ArcGIS" and "ArcGIS Pro" in hits
         ):
