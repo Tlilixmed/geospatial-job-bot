@@ -28,6 +28,8 @@ MAX_SITEMAP_URLS = 5000
 # A [[career_sites]] entry may declare source_type to mark a job board rather than an employer page:
 # its postings then carry that authority in fusion and its name is never used as the employer.
 SITE_SOURCE_TYPES = {"employer_page", "feed", "aggregator", "government"}
+# large boards of these are searched by keyword, so a hot board's own fetch may not list a given job: fetch it anyway
+KEYWORD_SEARCHED_ATS = {"workday", "oracle"}
 
 
 def site_source_type(site: dict) -> str:
@@ -220,7 +222,7 @@ class GenericPagesBackend(Backend):
             native, board = detect(item.url)
             if board is not None:
                 ctx.registry.register(board, "generic_page" if item.origin != "commoncrawl" else "commoncrawl")
-                if board.key in ctx.registry.hot_this_run and board.ats != "workday":
+                if board.key in ctx.registry.hot_this_run and board.ats not in KEYWORD_SEARCHED_ATS:
                     stats["covered_by_board_fetch"] += 1
                     continue
                 adapter = self.adapters.get(board.ats)

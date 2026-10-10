@@ -353,7 +353,8 @@ class WorkdayAdapter(ATSAdapter):
 
 def all_adapters() -> dict[str, ATSAdapter]:
     from .core_ats import AshbyAdapter, GreenhouseAdapter, LeverAdapter
+    from .oracle import OracleAdapter
 
     adapters = [GreenhouseAdapter(), LeverAdapter(), AshbyAdapter(), SmartRecruitersAdapter(), WorkableAdapter(),
-                RecruiteeAdapter(), PersonioAdapter(), WorkdayAdapter()]
+                RecruiteeAdapter(), PersonioAdapter(), WorkdayAdapter(), OracleAdapter()]
     return {a.ats: a for a in adapters}

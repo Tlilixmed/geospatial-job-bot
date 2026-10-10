@@ -13,7 +13,7 @@ Finds relevant GIS / geospatial / surveying / LiDAR / remote-sensing jobs from l
           ATS boards registered      job-page URLs queued
                     ▼                        ▼
              ┌──────────── extraction phase (parallel) ─────────────┐
-             │ 8 ATS APIs │ generic page extractor │ feeds │ USAJOBS │ JobSpy │
+             │ 9 ATS APIs │ generic page extractor │ feeds │ USAJOBS │ JobSpy │
              └──────────────────────────┬───────────────────────────┘
                                         ▼
          fusion (one canonical job per posting) → deterministic scoring
@@ -27,7 +27,7 @@ Finds relevant GIS / geospatial / surveying / LiDAR / remote-sensing jobs from l
 
 | Layer | Backend | What it does |
 |---|---|---|
-| Public ATS APIs | `greenhouse`, `lever`, `ashby`, `smartrecruiters`, `workable`, `recruitee`, `personio`, `workday` | Official public job-board endpoints. Every board gets a validation status. |
+| Public ATS APIs | `greenhouse`, `lever`, `ashby`, `smartrecruiters`, `workable`, `recruitee`, `personio`, `workday`, `oracle` | Official public job-board endpoints. Every board gets a validation status. |
 | Board discovery | `commoncrawl`, search backends, career pages, generic pages | Discovers *new* company boards and adds them to a persistent registry. |
 | Career pages + sitemaps | `career_sites` | Configured company pages: JSON-LD jobs, embedded ATS boards, job links, job sitemaps. |
 | Generic extraction | `generic_pages` | Any queued public job page: JSON-LD `JobPosting` → embedded JSON → structured HTML. ATS URLs are fetched through the ATS API instead. |
@@ -53,7 +53,7 @@ Coverage therefore grows well beyond a fixed company list without hammering any 
 | Status | Meaning |
 |---|---|
 | `VALID` | The board exists; it may have zero jobs. |
-| `INVALID` | The ATS returned 404; the slug is wrong. |
+| `INVALID` | The ATS returned 404; the slug is wrong. For Oracle, the career site's public page redirects to another site (the API itself answers any site number). |
 | `EMPTY_UNVERIFIED` | The ATS returns an empty list for unknown boards too, so the bot can't tell whether the board exists (SmartRecruiters, Ashby). |
 | `SCHEMA_MISMATCH` | The response didn't have the expected structure. |
 | `ERROR` | A network, rate-limit or blocking failure. |
@@ -436,12 +436,12 @@ In a dry run, alerts are printed rather than sent and no state is written, unles
 
 **Sources:** `config/sources.toml`
 
-- ATS slugs per provider. For Workday, paste the career-site URL.
+- ATS slugs per provider. For Workday and Oracle Recruiting Cloud, paste the career-site URL.
 - `[[career_sites]]` with an optional `job_url_pattern`, `sitemap` and `max_pages`. Add `source_type = "feed"` for a job board's search page (shipped: Keejob keyword searches): its postings then carry feed authority in fusion and the board's name is never used as the employer.
 - `[[rss_feeds]]` (shipped: GoGeomatics, GISjobs.com, Tunisie Travail searches). Job Bank's Atom feeds answered without entries for every query when checked on 2026-09-20, so the `jobbank` backend reads its search pages instead.
 - extra search queries
 
-> Every ATS slug shipped in `sources.toml` was checked against the live public APIs on 2026-09-16 (the file lists the job count per board). Companies change ATS providers, so run `validate-sources` or check the run summary after editing and fix or remove anything reported `INVALID`. SmartRecruiters and Workable answer with an empty list for unknown accounts, so confirm a non-empty board before adding one there.
+> Every ATS slug shipped in `sources.toml` was checked against the live public APIs on 2026-09-16, the Oracle sites and the last six Workday tenants on 2026-10-10 (the file lists the job count per board). Companies change ATS providers, so run `validate-sources` or check the run summary after editing and fix or remove anything reported `INVALID`. SmartRecruiters and Workable answer with an empty list for unknown accounts, so confirm a non-empty board before adding one there.
 
 **Environment variables** (all optional unless noted):
 
@@ -522,7 +522,7 @@ In a dry run, alerts are printed rather than sent and no state is written, unles
 - **Live APIs were not reachable during development.** All adapters are tested against mocked responses built from the public API formats. Greenhouse, Lever, Ashby and Himalayas formats were checked against documentation. Workable (widget API), Recruitee, Personio, Jobicy, Arbeitnow, RemoteOK and USAJOBS parsers are based on their known public formats but have not been exercised live. If a provider has changed its format, that source reports `SCHEMA_MISMATCH`/`FAILED` rather than silently returning nothing.
 - **Search discovery is weak by design.** Google and Bing can't be scraped legitimately. DuckDuckGo's HTML endpoint is likely disallowed by robots.txt; the bot will then report `ROBOTS_DISALLOWED` and stop. SearXNG works only with an instance you run. Common Crawl lags the live web by weeks: it finds *companies* (boards), not fresh postings, which the rotation then checks live. `index.commoncrawl.org/robots.txt` disallows everything but `collinfo.json`; because the CDX index is a query API published for programmatic use rather than a site to crawl, this is the one place the bot does not apply robots.txt. Set `COMMONCRAWL_ENABLED=false` if you disagree. The index server is often overloaded and returns 5xx; the backend then reports `FAILED` for that run and tries again next time.
 - **Rotation is slow at scale.** With tens of thousands of discovered boards, a full pass takes days to weeks. Boards that produce relevant jobs are promoted to every run.
-- **No JavaScript rendering.** Pages that load jobs only through client-side JavaScript, without JSON-LD or embedded JSON, can't be extracted. Workday is handled through its public JSON endpoints.
+- **No JavaScript rendering.** Pages that load jobs only through client-side JavaScript, without JSON-LD or embedded JSON, can't be extracted. Workday and Oracle Recruiting Cloud are handled through their public JSON endpoints.
 - **Blocked sites stay blocked.** No CAPTCHA solving, login, stealth browsers or proxies are used. Such failures are recorded and skipped.
 - **Official APIs.** Germany's Bundesagentur API needs no key and was checked live, but nearly all of its postings are written in German: those are skipped (and remembered), so expect only the occasional English posting from it. France Travail was built from its documented format and tested against mocked responses only; it stays disabled until `FRANCETRAVAIL_CLIENT_ID` and `FRANCETRAVAIL_CLIENT_SECRET` exist.
 - **Visa routes are indicative.** The thresholds are dated and sourced in `config/visa_paths.toml`, but occupation eligibility is judged from the title alone and immigration rules change: check the linked official page before relying on a verdict.

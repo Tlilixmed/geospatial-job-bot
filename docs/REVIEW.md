@@ -41,7 +41,7 @@ Findings are numbered `F1, F2…` and carry their evidence, so a fix can be trac
 
 | Source | Backend | Key | Min interval | Status |
 |---|---|---|---|---|
-| Greenhouse 13 · Lever 4 · Ashby 5 · SmartRecruiters 2 · Workable 3 · Recruitee 3 · Workday 10 (+ discovered boards on rotation) | `scrapers/ats/*` | none | every run | [fixed] F56: detail requests go to unread postings; Workday reads every page |
+| Greenhouse 13 · Lever 4 · Ashby 5 · SmartRecruiters 2 · Workable 3 · Recruitee 3 · Workday 16 · Oracle 2 (+ discovered boards on rotation) | `scrapers/ats/*` | none | every run | [fixed] F56: detail requests go to unread postings; Workday reads every page; F68: Oracle Recruiting Cloud |
 | Employer prospector (watch list, award winners, LMIA geo employers, geo-named sponsors) | `insights/prospects.py` | none | 10 employers a run | [fixed] F45, F46 |
 | Career sites and sitemaps: Keejob ×5, GEO CAREERS, watched URLs | `scrapers/pages.CareerSitesBackend` | none | every run | [fixed] F35, F51, F52 |
 | Generic page extraction (JSON-LD, embedded JSON, HTML) | `scrapers/pages.GenericPagesBackend`, `scrapers/generic.py` | none | budgeted | [fixed] F32; RDFa postings are read now |
@@ -223,6 +223,32 @@ write or start a workflow; codes missing from the index go to Python; long repli
 markup is sent again as plain text; mail is recorded only when it is clearly about that application, is not bulk mail,
 and the step follows from the status on record. `/ask` is wired on both sides.
 
+### Sources, second pass (2026-10-10)
+
+- **F68 · WSP (4,049 postings, survey and GIS roles in Canada, the UK, the Gulf, India, Australia) and Michael Baker were
+  invisible: both run Oracle Recruiting Cloud, which had no adapter; Topcon, Airbus, Teledyne (Optech), Bentley, Ordnance
+  Survey and Vantor (ex-Maxar) are on Workday but were not configured, and the config called WSP, Maxar and Bentley
+  unsupported · [fixed]** `scrapers/ats/oracle.py` reads the Candidate Experience REST API (no login; robots.txt is 404).
+  Checked live: `limit` is capped at 200, `hasMore` is always false (paging stops on `TotalJobsCount`), and the API answers
+  *any* `siteNumber` with the tenant's default site (`CX_9999` returns WSP's jobs), so the site is checked against its
+  public page, which redirects an unknown site to another one; a site redirected away is `INVALID`, an unconfirmed one
+  `EMPTY_UNVERIFIED`. Sites up to 600 postings are read whole; WSP is searched by the Workday keywords plus "SIG" (17 list
+  calls; one page per term on a rotation board), and the generic titles among its newest 200 postings, which are no
+  search hits, need a geospatial title. French postings arrive in French without a language parameter (`Accept-Language:
+  fr-CA` only swaps translated titles, same ids). Wired into detection (`oracle:{pod}.{dc}:{Id}`, career-page and Common
+  Crawl link discovery: one index page holds 194 Oracle sites), fusion's native ids, config URL parsing
+  (`parse_board_url`), the hot-board exemption for single job pages, and the search queries. The six Workday tenants were
+  each validated live with `WorkdayAdapter`. Pay ranges stay in the description: the bot has no salary extraction from
+  text yet (O7).
+  Review of the first version, checked live: 27 of those 194 sites are published under a code, not a number
+  (`gallifordtrycareers`, `Alta`, `Ford-Model-e`); their page is served in place and names the number behind it
+  (`data-sitenumber="CX_1"`), so comparing the two strings called them `INVALID`, and `siteNumber=Alta` lists the
+  tenant's default site (92 postings, not Alta's 25). Existence now follows the redirect, the list API gets the served
+  number and the public links keep the code. Detection cut hyphenated codes at the hyphen (`Ford`), missed
+  `/jobs/preview/{Id}` (66 Common Crawl URLs) and read requisition ids as digits only, so `AUR_NYF8B` had no native id and
+  `22000HXO` became `22000`: ids and codes now run to the end of their path segment (4,062 job URLs of that index page,
+  1 without an id: it has none). `og:site_name` loses stray separators ("FAB |" → "FAB").
+
 ### Opportunities recorded (not bugs)
 
 - **O1 · inline Yes/No buttons for writes derived from free text, and buttons under digests (`callback_query`) · [idea]** The
@@ -234,7 +260,7 @@ and the step follows from the status on record. `/ask` is wired on both sides.
 - **O5 · rescore stored jobs when rules change · [done]** `SCORER_VERSION`, `rescore_stored`, place re-read.
 - **O6 · a bonus and badge for French or Arabic postings · [idea]**
 - **O7 · salary as a structured fact at ingestion · [idea]**
-- **O8 · new sources · [partly done]** Job Bank search pages (done). Still open, each verified to exist: ReliefWeb RSS (no appname
+- **O8 · new sources · [partly done]** Job Bank search pages (done). WSP and Michael Baker on Oracle Recruiting Cloud (done, F68). Still open, each verified to exist: ReliefWeb RSS (no appname
   needed), Le Forem open data (Wallonia), AfDB vacancies RSS, AECOM on SmartRecruiters (needs `q=`).
 - **O9 · Greenhouse `?content=true` · [skip]** `knows_text` makes detail requests proportional to *new* postings, for every ATS, so
   the one-call variant is no longer needed.

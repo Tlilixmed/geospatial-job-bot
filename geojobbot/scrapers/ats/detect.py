@@ -22,7 +22,7 @@ UUID_RE = r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA
 @dataclass(frozen=True)
 class BoardRef:
     ats: str
-    slug: str  # for workday: "tenant/wdN/site"
+    slug: str  # for workday: "tenant/wdN/site", for oracle: "pod.dc/site"
 
     @property
     def key(self) -> str:
@@ -55,6 +55,52 @@ def parse_workday_url(url: str) -> BoardRef | None:
     if not SLUG_RE.match(site):
         return None
     return BoardRef("workday", f"{tenant}/{wd}/{site}")
+
+
+ORACLE_HOST_RE = re.compile(r"^([a-z0-9-]+)\.fa\.([a-z0-9-]+)\.oraclecloud\.com$")
+# a site is a number (CX_2001) or a code the tenant chose (gallifordtrycareers, Ford-Model-e); requisition ids are
+# strings too (WSP's AUR_NYF8B): both run to the end of their path segment, never cut short
+ORACLE_SITE = r"[A-Za-z0-9_-]+"
+ORACLE_ID = r"[A-Za-z0-9_.-]+"
+# /hcmUI/CandidateExperience/{lang}/sites/{site}[/job/{Id} | /jobs/preview/{Id} | /requisitions/preview/{Id}]
+ORACLE_PAGE_RE = re.compile(rf"^/hcmUI/CandidateExperience/[A-Za-z]{{2}}(?:[-_][A-Za-z]{{2,4}})?/sites/({ORACLE_SITE})(?=/|$)"
+                            rf"(?:/(?:job|(?:jobs/|requisitions/)?preview)/({ORACLE_ID})(?=/|$))?")
+
+
+def _oracle(parts) -> tuple[str | None, BoardRef | None]:
+    """Oracle Recruiting Cloud: the board is "{pod}.{dc}/{site}" ("emit.ca3/CX_2001"), the native id
+    "oracle:{pod}.{dc}:{Id}" (requisition ids are unique across a tenant's sites)."""
+    host = ORACLE_HOST_RE.match((parts.hostname or "").lower())
+    if not host:
+        return None, None
+    tenant = f"{host.group(1)}.{host.group(2)}"
+    site = job_id = None
+    page = ORACLE_PAGE_RE.match(parts.path)
+    if page:
+        site, job_id = page.group(1), page.group(2)
+    elif "/hcmRestApi/" in parts.path and "/recruitingCEJobRequisition" in parts.path:
+        # API: ...recruitingCEJobRequisitions?finder=findReqs;siteNumber=CX_1,... or ...Details?finder=ById;Id="9",siteNumber=CX_1
+        finder = (parse_qs(parts.query).get("finder") or [""])[0]
+        site_m = re.search(rf"\bsiteNumber=({ORACLE_SITE})", finder)
+        id_m = re.search(rf'\bId="?({ORACLE_ID})', finder)
+        site, job_id = site_m.group(1) if site_m else None, id_m.group(1) if id_m else None
+    return (f"oracle:{tenant}:{job_id}" if job_id else None), (BoardRef("oracle", f"{tenant}/{site}") if site else None)
+
+
+def parse_oracle_url(url: str) -> BoardRef | None:
+    try:
+        return _oracle(urlsplit(url.strip()))[1]
+    except ValueError:
+        return None
+
+
+def parse_board_url(ats: str, value: str) -> BoardRef | None:
+    """A board as written in sources.toml: Workday and Oracle take the career-site URL, the others the slug."""
+    if ats == "workday":
+        return parse_workday_url(value)
+    if ats == "oracle":
+        return parse_oracle_url(value)
+    return BoardRef(ats, value)
 
 
 def detect(url: str | None) -> tuple[str | None, BoardRef | None]:
@@ -151,6 +197,8 @@ def detect(url: str | None) -> tuple[str | None, BoardRef | None]:
             if "/job/" in parts.path and m:
                 tenant = board.slug.split("/")[0]
                 native = f"workday:{tenant.lower()}:{m.group(1).upper()}"
+    elif host.endswith(".oraclecloud.com"):
+        native, board = _oracle(parts)
     return native, board
 
 
@@ -164,7 +212,8 @@ ATS_URL_RE = re.compile(
     r"(?:jobs|careers)\.smartrecruiters\.com/[^\s\"'<>)]+|"
     r"[a-z0-9-]+\.recruitee\.com[^\s\"'<>)]*|"
     r"[a-z0-9-]+\.jobs\.personio\.(?:de|com)[^\s\"'<>)]*|"
-    r"[a-z0-9-]+\.wd\d+\.myworkdayjobs\.com/[^\s\"'<>)]+"
+    r"[a-z0-9-]+\.wd\d+\.myworkdayjobs\.com/[^\s\"'<>)]+|"
+    r"[a-z0-9-]+\.fa\.[a-z0-9-]+\.oraclecloud\.com/[^\s\"'<>)]+"
     r")",
     re.IGNORECASE,
 )

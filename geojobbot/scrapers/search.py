@@ -38,7 +38,8 @@ STOP_KINDS = {"ROBOTS_DISALLOWED", "BLOCKED", "RATE_LIMITED", "AUTH_REQUIRED"}
 def build_queries(extra: list[str] | None = None) -> list[str]:
     queries = []
     for site in ("boards.greenhouse.io", "job-boards.greenhouse.io", "jobs.lever.co", "jobs.ashbyhq.com",
-                 "apply.workable.com", "myworkdayjobs.com", "jobs.smartrecruiters.com", "recruitee.com"):
+                 "apply.workable.com", "myworkdayjobs.com", "jobs.smartrecruiters.com", "recruitee.com",
+                 "oraclecloud.com"):
         for term in ("GIS", "geospatial", "LiDAR", "cartographer", "photogrammetry", "remote sensing"):
             queries.append(f'site:{site} "{term}"')
     for role in P.DIRECT_ROLES:
@@ -168,6 +169,7 @@ CC_PATTERNS = [
     ("recruitee.com", "domain"),
     ("jobs.personio.de", "domain"),
     ("myworkdayjobs.com", "domain"),
+    ("oraclecloud.com", "domain"),  # 3 index pages, about 70% of them Oracle career-site URLs (2026-09 crawl)
 ]
 
 
