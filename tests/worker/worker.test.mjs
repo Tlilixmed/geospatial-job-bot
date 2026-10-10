@@ -9,7 +9,8 @@ const worker = (await import(`data:text/javascript;base64,${Buffer.from(source).
 
 const HOUR = 36e5;
 const iso = (hoursAgo) => new Date(Date.now() - hoursAgo * HOUR).toISOString();
-const CODES = { "gh:acme:1": "419b7", "gh:acme:2": "2fd2a", "lever:old:9": "806ad" };  // geojobbot.utils.text.job_code
+const CODES = { "gh:acme:1": "419b7", "gh:acme:2": "2fd2a", "lever:old:9": "806ad",  // geojobbot.utils.text.job_code
+  "gh:acme:3": "33338", "gh:acme:4": "a518c" };
 
 function job(id, overrides = {}) {
   return { id, code: CODES[id], t: "GIS Analyst", c: "Acme", loc: "Toronto, Canada", country: "Canada", s: 82, tier: "high",
@@ -24,24 +25,33 @@ function makeIndex(jobs) {
     run: { started_at: iso(1), code: "abc1234", high: 1, possible: 0, alerted: 1, new: 1, failed: [], jobs_in_state: 3 } };
 }
 
-function harness({ index, prefs, ai, inbox = true, prefix = "" } = {}) {
+function harness({ index, prefs, ai, inbox = true, prefix = "", telegramAnswer } = {}) {
   const objects = new Map();
   if (index) objects.set(`${prefix}state/index.json`, JSON.stringify(index));
   if (prefs) objects.set(`${prefix}state/prefs.json`, JSON.stringify(prefs));
-  const sent = [];
+  const sent = [];  // sendMessage bodies
+  const calls = [];  // every Bot API call: { method, body }
   const dispatched = [];
+  const reads = [];
+  const writes = [];
   const env = { TELEGRAM_BOT_TOKEN: "T", TELEGRAM_CHAT_ID: "42", WEBHOOK_SECRET: "s3cret", GITHUB_TOKEN: "gh", GITHUB_REPO: "o/r" };
   if (inbox) {
     env.INBOX = {
-      get: async (key) => (objects.has(key) ? { json: async () => JSON.parse(objects.get(key)) } : null),
-      put: async (key, value) => { objects.set(key, value); },
+      get: async (key) => { reads.push(key); return objects.has(key) ? { json: async () => JSON.parse(objects.get(key)) } : null; },
+      put: async (key, value) => { writes.push(key); objects.set(key, value); },
     };
   }
   if (prefix) env.STATE_PREFIX = prefix;
   if (ai) env.AI = { run: async () => ({ response: ai }) };
   globalThis.fetch = async (url, init) => {
     const body = init.body ? JSON.parse(init.body) : null;
-    if (String(url).includes("api.telegram.org")) sent.push(body); else if (body) dispatched.push(body);  // PUT …/enable has no body
+    if (String(url).includes("api.telegram.org")) {
+      const method = String(url).split("/").pop();
+      calls.push({ method, body });
+      if (method === "sendMessage") sent.push(body);
+      const answer = telegramAnswer && telegramAnswer(method, body, calls);
+      if (answer) return { ok: answer.status === 200, status: answer.status, json: async () => answer.body };
+    } else if (body) dispatched.push(body);  // PUT …/enable has no body
     return { ok: true, status: 200 };
   };
   let updateId = 100;
@@ -55,10 +65,25 @@ function harness({ index, prefs, ai, inbox = true, prefix = "" } = {}) {
     await Promise.all(pending);
     return response;
   }
+  /** A tap on an inline button of a message the bot sent; date 0 is an InaccessibleMessage (too old to read). */
+  async function tap(data, { keyboard = [], from = 42, chat = 42, date = 1700000000, message = true } = {}) {
+    const pending = [];
+    const cq = { id: `cq${updateId}`, from: { id: from, is_bot: false }, chat_instance: "1", data };
+    if (message) cq.message = { message_id: 7, date, chat: { id: chat, type: "private" }, from: { id: 1, is_bot: true },
+      ...(date ? { text: "digest", reply_markup: { inline_keyboard: keyboard } } : {}) };
+    const request = new Request("https://worker.example/", {
+      method: "POST", headers: { "X-Telegram-Bot-Api-Secret-Token": "s3cret" },
+      body: JSON.stringify({ update_id: updateId++, callback_query: cq }),
+    });
+    const response = await worker.fetch(request, env, { waitUntil: (p) => pending.push(p) });
+    await Promise.all(pending);
+    return response;
+  }
   const stored = (key) => (objects.has(key) ? JSON.parse(objects.get(key)) : null);
   const tick = async () => { const pending = []; await worker.scheduled({}, env, { waitUntil: (x) => pending.push(x) }); await Promise.all(pending); };
   const get = (path) => worker.fetch(new Request("https://worker.example" + path), env, { waitUntil() {} });
-  return { say, get, tick, env, sent, dispatched, stored, objects };
+  const of = (method) => calls.filter((c) => c.method === method).map((c) => c.body);
+  return { say, tap, get, tick, env, sent, calls, of, reads, writes, dispatched, stored, objects };
 }
 
 test("/jobs is answered from the index without starting a workflow", async () => {
@@ -447,4 +472,235 @@ test("mail: newsletters, acknowledgements that mention interviews, and outcomes 
     "Content-Type: application/pdf", "Content-Transfer-Encoding: base64", "", "JVBERi0=", `--${b}--`, ""].join("\r\n");
   await run({ from: "hr@mapco.example", headers: new Map([["subject", "Cartographer"]]), raw: new Response(raw).body });
   assert.equal(h.stored("state/prefs.json").applied["lever:old:9"].status, "interview");
+});
+
+// ---------------------------------------------------------------------------- digest buttons (REVIEW O1)
+// The grid a digest is sent with (geojobbot.notifications.telegram.digest_keyboard): one number per entry.
+const GRID = [[{ text: "1", callback_data: "m|419b7" }, { text: "2", callback_data: "m|2fd2a33338a518c" }]];
+const actionRowOf = (keyboard) => keyboard.find((row) => !row.every((b) => b.callback_data.startsWith("m|")));
+const buttonsIndex = () => makeIndex([job("gh:acme:1"), job("gh:acme:2", { t: "Surveyor" }), job("gh:acme:3", { t: "Surveyor" }),
+  job("gh:acme:4", { t: "Surveyor" })]);
+async function capturingLogs(body) {
+  const logged = [];
+  const log = console.log;
+  console.log = (...args) => logged.push(args.join(" "));
+  try { await body(logged); } finally { console.log = log; }
+}
+
+test("taps from anyone but the owner get an empty answer and change nothing", async () => {
+  const h = harness({ index: buttonsIndex() });
+  assert.equal(await (await h.tap("a|419b7", { keyboard: GRID, from: 7 })).text(), "ok");
+  await h.tap("a|419b7", { keyboard: GRID, from: 7, chat: 7 });
+  await h.tap("a|419b7", { message: false });  // inline mode: no message whose chat could be checked
+  await h.tap("a|419b7", { keyboard: GRID, chat: 99 });  // the owner, but in a chat that is not the bot's
+  assert.deepEqual(h.of("answerCallbackQuery").map((a) => a.text), ["", "", "", ""]);
+  assert.deepEqual(h.writes, []);
+  assert.deepEqual(h.reads, []);
+  // a group without TELEGRAM_OWNER_ID: the owner is the group itself, so every tap is refused (as documented)
+  const group = harness({ index: buttonsIndex() });
+  group.env.TELEGRAM_CHAT_ID = "-100123";
+  await group.tap("a|419b7", { keyboard: GRID, chat: -100123, from: 42 });
+  assert.deepEqual(group.writes, []);
+  group.env.TELEGRAM_OWNER_ID = "42";
+  await group.tap("a|419b7", { keyboard: GRID, chat: -100123, from: 42 });
+  assert.ok(group.stored("state/prefs.json").applied["gh:acme:1"]);
+});
+
+test("a number opens its action row and the cross closes it, without reading the bucket", async () => {
+  const h = harness({ index: buttonsIndex() });
+  await h.tap("m|2fd2a33338a518c", { keyboard: GRID });
+  assert.deepEqual(h.reads, []);
+  const [edit] = h.of("editMessageReplyMarkup");
+  assert.equal(edit.message_id, 7);
+  assert.deepEqual(edit.reply_markup.inline_keyboard, [GRID[0], [
+    { text: "✅ Applied 2", callback_data: "a|2fd2a" }, { text: "🙈 Hide 2", callback_data: "h|2fd2a33338a518c" },
+    { text: "❓ Why 2", callback_data: "w|2fd2a" }, { text: "✖", callback_data: "x|" }]]);
+  await h.tap("x|", { keyboard: edit.reply_markup.inline_keyboard });
+  assert.deepEqual(h.of("editMessageReplyMarkup")[1].reply_markup.inline_keyboard, GRID);
+  assert.deepEqual(h.of("answerCallbackQuery").map((a) => a.text), ["", ""]);
+  assert.deepEqual(h.reads, []);
+  for (const data of ["z|419b7", "a|419B7", "a|419b7419b7419b7419b7", "a|"]) await h.tap(data, { keyboard: GRID });
+  assert.deepEqual(h.of("answerCallbackQuery").slice(2).map((a) => a.text), Array(4).fill("Unknown button"));
+  assert.deepEqual(h.reads, []);
+});
+
+test("Applied writes the application, relabels the number, and a second tap writes nothing", async () => {
+  const h = harness({ index: buttonsIndex() });
+  await h.tap("a|419b7", { keyboard: [...GRID, [{ text: "✅ Applied 1", callback_data: "a|419b7" }]] });
+  const application = h.stored("state/prefs.json").applied["gh:acme:1"];
+  assert.equal(application.status, "applied");
+  assert.deepEqual(application.history.map((e) => e.status), ["applied"]);
+  const answers = h.of("answerCallbackQuery");
+  assert.equal(answers.length, 1);
+  assert.match(answers[0].text, /^✅ Marked as applied: GIS Analyst\. Good luck/);  // a toast: plain text, at most 200
+  assert.ok(answers[0].text.length <= 200 && !answers[0].show_alert);
+  const keyboard = h.of("editMessageReplyMarkup")[0].reply_markup.inline_keyboard;
+  assert.equal(keyboard[0][0].text, "1✅");
+  assert.equal(keyboard.length, 2);  // the old action row was replaced, not kept
+  assert.deepEqual(actionRowOf(keyboard).map((b) => b.callback_data), ["r|419b7", "h|419b7", "w|419b7", "x|"]);
+  const writes = h.writes.length;
+  await h.tap("a|419b7", { keyboard });  // the label already says so: answered without touching R2
+  assert.equal(h.of("answerCallbackQuery")[1].text, "Already done");
+  assert.equal(h.writes.length, writes);
+  await h.tap("a|419b7", { keyboard: GRID });  // a stale label: mutate sees the application and writes nothing either
+  assert.match(h.of("answerCallbackQuery")[2].text, /^Already recorded: GIS Analyst · applied/);
+  assert.equal(h.writes.length, writes);
+});
+
+test("Undo applied removes only an application that has no outcome yet", async () => {
+  const h = harness({ index: buttonsIndex() });
+  const applied = [[{ text: "1✅", callback_data: "m|419b7" }]];
+  await h.tap("a|419b7", { keyboard: GRID });
+  await h.tap("r|419b7", { keyboard: applied });
+  assert.deepEqual(h.stored("state/prefs.json").applied, {});
+  assert.match(h.of("answerCallbackQuery")[1].text, /No longer marked as applied: GIS Analyst/);
+  const keyboard = h.of("editMessageReplyMarkup")[1].reply_markup.inline_keyboard;
+  assert.equal(keyboard[0][0].text, "1");
+  assert.equal(actionRowOf(keyboard)[0].callback_data, "a|419b7");
+  await h.say("/applied 419b7");
+  await h.say("/outcome 419b7 interview");
+  await h.tap("r|419b7", { keyboard: applied });
+  assert.match(h.of("answerCallbackQuery").at(-1).text, /Already has an outcome \(interview\)/);
+  assert.equal(h.stored("state/prefs.json").applied["gh:acme:1"].status, "interview");
+});
+
+test("Hide acts on every posting of a grouped entry, once, and Unhide brings them back", async () => {
+  const h = harness({ index: buttonsIndex() });
+  await h.tap("h|2fd2a33338a518c", { keyboard: GRID });
+  const prefs = h.stored("state/prefs.json");
+  assert.deepEqual(prefs.hidden, ["gh:acme:2", "gh:acme:3", "gh:acme:4"]);
+  assert.equal(prefs.hidden_info["gh:acme:4"].title, "Surveyor");
+  assert.deepEqual(h.writes, ["state/prefs.json"]);
+  assert.equal(h.of("answerCallbackQuery")[0].text, "🙈 Hidden: Surveyor ×3");
+  const keyboard = h.of("editMessageReplyMarkup")[0].reply_markup.inline_keyboard;
+  assert.equal(keyboard[0][1].text, "2🙈");
+  assert.deepEqual(actionRowOf(keyboard).map((b) => b.callback_data), ["u|2fd2a33338a518c", "w|2fd2a", "x|"]);
+  await h.tap("h|2fd2a33338a518c", { keyboard });
+  assert.equal(h.of("answerCallbackQuery")[1].text, "Already done");
+  await h.tap("u|2fd2a33338a518c", { keyboard });
+  assert.deepEqual(h.stored("state/prefs.json").hidden, []);
+  assert.equal(h.of("editMessageReplyMarkup")[1].reply_markup.inline_keyboard[0][1].text, "2");
+  assert.equal(h.writes.length, 2);
+  // a typed /hide of a job that is already hidden writes nothing either
+  await h.say("/hide 419b7");
+  await h.say("/hide 419b7");
+  assert.equal(h.writes.length, 3);
+});
+
+test("'message is not modified' counts as success; an inaccessible message gets a toast only", async () => {
+  await capturingLogs(async (logged) => {
+    const h = harness({ index: buttonsIndex(), telegramAnswer: (method) => (method === "editMessageReplyMarkup"
+      ? { status: 400, body: { ok: false, error_code: 400, description: "Bad Request: message is not modified: specified new message content and reply markup are exactly the same" } } : null) });
+    await h.tap("m|419b7", { keyboard: GRID });
+    assert.equal(h.of("answerCallbackQuery").length, 1);
+    assert.ok(!logged.some((line) => line.startsWith("keyboard not updated")));
+    assert.ok(logged.includes('callback {"action":"m","ok":true}'));
+    assert.ok(!logged.some((line) => line.includes("419b7")));  // codes never reach the logs
+  });
+  const old = harness({ index: buttonsIndex() });
+  await old.tap("a|419b7", { date: 0 });
+  assert.ok(old.stored("state/prefs.json").applied["gh:acme:1"]);
+  assert.match(old.of("answerCallbackQuery")[0].text, /Marked as applied/);
+  assert.equal(old.of("editMessageReplyMarkup").length, 0);
+  await old.tap("m|419b7", { date: 0 });
+  assert.match(old.of("answerCallbackQuery")[1].text, /too old for its buttons\. \/why 419b7/);
+  assert.equal(old.of("editMessageReplyMarkup").length, 0);
+});
+
+test("a tap that loses a race is retried once on the fresh preferences", async () => {
+  const h = harness({ index: buttonsIndex(), prefs: { muted: [], hidden: [], applied: {} } });
+  let version = 1;
+  let refused = 0;
+  h.env.INBOX.get = async (key) => (h.objects.has(key) ? { etag: `v${version}`, json: async () => JSON.parse(h.objects.get(key)) } : null);
+  h.env.INBOX.put = async (key, value, options) => {
+    if (key === "state/prefs.json" && refused === 0) {  // Python wrote /watch in between
+      refused += 1; version += 1;
+      h.objects.set(key, JSON.stringify({ muted: [], hidden: [], applied: {}, watch: [{ name: "Fugro" }] }));
+      assert.deepEqual(options.onlyIf, { etagMatches: "v1" });
+      return null;
+    }
+    h.objects.set(key, value); return {};
+  };
+  await h.tap("h|419b7", { keyboard: GRID });
+  const prefs = h.stored("state/prefs.json");
+  assert.deepEqual(prefs.hidden, ["gh:acme:1"]);
+  assert.deepEqual(prefs.watch, [{ name: "Fugro" }]);
+  assert.equal(refused, 1);
+  assert.equal(h.of("answerCallbackQuery").length, 1);
+  assert.equal(h.of("editMessageReplyMarkup")[0].reply_markup.inline_keyboard[0][0].text, "1🙈");
+  // an unreadable file throws: still exactly one answer, as an alert, and nothing written
+  h.objects.set("state/prefs.json", "{ not json");
+  await h.tap("a|419b7", { keyboard: GRID });
+  const answers = h.of("answerCallbackQuery");
+  assert.equal(answers.length, 2);
+  assert.match(answers[1].text, /could not be read, so nothing was changed/);
+  assert.equal(answers[1].show_alert, true);
+  assert.equal(h.objects.get("state/prefs.json"), "{ not json");
+});
+
+test("a code that left the index goes to Python as the tapped command, under the update id", async () => {
+  const h = harness({ index: makeIndex([]) });
+  const grid = [[{ text: "1", callback_data: "m|806ad" }]];
+  await h.tap("h|806ad", { keyboard: grid });
+  assert.equal(h.stored("inbox/000000000100.json").text, "/hide 806ad");
+  assert.equal(h.of("answerCallbackQuery")[0].show_alert, true);
+  assert.match(h.of("answerCallbackQuery")[0].text, /Not in the current list/);
+  await h.tap("u|806ad", { keyboard: [[{ text: "1🙈", callback_data: "m|806ad" }]] });
+  assert.equal(h.stored("inbox/000000000101.json").text, "/unhide 806ad");
+  await h.tap("a|806ad", { keyboard: grid });
+  assert.equal(h.stored("inbox/000000000102.json").text, "/applied 806ad");
+  await h.tap("w|806ad", { keyboard: grid });
+  assert.equal(h.stored("inbox/000000000103.json").text, "/why 806ad");
+  assert.equal(h.dispatched.length, 4);
+  assert.equal(h.of("answerCallbackQuery").length, 4);
+  // Why on a job in the index is answered at once, as a new message
+  const known = harness({ index: buttonsIndex() });
+  await known.tap("w|419b7", { keyboard: GRID });
+  assert.equal(known.of("answerCallbackQuery")[0].text, "");
+  assert.match(known.sent[0].text, /Score 82\/100 · high/);
+  assert.equal(known.dispatched.length, 0);
+});
+
+test("replies: silent answers, loud news, one retry after flood control, plain text only for bad markup", async () => {
+  const h = harness({ index: makeIndex([job("gh:acme:1")]) });
+  await h.say("/status");
+  assert.equal(h.sent[0].disable_notification, true);
+  assert.deepEqual(h.sent[0].link_preview_options, { is_disabled: true });
+  assert.equal(h.sent[0].disable_web_page_preview, undefined);
+  await h.say("/pitch 419b7");
+  assert.equal(h.sent[1].disable_notification, true);  // "On it"
+  const stale = makeIndex([]);
+  stale.generated_at = iso(9);
+  const dog = harness({ index: stale });
+  await dog.tick();
+  assert.equal(dog.sent[0].disable_notification, undefined);  // the watchdog rings
+  const mailbox = harness({ index: makeIndex([]), prefs: { applied: { "lever:old:9": { title: "Cartographer", company: "MapCo", at: iso(200), status: "applied" } } } });
+  const pending = [];
+  await worker.email(mail({ from: "hr@mapco.example", subject: "Interview: Cartographer role",
+    body: "We would like to invite you to an interview next week. What is your availability for a call?" }), mailbox.env, { waitUntil: (p) => pending.push(p) });
+  await Promise.all(pending);
+  assert.equal(mailbox.sent[0].disable_notification, undefined);  // an interview invitation rings
+  // 429: the same HTML once more after retry_after
+  let attempts = 0;
+  const flooded = harness({ index: makeIndex([job("gh:acme:1")]), telegramAnswer: (method) => (method === "sendMessage" && attempts++ === 0
+    ? { status: 429, body: { ok: false, error_code: 429, description: "Too Many Requests: retry after 1", parameters: { retry_after: 1 } } } : null) });
+  await flooded.say("/status");
+  assert.equal(flooded.sent.length, 2);
+  assert.equal(flooded.sent[1].text, flooded.sent[0].text);
+  assert.equal(flooded.sent[1].parse_mode, "HTML");
+  // "can't parse entities": the text again, decoded, without markup and as quiet as the original
+  const broken = harness({ index: makeIndex([job("gh:acme:1", { t: "GIS & Survey <Lead>" })]), telegramAnswer: (method, body) => (body.parse_mode
+    ? { status: 400, body: { ok: false, description: "Bad Request: can't parse entities: unsupported start tag" } } : null) });
+  await broken.say("/why 419b7");
+  assert.equal(broken.sent.length, 2);
+  assert.equal(broken.sent[1].parse_mode, undefined);
+  assert.match(broken.sent[1].text, /^GIS & Survey <Lead> — Acme/);
+  assert.equal(broken.sent[1].disable_notification, true);
+  // anything else is logged, not resent
+  await capturingLogs(async (logged) => {
+    const refused = harness({ index: makeIndex([job("gh:acme:1")]), telegramAnswer: () => ({ status: 403, body: { ok: false, description: "Forbidden: bot was blocked by the user" } }) });
+    await refused.say("/status");
+    assert.equal(refused.sent.length, 1);
+    assert.ok(logged.some((line) => line.startsWith("reply not delivered") && line.includes("403")));
+  });
 });
