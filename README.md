@@ -254,7 +254,7 @@ The bot answers messages from the configured chat only; every other chat is igno
 
 ## 2. Persistent state in R2
 
-There is no SQLite and no GitHub cache. A single gzipped JSON document is simpler, atomic per PUT, and small: roughly 1 MB compressed for ~10k tracked jobs. Jobs with clearly irrelevant titles are counted but not stored, and old rejected records are pruned.
+There is no SQLite and no GitHub cache. A single gzipped JSON document is simpler, atomic per PUT, and small: about 210 bytes a job compressed, so roughly 2 MB for ~10k tracked jobs (measured through the real pipeline). The run summary gives the state and index sizes and warns above 8 MB and 1 MB. Jobs with clearly irrelevant titles are counted but not stored, and old rejected records are pruned.
 
 ```
 state/state.json.gz                         authoritative state (jobs, boards, sources, cursors, page cache)
@@ -277,6 +277,7 @@ Safety rules:
 - **Optimistic concurrency:** if the state's ETag changed since load, the write goes to `conflicts/` and the run fails instead of clobbering data. The workflow's `concurrency` group normally prevents this anyway.
 - A missing state object while backups exist restores the newest valid backup; the bot never silently starts empty. Corrupt state also falls back to backups. If none are usable, or the state is missing while `runs/` reports exist, the run stops (exit 1) unless `ALLOW_STATE_RESET=true`.
 - Every save is read back (`HEAD`) before the run continues; a write that is not visible afterwards fails the run.
+- `state/prefs.json` is written by the Worker and by Python at any moment, so both write it **conditionally** (`If-Match` on the ETag it was read at). When the other side wrote in between, the write is refused and the command runs again on the fresh copy: a `/applied` tap or an interview recorded from an email is never erased. `python -m geojobbot selftest-r2` checks that the bucket honours the condition.
 - If R2 is unreachable, the run aborts **before** scraping or alerting (exit code 1).
 - Old `raw/` and `runs/` objects are deleted once a day.
 
@@ -295,7 +296,7 @@ Set `STATE_PREFIX` to keep several bots in one bucket.
    - Create, then copy the **Access Key ID** and **Secret Access Key**. The secret is shown once.
 3. Your endpoint is `https://<ACCOUNT_ID>.r2.cloudflarestorage.com`. The account ID is shown on the R2 overview page.
 
-Usage is a few dozen operations per run, far inside R2's free tier for a 4-hourly schedule.
+Usage is a few dozen operations per run, far inside R2's free tier for a 2-hourly schedule (about 15k write operations a month, 1.5% of the free allowance).
 
 ### 3.2 Telegram
 
@@ -501,8 +502,8 @@ In a dry run, alerts are printed rather than sent and no state is written, unles
 
 ## 7. Operations guide
 
-- **Staying alive without commits.** GitHub disables scheduled workflows after 60 days without repository activity, without telling anyone. Every scraper run re-enables its own schedules through the API, and the Cloudflare Worker's hourly watchdog (`cloudflare/README.md`, step 9) restarts the scraper and tells you when no run has happened for 6 hours. Pushes that only touch documentation, tests or the Worker do not start a scraper run.
-- **Read the run summary** at the end of the job log or on the run's summary page. It shows per-source status, invalid configured sources, raw/unique/new/seen/updated counts, match tiers, alert results, R2 load/save status, HTTP retry/error counts and parser errors.
+- **Staying alive without commits.** GitHub disables scheduled workflows after 60 days without repository activity, without telling anyone. Every scraper run re-enables its own schedules through the API. GitHub's scheduler is also unreliable for this repository: between 2026-09-19 and 2026-10-10 it dropped 61% of the two-hourly scraper slots. The Cloudflare Worker's hourly Cron Trigger (`41 * * * *`, `cloudflare/README.md`, step 9) fills the gaps: it starts the scraper when the index is 1¾ hours old and no run is queued or in progress, backs off when the runs it starts crash, and rings when no run has happened for 6 hours. Pushes that only touch documentation, tests or the Worker do not start a scraper run.
+- **Read the run summary** at the end of the job log or on the run's summary page. It shows per-source status, invalid configured sources, raw/unique/new/seen/updated counts, match tiers, alert results, R2 load/save status with the gzipped state and index sizes (a warning above 8 MB or 1 MB), HTTP retry/error counts and parser errors.
 - **Exit codes.**
   - `0` — normal. Individual source failures are reported, not fatal.
   - `1` — state could not be loaded or saved (no alerts sent if loading failed).
@@ -531,7 +532,7 @@ In a dry run, alerts are printed rather than sent and no state is written, unles
 - **Fuzzy deduplication** can very occasionally merge two genuinely different postings with identical company, title and place that don't come from ATS APIs (for example, two identical openings on a generic careers page).
 - **Matching is conservative.** Jobs whose titles aren't recognisably geospatial are rejected even when the description is strongly geospatial (e.g. "Software Engineer, Maps"). Extend `GEO_TITLE_TERMS` or `DIRECT_ROLES` if you want those.
 - **Posting dates** from JSON-LD are only as reliable as the site. Some sites re-stamp `datePosted` on every render, which can make an old job look fresh.
-- **Concurrent writers.** R2 has no multi-object transactions. Concurrency protection is ETag comparison plus the workflow's concurrency group; a narrow race between check and write remains possible if you run the bot from two places at once.
+- **Concurrent writers.** R2 has no multi-object transactions. `state/prefs.json` is safe: both writers use a conditional put (see the safety rules in section 2). The state document is protected by ETag comparison plus the workflow's concurrency group; a narrow race between its check and its write remains possible if you run the bot with state writes from two places at once.
 
 ---
 

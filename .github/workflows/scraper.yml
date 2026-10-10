@@ -45,7 +45,7 @@ jobs:
 
       # GitHub disables scheduled workflows after 60 days without repository activity, silently. Re-enabling them
       # through the API (what the well-known keepalive actions do) keeps a bot that needs no commits running.
-      # The Cloudflare Worker's watchdog (cloudflare/README.md, step 9) is the independent second line.
+      # The Cloudflare Worker's hourly run filler and watchdog (cloudflare/README.md, step 9) is the independent second line.
       - name: Keep the schedules alive
         env:
           GH_TOKEN: ${{ github.token }}

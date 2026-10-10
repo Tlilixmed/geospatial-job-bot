@@ -29,6 +29,9 @@ on:
 concurrency:
   group: geospatial-job-commands
   cancel-in-progress: false
+  # "single" (the default) keeps one pending run: an hourly scheduled run, skipped in webhook mode but still in the
+  # group, would replace a pending inbox dispatch. "max" keeps up to 100 waiting (never with cancel-in-progress: true).
+  queue: max
 
 permissions:
   contents: read

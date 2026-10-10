@@ -523,10 +523,11 @@ async function mutate(env, index, prefs, command, arg) {
   return [answer];
 }
 
-/** Try to answer from R2. Returns true when the message was handled here. */
-async function answerFast(env, command, arg, echo, update) {
+/** Try to answer from R2. Returns true when the message was handled here. `loaded`: the index, when the caller has
+ * parsed it already (parsing it twice can cost most of the 10 ms CPU budget of Workers Free). */
+async function answerFast(env, command, arg, echo, update, loaded) {
   if (!env.INBOX || !(FAST_READ.has(command) || FAST_WRITE.has(command))) return false;
-  const index = await readJson(env, INDEX_KEY);
+  const index = loaded || await readJson(env, INDEX_KEY);
   if (!index || !Array.isArray(index.jobs)) return false;  // no index yet: Python answers as before
   const prefs = await loadPrefs(env);
   let messages;
@@ -652,7 +653,7 @@ async function handleMessage(env, update, text) {
   if (env.INBOX) {
     const index = await readJson(env, INDEX_KEY);
     const quick = shortcut(text, index);
-    if (quick && await answerFast(env, quick[0], quick[1], `↪ <i>/${quick[0]}${quick[1] ? ` ${esc(quick[1])}` : ""}</i>`)) return;
+    if (quick && await answerFast(env, quick[0], quick[1], `↪ <i>/${quick[0]}${quick[1] ? ` ${esc(quick[1])}` : ""}</i>`, undefined, index)) return;
   }
   // 3. free text: ask the AI (bounded); alone it may only open read-only views
   let hint = "";
@@ -766,14 +767,20 @@ async function dashboard(request, env) {
   });
 }
 
-// ---------------------------------------------------------------------------- watchdog (Cron Trigger, optional)
-// GitHub's scheduler is best-effort: runs are delayed, dropped, and schedules are disabled after 60 days without
-// repository activity. With a Cron Trigger on this Worker (e.g. every hour) the bot notices when the scraper has been
-// silent for too long, re-enables and starts the workflow itself, and says so once per incident.
+// ---------------------------------------------------------------------------- run filler and watchdog (Cron Trigger)
+// GitHub's scheduler is best-effort: between 2026-09-19 and 2026-10-10 it dropped 61% of the two-hourly scraper slots,
+// and it disables schedules after 60 days without repository activity. With the Cron Trigger "41 * * * *" this Worker
+// fills the gaps: when the last index is FILL_AFTER_HOURS old and no scraper run is queued or running, it re-enables
+// and starts the workflow itself. A scraper that crashes before writing the index is started again after 1, 2 and
+// 4 hours, then left alone (MAX_KICKS) until a run gets through. A silence of STALE_HOURS rings once per incident,
+// and the recovery is reported.
+const FILL_AFTER_HOURS = 1.75;
 const STALE_HOURS = 6;
-const KICK_EVERY_HOURS = 3;
-const MAX_KICKS = 4;
+const MAX_KICKS = 4;  // runs started in a row without a new index
 const WATCHDOG_KEY = "state/watchdog.json";
+
+/** Same text as tell(), but with the notification sound: for the alerts a human has to act on. */
+const ring = (env, text) => telegram(env, env.TELEGRAM_CHAT_ID, esc(text), true);
 
 async function github(env, method, path, body) {
   return fetch(`https://api.github.com/repos/${env.GITHUB_REPO}/actions/workflows/${path}`, {
@@ -784,34 +791,65 @@ async function github(env, method, path, body) {
   });
 }
 
+/** True when a scraper run is queued or in progress. A question GitHub does not answer counts as "none": the kick
+ * cap bounds what a wrong guess can cost. */
+async function scraperBusy(env) {
+  for (const status of ["queued", "in_progress"]) {
+    const response = await github(env, "GET", `scraper.yml/runs?status=${status}&per_page=1`);
+    const body = response.ok ? await response.json().catch(() => null) : null;
+    if (body && body.total_count > 0) return true;
+  }
+  return false;
+}
+
 async function watchdog(env) {
   if (!env.INBOX) return "no bucket";
-  const index = await readJson(env, INDEX_KEY);
+  // the upload time of the index, not its content: parsing a megabyte here would spend the cron's CPU budget
+  const meta = await env.INBOX.head(keyOf(env, INDEX_KEY));
+  const uploaded = meta && meta.uploaded ? new Date(meta.uploaded).getTime() : NaN;
+  const age = Number.isFinite(uploaded) ? (Date.now() - uploaded) / 36e5 : Infinity;
   const memo = (await readJson(env, WATCHDOG_KEY)) || {};
-  const save = (value) => env.INBOX.put(keyOf(env, WATCHDOG_KEY), JSON.stringify(value), { httpMetadata: { contentType: "application/json" } });
-  const age = index && index.generated_at ? (Date.now() - Date.parse(index.generated_at)) / 36e5 : Infinity;
-  if (age <= STALE_HOURS) {
-    if (memo.alerted) {
-      await tell(env, "✅ The scraper is running again.");
-      await save({});
+  const next = { ...memo };
+  if (memo.last_kick && uploaded > Date.parse(memo.last_kick)) next.kicks = 0;  // a run got through since the last kick
+  if (memo.alerted && age < STALE_HOURS) {
+    await tell(env, "✅ The scraper is running again.");
+    next.alerted = false;
+  }
+  let outcome = "fresh";
+  let started = null;
+  const kicks = next.kicks || 0;
+  if (age >= FILL_AFTER_HOURS) {
+    if (await scraperBusy(env)) outcome = "running";
+    else if (kicks >= MAX_KICKS) outcome = "gave up";
+    // back-off after a run that did not write the index: 1, 2, then 4 hours (a quarter hour early, for cron jitter)
+    else if (kicks && Date.now() - Date.parse(memo.last_kick) < (2 ** (kicks - 1) - 0.25) * 36e5) outcome = "waiting";
+    else {
+      await github(env, "PUT", "scraper.yml/enable");
+      started = await github(env, "POST", "scraper.yml/dispatches", { ref: "main" });
+      outcome = started.ok ? "kicked" : "kick failed";
+      next.kicks = kicks + 1;
+      next.last_kick = new Date().toISOString();
     }
-    return "fresh";
   }
-  const kicks = memo.kicks || 0;
-  if (memo.last_kick && Date.now() - Date.parse(memo.last_kick) < KICK_EVERY_HOURS * 36e5) return "waiting";
-  if (kicks >= MAX_KICKS) return "gave up";  // said so already; a human has to look at GitHub Actions
-  await github(env, "PUT", "scraper.yml/enable");
-  const started = await github(env, "POST", "scraper.yml/dispatches", { ref: "main" });
-  const silent = Number.isFinite(age) ? `${Math.round(age)} hours` : "a long time";
-  if (!memo.alerted) {
-    await tell(env, started.ok
-      ? `🛟 No scraper run for ${silent}. I re-enabled the schedule and started a run myself.`
-      : `⚠️ No scraper run for ${silent}, and I could not start one (GitHub answered ${started.status}). Check the Actions tab and the Worker's GITHUB_TOKEN.`);
-  } else if (kicks + 1 >= MAX_KICKS) {
-    await tell(env, `⚠️ Still no scraper run after ${MAX_KICKS} attempts. Please look at the repository's Actions tab.`);
+  if (age >= STALE_HOURS && !next.alerted) {
+    const silent = Number.isFinite(age) ? `${Math.round(age)} hours` : "a long time";
+    const detail = {
+      kicked: "I re-enabled the schedule and started a run myself.",
+      "kick failed": `I could not start one (GitHub answered ${started && started.status}). Check the Actions tab and the Worker's GITHUB_TOKEN.`,
+      running: "A run is queued or in progress; I am waiting for it.",
+      waiting: "The run I started did not finish; I will start another one later.",
+      "gave up": `I started ${MAX_KICKS} runs and none of them finished. Please look at the repository's Actions tab.`,
+    }[outcome];
+    await ring(env, `${outcome === "kicked" ? "🛟" : "⚠️"} No scraper run for ${silent}. ${detail}`);
+    next.alerted = true;
+  } else if (next.alerted && started && next.kicks >= MAX_KICKS) {
+    await ring(env, `⚠️ Still no scraper run after ${MAX_KICKS} attempts. Please look at the repository's Actions tab.`);
   }
-  await save({ alerted: true, last_kick: new Date().toISOString(), kicks: kicks + 1 });
-  return started.ok ? "kicked" : "kick failed";
+  // written only when something changed: an hourly cron must not cost an R2 write every hour
+  if (JSON.stringify(next) !== JSON.stringify(memo)) {
+    await env.INBOX.put(keyOf(env, WATCHDOG_KEY), JSON.stringify(next), { httpMetadata: { contentType: "application/json" } });
+  }
+  return outcome;
 }
 
 // ---------------------------------------------------------------------------- application replies by email (optional)

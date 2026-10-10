@@ -88,17 +88,26 @@ Matches (filter, sort, visa and sponsor chips), applications by status, visa rou
 read-only, is never cached or indexed, and needs the `INBOX` binding. Anyone with the link can read it: do not share it,
 and change the secret to revoke it. Without the secret the route answers 404.
 
-## 9. Recommended: the watchdog (a Cron Trigger)
-GitHub's scheduler is best-effort: runs get delayed or dropped, and scheduled workflows are **disabled silently after
-60 days without repository activity**. The scraper re-enables its own schedule on every run, but something outside
-GitHub should notice when no run happens at all.
+## 9. Strongly recommended: the run filler and watchdog (a Cron Trigger)
+GitHub's scheduler is best-effort, and for this repository it is far from the two-hourly schedule: between
+2026-09-19 and 2026-10-10 it **dropped 61% of the scraper's slots** (155 of 255), with a median gap of 5.1 hours and
+gaps of up to 8.9 hours. The `Telegram commands` schedule at :17 is dropped just as often, so moving the cron
+minute does not help. Scheduled workflows are also **disabled silently after 60 days without repository activity**.
 
-Worker → **Settings → Triggers → Cron Triggers → Add** → `0 * * * *` (every hour) → Save.
+Worker → **Settings → Triggers → Cron Triggers → Add** → `41 * * * *` (every hour, at minute 41) → Save.
+If a trigger `0 * * * *` exists from an earlier version, replace it.
 
-Each hour the Worker looks at the age of `state/index.json`. When the last scraper run is more than 6 hours old it
-re-enables the workflow, starts a run, and tells you once (`🛟 No scraper run for 9 hours…`); it retries every
-3 hours, at most 4 times, and reports `✅ The scraper is running again` afterwards. It uses the `GITHUB_TOKEN` and
-`INBOX` binding you already have; free plan Cron Triggers cost nothing.
+Every hour the Worker asks R2 when `state/index.json` was last uploaded (a `head()`, the file is not read). When that
+is at least 1¾ hours ago and GitHub has no scraper run queued or in progress, it re-enables the workflow and starts
+a run itself, without a message: that is routine gap filling, and the GitHub schedule stays as a backup. A scraper
+that crashes before writing the index is started again after 1, 2 and 4 hours, then left alone until a run gets
+through (a push, the schedule or **Run workflow**). After 6 hours without a run the Worker **rings** once
+(`🛟 No scraper run for 7 hours…` or `⚠️ …` with the reason), once more when it gives up, and reports
+`✅ The scraper is running again` quietly afterwards.
+
+It uses the `GITHUB_TOKEN` (*Actions: Read and write* covers listing runs) and the `INBOX` binding you already have.
+Cost: 24 invocations a day, each one R2 `head()` and at most four GitHub requests; Workers Free allows 5 Cron
+Triggers. To see the effect, compare `event` = `schedule` with `workflow_dispatch` in the scraper's run list.
 
 ## 10. Optional: employer replies by email become outcomes
 If your domain is on Cloudflare (a portfolio site is enough), **Email Routing** can hand mail to this Worker:
