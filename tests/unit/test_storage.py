@@ -170,3 +170,24 @@ def test_retention_cleanup():
     deleted = m.cleanup_retention(raw_days=14, run_days=90, now=NOW)
     assert deleted == {"raw/": 1, "runs/": 1}
     assert "bot/raw/2026-09-15/r/x.jsonl.gz" in s3.objects and "bot/runs/latest.json" in s3.objects
+
+
+def test_selftest_r2_reports_a_refused_conditional_put_and_still_cleans_up(monkeypatch, capsys):
+    from conftest import FakeClientError, make_settings
+
+    from geojobbot import main
+
+    class NoQuotedEtags(FakeS3):  # a bucket that refuses every If-Match, even the right one
+        def put_object(self, Bucket, Key, Body, ContentType=None, IfMatch=None):
+            if IfMatch is not None:
+                raise FakeClientError("PreconditionFailed", 412)
+            return super().put_object(Bucket, Key, Body, ContentType)
+
+    for client, code in ((FakeS3(), 0), (NoQuotedEtags(), 1)):
+        monkeypatch.setattr(main, "build_store", lambda settings, client=client: R2Store("b", client=client))
+        settings = make_settings(r2_endpoint_url="https://r2.example", r2_access_key_id="k", r2_secret_access_key="s",
+                                 r2_bucket_name="b")
+        assert main.cmd_selftest_r2(settings, None) == code
+        out = capsys.readouterr().out
+        assert ("FAIL  conditional put" in out) == bool(code) and "PASS  delete" in out
+        assert client.objects == {}  # nothing left behind in the bucket

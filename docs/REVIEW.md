@@ -242,14 +242,17 @@ and the step follows from the status on record. `/ask` is wired on both sides.
   tap or an interview recorded from mail landing between Python's read and its PUT was erased. `get_tagged` returns the
   ETag, `put_bytes(if_match=)` sends `IfMatch` (boto3 >= 1.35.69, checked with a botocore Stubber; 1.34 rejects the
   parameter), a 412 is `ConcurrentModificationError`, and the command runs once more on the fresh copy before any reply
-  is sent. `selftest-r2` checks the precondition on the real bucket. The very first write stays unconditional (R2 does
-  not document `If-None-Match: *` on PutObject).
+  is sent. `selftest-r2` checks the precondition on the real bucket (a refused right ETag is a FAIL line, and the test
+  object is still deleted). The very first write stays unconditional (R2 does not document `If-None-Match: *` on
+  PutObject). The interview sheet `/outcome code interview` asks for is drafted after the save, so a retry repeats
+  only the prefs change, never the Workers AI call.
 - **F70 · a skipped scheduled `commands.yml` run could replace a pending inbox dispatch · [fixed]** The default
   `queue: single` keeps one pending run per group; `queue: max` keeps up to 100 (inferred from the docs, not reproduced).
 - **F71 · the Worker's index was pretty-printed, parsed twice on the shortcut path, and never measured · [fixed]**
   `state/index.json` is written without whitespace (about 40% smaller), the shortcut path hands the parsed index to
   `answerFast`, and the run summary and `runs/latest.json` give the gzipped state and index sizes, warning above 8 MB
-  and 1 MB.
+  and 1 MB. The index is written in its own step: a failed index write no longer takes the run report with it, and
+  the summary says so.
 
 ### Opportunities recorded (not bugs)
 
@@ -272,8 +275,8 @@ and the step follows from the status on record. `/ask` is wired on both sides.
 
 ## State of the review
 
-Every row above has a status. 71 findings: 70 fixed, 1 recorded as an idea (F7). Tests went from 280 to 471 (Python) and from 17
-to 25 (Worker). Not verifiable from the development machine, and therefore to watch in the next runs: the AI model chain
+Every row above has a status. 71 findings: 70 fixed, 1 recorded as an idea (F7). Tests went from 280 to 474 (Python) and from 17
+to 26 (Worker). Not verifiable from the development machine, and therefore to watch in the next runs: the AI model chain
 (the token lives in GitHub secrets; the last model of the chain is the one that worked before), France Travail live answers,
 and the first run after deployment, which rescores stored matches (`rescored_from_text` in the run summary) and may carry
 over alerts that were held back earlier (`carried_over`).

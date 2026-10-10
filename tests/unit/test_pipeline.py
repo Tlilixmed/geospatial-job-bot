@@ -1,6 +1,7 @@
 """End-to-end pipeline tests with injected backends, fake HTTP, fake R2 and fake Telegram."""
 from datetime import timedelta
 
+import pytest
 from conftest import GIS_DESCRIPTION, NOW, FakeResponse, FakeS3, FakeSession, make_settings
 
 from geojobbot.core.pipeline import Pipeline, build_backends
@@ -233,6 +234,38 @@ def test_run_publishes_the_index_the_worker_answers_from():
     latest = StateManager(R2Store("b", client=s3)).read_json("runs/latest.json")
     assert latest["storage"]["index_bytes"] == len(raw)
     assert latest["storage"]["state_bytes"] > 0  # gzipped bytes of the state saved before the artifacts
+
+
+def test_the_run_report_survives_an_index_that_cannot_be_stored_or_built(monkeypatch):
+    from conftest import FakeClientError
+
+    from geojobbot.core import pipeline
+    from geojobbot.core.report import build_summary
+
+    class IndexRefused(FakeS3):
+        def put_object(self, Bucket, Key, Body, ContentType=None, IfMatch=None):
+            if Key == "state/index.json":
+                raise FakeClientError("InternalError", 500)
+            return super().put_object(Bucket, Key, Body, ContentType, IfMatch)
+
+    s3 = IndexRefused()
+    code, report = run(s3, [StaticBackend("feed", [gis_raw()])], FakeNotifier())
+    assert code == 0 and "state/index.json" not in s3.objects
+    latest = StateManager(R2Store("b", client=s3)).read_json("runs/latest.json")
+    assert latest["artifact_error"].startswith("state/index.json") and latest["storage"]["index_bytes"] is None
+    assert latest["storage"]["state_bytes"] > 0 and any(k.startswith("runs/2") for k in s3.objects)
+    summary = build_summary(report)
+    assert "index not written" in summary and "WARNING: artifacts not written: state/index.json" in summary
+
+    def broken(*args, **kwargs):
+        raise KeyError("a bug")
+
+    monkeypatch.setattr(pipeline, "build_index", broken)
+    s3 = FakeS3()
+    with pytest.raises(KeyError):  # a bug still fails the run loudly...
+        run(s3, [StaticBackend("feed", [gis_raw()])], FakeNotifier())
+    latest = StateManager(R2Store("b", client=s3)).read_json("runs/latest.json")  # ...after the report is written
+    assert latest["artifact_error"] == "state/index.json not built (KeyError)"
 
 
 def test_run_summary_reports_sizes_and_warns_above_the_limits():

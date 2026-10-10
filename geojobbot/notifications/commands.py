@@ -98,6 +98,7 @@ class CommandProcessor:
         self.prefs = prefs if prefs is not None else load_prefs(manager)
         self._own_prefs = prefs is None  # loaded here: re-read before each message, the Worker may have written meanwhile
         self._dirty = False
+        self._after_save = []  # slow replies (an AI draft) produced once the change they follow is saved
 
     # ------------------------------------------------------------------ telegram plumbing
     def _api(self, method: str, **params):
@@ -143,8 +144,10 @@ class CommandProcessor:
     def _execute(self, text: str, hint: str = "") -> tuple[list[str], int]:
         """Handle one message and save what it changed, before any reply is sent. When the Worker wrote the
         preferences between our read and our write (the conditional put refuses), the message is run once more on a
-        fresh copy: nothing has been said yet, so the user only ever sees the answer that was saved."""
+        fresh copy: nothing has been said yet, so the user only ever sees the answer that was saved. AI drafts a
+        command asks for run after the save, so a retry repeats only the cheap change, never the draft."""
         for attempt in (1, 2):
+            self._after_save = []
             try:
                 self._fresh_prefs()
                 replies = self.handle(text, hint)
@@ -152,10 +155,18 @@ class CommandProcessor:
                 log.exception("command failed")
                 replies = [f"⚠️ That command failed ({type(exc).__name__}). /help lists what I understand."]
             try:
-                return replies, self._save_if_changed()  # before the (slow) replies: the window for a lost update stays small
+                saved = self._save_if_changed()  # before the (slow) replies: the window for a lost update stays small
             except ConcurrentModificationError:
                 log.info("preferences changed meanwhile (attempt %d)", attempt)
                 self.prefs, self._dirty = load_prefs(self.manager), False
+                continue
+            for follow_up in self._after_save:
+                try:
+                    replies += follow_up()
+                except Exception as exc:
+                    log.exception("follow-up reply failed")
+                    replies.append(f"⚠️ That reply failed ({type(exc).__name__}). Your change was saved.")
+            return replies, saved
         return ["⚠️ Your preferences were being changed at the same moment. Nothing was lost; please send that again."], 0
 
     def _fresh_prefs(self) -> None:
@@ -619,8 +630,8 @@ class CommandProcessor:
                  "rejected": "❌ Noted. Their loss; on to the next.", "withdrawn": "↩️ Noted as withdrawn.",
                  "ghosted": "👻 Noted as no reply.", "applied": "📨 Back to 'applied'."}[status]
         replies = [f"{cheer}\n<b>{_esc(info.get('title'))}</b>" + (f" — {_esc(info['company'])}" if info.get("company") else "")]
-        if status == "interview":  # the moment an interview sheet is useful
-            replies += self.cmd_prep(job_code(cid))
+        if status == "interview":  # the moment an interview sheet is useful; an AI draft, so written after the save
+            self._after_save.append(lambda: self.cmd_prep(job_code(cid)))
         return replies
 
     def cmd_hide(self, arg: str) -> list[str]:

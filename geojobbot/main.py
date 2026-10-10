@@ -219,7 +219,10 @@ def cmd_selftest_r2(settings, args) -> int:
         steps.append(("head", (store.head(key) or {}).get("size") == len(payload)))
         steps.append(("get round-trip", store.get_bytes(key) == payload))
         # preferences are saved with If-Match: the bucket must accept the right ETag and refuse a stale one
-        steps.append(("conditional put", bool(store.put_bytes(key, payload, "application/gzip", if_match=store.get_tagged(key)[1]))))
+        try:  # a refusal here means the bucket does not take the ETag form we send: say so, and still clean up
+            steps.append(("conditional put", bool(store.put_bytes(key, payload, "application/gzip", if_match=store.get_tagged(key)[1]))))
+        except ConcurrentModificationError:
+            steps.append(("conditional put", False))
         try:
             store.put_bytes(key, payload, "application/gzip", if_match="0" * 32)
             steps.append(("stale If-Match refused", False))

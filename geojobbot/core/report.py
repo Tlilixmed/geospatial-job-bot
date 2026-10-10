@@ -123,8 +123,11 @@ def build_summary(report: dict) -> str:
     ]
     storage = report["storage"]
     if storage.get("state_bytes") or storage.get("index_bytes"):
-        lines.append(f"  Sizes: state {storage.get('state_bytes') or 0:,} bytes gzipped · index {storage.get('index_bytes') or 0:,} bytes")
+        index = f"{storage['index_bytes']:,} bytes" if storage.get("index_bytes") else "not written"
+        lines.append(f"  Sizes: state {storage.get('state_bytes') or 0:,} bytes gzipped · index {index}")
     lines += [f"  WARNING: {warning}" for warning in size_warnings(report)]
+    if report.get("artifact_error"):
+        lines.append(f"  WARNING: artifacts not written: {report['artifact_error']}")
     lines += [
         "",
         f"HTTP: {report.get('http', {}).get('requests', 0)} requests, "
