@@ -408,6 +408,15 @@ RESPONSIBILITY_TERMS = [
     Term("Web GIS / dashboards", 2, (r"\bweb\s+gis\b", r"\bweb\s+maps?\b", r"\bstory\s*maps?\b",
                                      r"\bexperience\s+builder\b", r"\bgis\s+dashboards?\b", r"\b(?:web\s*sig|sig\s+web)\b",
                                      r"\bcartes?\s+(?:web|en\s+ligne|interactives?)\b"), family="web_mapping"),
+    # The candidate's current work: registering scans into one cloud, then meshes and 3D models for BIM / CAD
+    Term("Point cloud registration & 3D modelling", 3, (
+        r"\b(?:point[\s-]?clouds?|scans?|laser\s+scans?)\s+(?:registration|alignment|stitching|consolidation)\b",
+        r"\bregist(?:ration|er(?:ing)?)\s+(?:of\s+)?(?:the\s+)?(?:point[\s-]?clouds?|(?:laser\s+)?scans?|scan\s+data)\b",
+        r"\b(?:scan|point[\s-]?cloud)[\s-]*(?:to|2)[\s-]*(?:bim|cad|mesh|revit)\b",
+        r"\b3d\s+(?:mesh(?:es|ing)?|models?|modell?ing)\s+(?:from|of)\s+(?:point[\s-]?clouds?|(?:laser\s+)?scans?|scan\s+data)\b",
+        r"\b(?:recalage|consolidation|assemblage)\s+(?:de\s+|des\s+)?(?:nuages?\s+de\s+points|scans?)\b",
+        r"\bmod[ée]lisation\s+3d\s+(?:[àa]\s+partir\s+(?:de\s+|des\s+)?)?(?:nuages?\s+de\s+points|scans?)\b",
+    ), family="lidar"),
     Term("Point cloud classification", 2, (r"\bclassif\w+\s+(?:of\s+)?(?:lidar|point)",
                                            r"\bclassification\s+(?:des?\s+)?nuages?\s+de\s+points\b"), family="lidar"),
     # The daily work of a French géomètre-topographe. Museums also do a "récolement" (of their collections), shops an
@@ -443,6 +452,13 @@ CATEGORY_CAPS = {"title": 40, "tech": 25, "domain": 20, "responsibilities": 10, 
 # The candidate's own skills (canonical names of TECH_SKILLS that the CV supports); MY_SKILLS or /skills replace them.
 # The "tech" part of the score counts these, scaled by how much of what the posting asks for they cover: a posting that
 # names 13 tools scores on the 6 the candidate has, not on all 13 (matcher.skill_points).
+# Years of professional experience; a posting that asks for many more is a long shot (matcher.experience_points).
+# MY_EXPERIENCE_YEARS overrides it.
+CANDIDATE_YEARS = 3
+# (years beyond the candidate's, points): one or two more are normal asks; at EXPERIENCE_REJECT_GAP or more the job is
+# rejected (EXPERIENCE_GAP), as "10+ years" is for someone with 3.
+EXPERIENCE_PENALTY = ((2, -5), (3, -10), (4, -15))
+EXPERIENCE_REJECT_GAP = 5
 CANDIDATE_SKILLS = ["ArcGIS Pro", "ArcGIS", "QGIS", "Python", "ArcPy", "AutoCAD", "MicroStation", "FME", "TerraScan",
                     "Smallworld", "Agisoft Metashape", "CloudCompare/LAStools", "Spatial databases"]
 # Owning the left skill means owning the right ones too (the older or broader product of the same family).
@@ -558,3 +574,4 @@ class MatchConfig:
     exclude_work_auth_required: bool = True
     home_countries: list[str] = field(default_factory=lambda: ["Tunisia"])  # no work authorisation needed there
     my_skills: list[str] = field(default_factory=list)  # empty = CANDIDATE_SKILLS
+    my_years: int = CANDIDATE_YEARS

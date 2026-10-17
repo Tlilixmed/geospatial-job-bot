@@ -114,6 +114,7 @@ jobs:
           VISA_PENALTY: ${{ vars.VISA_PENALTY }}
           MY_LANGUAGES: ${{ vars.MY_LANGUAGES }}
           MY_SKILLS: ${{ vars.MY_SKILLS }}
+          MY_EXPERIENCE_YEARS: ${{ vars.MY_EXPERIENCE_YEARS }}
           HOME_COUNTRIES: ${{ vars.HOME_COUNTRIES }}
           MAX_ALERTS_PER_RUN: ${{ vars.MAX_ALERTS_PER_RUN }}
           PROSPECTS_PER_RUN: ${{ vars.PROSPECTS_PER_RUN }}

@@ -64,6 +64,7 @@ jobs:
           AI_MODELS: ${{ vars.AI_MODELS }}
           MY_LANGUAGES: ${{ vars.MY_LANGUAGES }}
           MY_SKILLS: ${{ vars.MY_SKILLS }}
+          MY_EXPERIENCE_YEARS: ${{ vars.MY_EXPERIENCE_YEARS }}
           HOME_COUNTRIES: ${{ vars.HOME_COUNTRIES }}
           # passed through the environment, never interpolated into the shell
           COMMAND_INBOX: ${{ inputs.inbox }}

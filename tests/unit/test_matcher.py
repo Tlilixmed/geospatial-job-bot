@@ -1,3 +1,4 @@
+import pytest
 from conftest import GIS_DESCRIPTION
 
 from geojobbot.matching import matcher as M
@@ -275,3 +276,54 @@ def test_skills_set_with_slash_skills_reach_the_scorer():
     apply_prefs(settings, prefs)
     assert settings.match_config().my_skills == ["QGIS", "PostGIS", "SQL"]
     assert Settings().match_config().my_skills == []  # nothing set: the built-in list from the CV
+
+
+YEARS = [  # (sentence from a real posting, years it asks for)
+    ("Our team is solid and experienced, with an average of 15 years of professional expertise. "
+     "Minimum of 2 years of professional GIS experience (excluding coursework).", 2),
+    ("Minimum 10+ years of experience in GIS, geospatial information management", 10),
+    ("Years of experience: A minimum of 10 years of experience in geospatial data integration", 10),
+    ("8 to 12 years of experience in delivering GIS products", 8),
+    ("The successful candidate will have at least 1 year of mapping technician work experience", 1),
+    ("3–5 years of experience with Esri GIS applications", 3),
+    ("Over the past 75 years, our efforts to improve forest health. • 3+ years of experience in GIS", 3),
+    ("15+ years of GIS experience with leadership of complex workstreams", 15),
+    ("5 years' plus experience working in ESRI platforms", 5),
+    ("CDI - Bac+2/Bac+3 - 2 à 5 ans d'expérience", 2),
+    ("Expérience : 3 ans d'expérience minimum sur un poste similaire", 3),
+    ("OR high school diploma plus 2 years of applicable work experience in a GIS-related field", 2),
+    # not requirements: the employer's history, a contract length, a range without the word experience
+    ("Contrat de catégorie B par CDD de 3 ans maximum, avec possibilité de renouvellement", None),
+    ("Forte du travail mené depuis 13 ans sur le territoire", None),
+    ("Junior to Intermediate (2-6 years preferred)", None),
+    ("Staff stay with the company for more than 10 years in average; a great experience.", None),
+]
+
+
+@pytest.mark.parametrize("sentence,years", YEARS)
+def test_years_of_experience_asked(sentence, years):
+    assert M.required_years(sentence) == years
+
+
+def test_far_more_years_than_the_candidate_has_marks_down_or_rejects():
+    from geojobbot.matching.profile import MatchConfig
+
+    def with_years(n):
+        return M.score_job("GIS Analyst", GIS_DESCRIPTION + f"\n{n}+ years of GIS experience required.", REMOTE)
+
+    plain = M.score_job("GIS Analyst", GIS_DESCRIPTION, REMOTE)
+    assert with_years(3).score == plain.score and "experience" not in with_years(3).breakdown
+    assert with_years(5).breakdown["experience"] == -5 and with_years(6).breakdown["experience"] == -10
+    senior = with_years(10)
+    assert senior.tier == "rejected" and "EXPERIENCE_GAP" in senior.rejection_reasons
+    assert M.score_job("GIS Analyst", GIS_DESCRIPTION + "\n10+ years of GIS experience required.", REMOTE,
+                       MatchConfig(my_years=9)).tier == "high"  # MY_EXPERIENCE_YEARS moves the bar
+
+
+def test_point_cloud_registration_is_the_candidates_own_work():
+    text = ("Register laser scans in Cyclone, perform point cloud registration and deliver scan-to-BIM models. "
+            "Recalage des nuages de points et modélisation 3D à partir de nuages de points.")
+    names = [h.canonical for h in M.extract_terms(text, "resp")]
+    assert "Point cloud registration & 3D modelling" in names
+    assert "Point cloud registration & 3D modelling" not in [h.canonical for h in M.extract_terms(
+        "Register for our webinar on 3D printing; cloud registration of devices.", "resp")]

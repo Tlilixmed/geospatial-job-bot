@@ -362,6 +362,14 @@ and the step follows from the status on record. `/ask` is wired on both sides.
 - **F85 · the AI review's "restricted" only cost 12 points · [fixed]** A High match at 85 stayed High at 73 although the
   model had read "citizens only" or "no sponsorship" in the text. It now rejects (`AI_WORK_RESTRICTED`) unless the posting
   or the model finds a sponsorship offer, the job is in a home country or open worldwide, or the user was already alerted.
+- **F86 · years of experience were never read · [fixed]** A live dry run of 2026-10-17 checked against the owner's CV
+  (about 3 years) put "10+ years" jobs at High 89 (Parsons, Saudi Arabia), 86 (SYSTRA, WSP Senior Consultant 8-12 years)
+  and 75 (WSP, 15+ years). `required_years` reads the smallest number of years a posting asks for, only in sentences
+  about experience (16 real sentences in the golden table, including "an average of 15 years of expertise", "CDD de 3 ans"
+  and "depuis 13 ans", which do not count); 2-4 years beyond `MY_EXPERIENCE_YEARS` cost 5-15 points, 5 or more reject
+  (`EXPERIENCE_GAP`). On that run 10 jobs asking 8-15 years were rejected, and 5-year asks lost 5 points.
+- **F87 · the candidate's current work was not a scoring term · [fixed]** Point-cloud registration, scan-to-BIM and 3D
+  modelling from scans (with the French recalage / modélisation 3D) are now a responsibility term of the LiDAR family.
 
 ### Opportunities recorded (not bugs)
 
@@ -392,7 +400,7 @@ and the step follows from the status on record. `/ask` is wired on both sides.
 
 ## State of the review
 
-Every row above has a status. 85 findings: 84 fixed, 1 recorded as an idea (F7). Tests went from 280 to 811 (Python) and from 17
+Every row above has a status. 87 findings: 86 fixed, 1 recorded as an idea (F7). Tests went from 280 to 829 (Python) and from 17
 to 40 (Worker). Not verifiable from the development machine, and therefore to watch in the next runs: the AI model chain
 (the token lives in GitHub secrets; the last model of the chain is the one that worked before), France Travail live answers,
 and the first run after deployment, which rescores stored matches (`rescored_from_text` in the run summary) and may carry

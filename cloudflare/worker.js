@@ -339,7 +339,7 @@ function viewWhy(index, arg) {
   const bd = job.bd || {};
   const lines = [`<b>${esc(job.t)}</b>${job.c ? ` — ${esc(job.c)}` : ""}`, `Score ${job.s}/100 · ${esc(job.tier)}`,
     `Title ${bd.title || 0} · skills ${bd.tech || 0} · domain ${bd.domain || 0} · tasks ${bd.responsibilities || 0} · location ${bd.location || 0}`];
-  const extras = [["sponsor", "sponsor register"], ["learned", "learned"], ["visa", "visa route"], ["ai", "AI reading"]]
+  const extras = [["sponsor", "sponsor register"], ["learned", "learned"], ["visa", "visa route"], ["ai", "AI reading"], ["experience", "years asked"]]
     .filter(([key]) => bd[key]).map(([key, label]) => `${label} ${bd[key] > 0 ? "+" : ""}${bd[key]}`);
   if (extras.length) lines.push(`Adjustments: ${extras.join(" · ")}`);
   if ((job.why || []).length) lines.push("", "<b>Evidence</b>", ...job.why.map((w) => `• ${esc(w)}`));

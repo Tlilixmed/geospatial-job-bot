@@ -20,6 +20,7 @@ INSUFFICIENT_GEOSPATIAL_SIGNALS = "INSUFFICIENT_GEOSPATIAL_SIGNALS"
 LOW_TECHNICAL_RELEVANCE = "LOW_TECHNICAL_RELEVANCE"
 LOCATION_MISMATCH = "LOCATION_MISMATCH"
 LOW_SCORE = "LOW_SCORE"
+EXPERIENCE_GAP = "EXPERIENCE_GAP"  # the posting asks for far more years than the candidate has
 WORK_AUTHORIZATION_REQUIRED = "WORK_AUTHORIZATION_REQUIRED"
 SPONSORSHIP_EVIDENCE = "Visa sponsorship offered"
 
@@ -294,6 +295,45 @@ def _capped(hits: list[TermHit], cap: int) -> int:
     return min(cap, sum(h.weight for h in hits))
 
 
+# "Minimum of 2 years of professional GIS experience", "8 to 12 years of experience", "5+ years' experience",
+# "3 ans d'expérience minimum", "expérience de 2 à 5 ans". The number must sit in a sentence about experience: "an
+# average of 15 years of expertise", "over the past 75 years", "CDD de 3 ans" describe the employer or the contract.
+_YEARS_RE = re.compile(
+    r"\b(?:minimum(?:\s+of)?|at\s+least|more\s+than|over|plus\s+de|au\s+moins|minimum\s+de|d.au\s+moins)?\s*"
+    r"(\d{1,2})\s*\+?\s*(?:(?:-|\u2013|to|a|\u00e0)\s*\d{1,2}\s*\+?\s*)?(?:years?|yrs|ans|annees)\b", re.I)
+_EXPERIENCE_WORD_RE = re.compile(r"\bexp[eé]rien\w*|\bexperience\b", re.I)
+_NOT_REQUIREMENT_RE = re.compile(r"\b(?:average|moyenne|history|histoire|since|depuis|founded|fond[ée]e?|past|past\s+\d+|"
+                                 r"anniversary|retention|staying|stay|old|ago|il\s+y\s+a)\b", re.I)
+
+
+def required_years(text: str) -> int | None:
+    """The smallest number of years of experience the posting asks for, or None (benefit of the doubt: "5+ years, or 3
+    with a master's" counts as 3)."""
+    found = []
+    for sentence in re.split(r"[.;\n\r\u2022\u25aa\u25cf]+", text or ""):
+        if not _EXPERIENCE_WORD_RE.search(sentence):
+            continue
+        for match in _YEARS_RE.finditer(sentence):
+            window = sentence[max(0, match.start() - 40): match.end() + 20]
+            if _NOT_REQUIREMENT_RE.search(window):
+                continue
+            years = int(match.group(1))
+            if 1 <= years <= 25:
+                found.append(years)
+    return min(found) if found else None
+
+
+def experience_points(text: str, cfg) -> tuple[int, bool]:
+    """(points, reject): a posting that asks for many more years than the candidate has."""
+    need = required_years(text)
+    if need is None:
+        return 0, False
+    gap = need - int(getattr(cfg, "my_years", P.CANDIDATE_YEARS))
+    if gap >= P.EXPERIENCE_REJECT_GAP:
+        return 0, True
+    return next((points for over, points in reversed(P.EXPERIENCE_PENALTY) if gap >= over), 0), False
+
+
 def owned_skills(have) -> set[str]:
     """Folded names of the candidate's skills, with what they imply (ArcGIS Pro covers ArcGIS and ArcMap)."""
     names = list(have or P.CANDIDATE_SKILLS)
@@ -375,9 +415,12 @@ def score_job(title: str, description: str, location: dict, cfg: P.MatchConfig |
     if sponsorship:  # an employer that sponsors makes any location reachable
         loc_points, loc_mismatch = P.CATEGORY_CAPS["location"], False
 
-    score = title_points + tech_points + domain_points + resp_points + loc_points
-    title_only = False
     has_description = len(description.strip()) >= 300
+    exp_points, too_senior = experience_points(description, cfg) if has_description else (0, False)
+    if too_senior:
+        rejections.append(EXPERIENCE_GAP)
+    score = title_points + tech_points + domain_points + resp_points + loc_points + exp_points
+    title_only = False
     weak_title = kind != "none" and weak_only_title(title or "")
     if weak_title and has_description:
         # "Surveyor" / "Mapping" titles need geomatics evidence in the body: another geospatial family, a
@@ -431,6 +474,7 @@ def score_job(title: str, description: str, location: dict, cfg: P.MatchConfig |
         breakdown={
             "title": title_points, "tech": tech_points, "domain": domain_points,
             "responsibilities": resp_points, "location": loc_points,
+            **({"experience": exp_points} if exp_points else {}),
         },
         title_kind=kind,
         title_evidence=title_evidence,

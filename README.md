@@ -71,6 +71,7 @@ Invalid configured slugs are listed prominently in the run summary and GitHub st
 | Location | 5 | remote scope / preferred locations |
 
 - **Tiers.** ≥70 is *High*, ≥55 is *Possible*, anything lower is rejected.
+- **Years of experience.** The smallest number of years a posting asks for, read only from sentences about experience ("an average of 15 years of expertise" or "CDD de 3 ans" do not count), is compared with `MY_EXPERIENCE_YEARS` (default 3): two or three years more cost 5 or 10 points, four more cost 15, five or more reject the job (`EXPERIENCE_GAP`).
 - **Your skills list decides the skills part.** If you know SQL or PostGIS, the two skills postings ask for most often, add them with `/skills add SQL PostGIS`: until then a posting that requires them counts them as missing.
 - **Canonical names.** Variants collapse to one name (`Esri`/`ArcGIS Online` → ArcGIS; `ArcGIS Pro` is never double-counted as ArcGIS), and each skill counts once.
 - **Required vs preferred.** Detected from the sentence the skill appears in, e.g. "ArcGIS Pro required".

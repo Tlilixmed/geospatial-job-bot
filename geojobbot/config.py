@@ -159,6 +159,7 @@ class Settings:
     reliefweb_appname: str | None = None  # approved app name from ReliefWeb (free): UN/NGO jobs, hired internationally
     weekly_summary: bool = True
     my_skills: list[str] = field(default_factory=list)  # empty = the list in insights/radar.py
+    my_experience_years: int = 3  # postings asking for many more years are marked down or rejected (MY_EXPERIENCE_YEARS)
     monthly_radar: bool = True
     market_signals: bool = True  # World Bank procurement: geospatial awards, consultancies, tenders
     sponsor_registers: bool = True  # UK / Canada / Netherlands official sponsor registers, refreshed weekly
@@ -207,6 +208,7 @@ class Settings:
             exclude_work_auth_required=self.exclude_work_auth_required,
             home_countries=self.home_countries,
             my_skills=self.my_skills,
+            my_years=self.my_experience_years,
         )
 
     def secrets(self) -> list[str]:
@@ -318,6 +320,7 @@ def load_settings() -> Settings:
     s.prospects_per_run = max(0, env_int("PROSPECTS_PER_RUN", s.prospects_per_run))
     s.my_languages = env_list("MY_LANGUAGES", s.my_languages)
     s.my_skills = env_list("MY_SKILLS", s.my_skills)
+    s.my_experience_years = max(0, env_int("MY_EXPERIENCE_YEARS", s.my_experience_years))
     s.monthly_radar = env_bool("MONTHLY_RADAR", s.monthly_radar)
     s.market_signals = env_bool("MARKET_SIGNALS", s.market_signals)
     s.jsearch_api_key = env_str("JSEARCH_API_KEY")
