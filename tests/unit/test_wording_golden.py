@@ -59,6 +59,14 @@ REFUSALS = [  # (True, False)
     "We will not be providing sponsorship.",
 ]
 DEMANDS = [  # (True, False): an existing right to work, citizenship, nationals only, clearance
+    # leaked into alerts before 2026-10-17 (Ascent Geomatics, Orcrist, cFocus/DHS)
+    "Employment is limited to candidates authorized to work in the United States and able to perform work within continental U.S.",
+    "Requirements:\n- Eligible to work in Germany\n- 3+ years of Python",
+    "What you bring\n• Authorized to work in the US\n• ArcGIS Pro",
+    "This position requires a Public Trust Clearance.",
+    "Candidates must be able to obtain a public trust background investigation.",
+    "Only applicants authorized to work in Canada will be considered.",
+    "This role is restricted to individuals who are eligible to work in the UK.",
     "Must be authorized to work in the United States.",
     "We will sponsor your professional licensure (PLS) and continuing education. Must be authorized to work in the United States.",
     "Applicants must have the right to work in the UK.",
@@ -100,6 +108,10 @@ NEUTRAL = [  # (False, False): ordinary wording that says nothing about visas
     "We participate in E-Verify and will confirm your authorization to work in the U.S.",
     "We are an equal opportunity employer and consider applicants without regard to race, national origin, citizenship or immigration status.",
     "We are an E-Verify employer.",
+    "Our programme helps graduates become eligible to work in Germany through the EU Blue Card.",
+    "Public trust in authoritative geospatial data is at the heart of our mission.",
+    "If you are eligible to work in the EU, tell us in your cover letter.",
+    "We build tools that keep teams authorized to work in the field safely.",
 ]
 
 

@@ -229,3 +229,34 @@ def test_marks_that_no_longer_hold_are_removed():
     registry = BoardRegistry({"boards": {"greenhouse:acme": {"ats": "greenhouse"}}}, NOW)
     assert registry.register(BoardRef("greenhouse", "esri"), "search") and registry._per_ats["greenhouse"] == 2
     assert registry.register(BoardRef("greenhouse", "esri"), "search") is False and registry._per_ats["greenhouse"] == 2
+
+
+def test_a_job_the_ai_found_restricted_is_rejected_unless_sponsorship_is_offered():
+    from geojobbot.core.jobs import apply_ai_restriction
+
+    settings = make_settings()
+    base = {"tier": "high", "score": 85, "country": "United States", "rejection_reasons": [], "why_matched": [],
+            "ai": {"restricted": True, "sponsorship": "unknown"}}
+    rec = dict(base)
+    assert apply_ai_restriction(rec, settings) and rec["tier"] == "rejected" and rec["rejection_reasons"] == ["AI_WORK_RESTRICTED"]
+    keep = [
+        {**base, "why_matched": ["Visa sponsorship offered"]},                    # the posting offers it after all
+        {**base, "ai": {"restricted": True, "sponsorship": "offered"}},
+        {**base, "country": "Tunisia"},                                             # home: no visa question
+        {**base, "country": None, "remote": True, "remote_scope": "Worldwide"},     # work from anywhere
+        {**base, "notified": True},                                                 # already alerted: never vanishes
+        {**base, "ai": {"restricted": False}},
+        {**base, "tier": "rejected"},
+    ]
+    for rec in keep:
+        tier = rec["tier"]
+        assert not apply_ai_restriction(rec, settings) and rec["tier"] == tier, rec
+
+
+def test_the_restriction_is_applied_in_a_run_after_the_review():
+    ai, _ = ai_with([json.dumps({"fit": 8, "summary": "GIS analyst for a federal programme.", "restricted": True})])
+    s3 = FakeS3()
+    report, notifier = _run(s3, [gis_raw(location_raw="Denver, CO")], ai)
+    rec = StateManager(R2Store("b", client=s3)).load()["jobs"]["static:1"]
+    assert rec["tier"] == "rejected" and "AI_WORK_RESTRICTED" in rec["rejection_reasons"]
+    assert report["counts"]["ai_work_restricted"] == 1 and notifier.sent == []

@@ -885,3 +885,10 @@ test("a toast is cut at 200 characters between characters, never through an emoj
   assert.equal(answer.text.length, 199);
   assert.ok(answer.text.endsWith("x"));
 });
+
+test("lists say how many of a posting's skills you have", async () => {
+  const h = harness({ index: makeIndex([job("gh:acme:1", { sf: [6, 13] }), job("gh:acme:2", { t: "LiDAR Technician", c: "ScanCo" })]) });
+  await h.say("/jobs");
+  assert.match(h.sent[0].text, /🧰 6\/13 skills/);
+  assert.equal((h.sent[0].text.match(/🧰/g) || []).length, 1);  // an index from before the count shows nothing
+});

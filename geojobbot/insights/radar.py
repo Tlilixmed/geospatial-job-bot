@@ -9,14 +9,15 @@ from __future__ import annotations
 from collections import Counter
 from datetime import timedelta
 
+from ..matching.matcher import owned_skills
+from ..matching.profile import CANDIDATE_SKILLS
 from ..utils.dates import parse_datetime
 from ..utils.text import fold
 
 WINDOW_DAYS = 45
 MIN_JOBS = 8
 # canonical names from matching/profile.py that the CV supports; override with MY_SKILLS or /skills
-DEFAULT_SKILLS = ["ArcGIS Pro", "ArcGIS", "QGIS", "Python", "ArcPy", "AutoCAD", "MicroStation", "FME", "TerraScan",
-                  "Smallworld", "Agisoft Metashape", "CloudCompare/LAStools", "Spatial databases"]
+DEFAULT_SKILLS = CANDIDATE_SKILLS
 
 
 def my_skills(settings, prefs: dict) -> list[str]:
@@ -72,7 +73,7 @@ def format_radar(data: dict) -> str:
 
 def gap(rec: dict, have: list[str]) -> dict:
     """Per job: which of its skills you have and which are not on your list (the AI's requirements count too)."""
-    owned = {fold(s) for s in have}
+    owned = owned_skills(have)  # the same reading of "you have it" as the score's skills part
     asked: list[str] = []
     for skill in rec.get("matched_skills") or []:
         name = str(skill).partition(" (")[0].strip()

@@ -28,7 +28,7 @@ def _entry(cid: str, rec: dict, skills: list[str] | None = None) -> dict:
         "country": rec.get("country"), "s": int(rec.get("score") or 0), "tier": rec.get("tier"),
         "p": rec.get("posted_at"), "rel": bool(rec.get("posted_at_reliable")), "seen": rec.get("last_seen"),
         "rot": bool(rec.get("from_rotation")), "ttl": listed_days(rec), "url": rec.get("apply_url") or rec.get("url"),
-        "sal": rec.get("salary"), "sk": [str(s) for s in (rec.get("matched_skills") or [])[:8]],
+        "sal": rec.get("salary"), "sk": [str(s) for s in (rec.get("matched_skills") or [])[:8]], "sf": rec.get("skill_fit") or [],
         "dom": list((rec.get("matched_domains") or [])[:8]), "why": why[:12], "bd": rec.get("score_breakdown") or {},
         "rej": rec.get("rejection_reasons") or [], "offered": "Visa sponsorship offered" in why,
         "src": sorted({s.get("source_name") for s in rec.get("sources") or [] if s.get("source_name")})[:5],

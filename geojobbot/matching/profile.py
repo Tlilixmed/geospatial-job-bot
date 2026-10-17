@@ -440,6 +440,16 @@ PREFERRED_HINTS = (r"\b(prefer\w*|nice[\s-]to[\s-]have|asset|desirabl\w+|bonus|p
 
 CATEGORY_CAPS = {"title": 40, "tech": 25, "domain": 20, "responsibilities": 10, "location": 5}
 
+# The candidate's own skills (canonical names of TECH_SKILLS that the CV supports); MY_SKILLS or /skills replace them.
+# The "tech" part of the score counts these, scaled by how much of what the posting asks for they cover: a posting that
+# names 13 tools scores on the 6 the candidate has, not on all 13 (matcher.skill_points).
+CANDIDATE_SKILLS = ["ArcGIS Pro", "ArcGIS", "QGIS", "Python", "ArcPy", "AutoCAD", "MicroStation", "FME", "TerraScan",
+                    "Smallworld", "Agisoft Metashape", "CloudCompare/LAStools", "Spatial databases"]
+# Owning the left skill means owning the right ones too (the older or broader product of the same family).
+SKILL_IMPLIES = {"ArcGIS Pro": ("ArcGIS", "ArcMap"), "ArcGIS": ("ArcMap",)}
+# How much a skill the candidate lacks weighs against the ones they have, by how the posting asks for it.
+MISSING_SKILL_FACTOR = {"required": 1.5, "preferred": 0.5}
+
 # Work authorisation. Three kinds of wording, kept apart because they behave differently (geojobbot/matching/matcher.py):
 #   SPONSORSHIP_REFUSED     the employer says it will not sponsor: rejects, and cancels any "offer" wording elsewhere
 #   WORK_AUTH_DEMANDED      an existing right to work is demanded: rejects unless sponsorship is offered
@@ -483,6 +493,16 @@ WORK_AUTH_DEMANDED = [
     r"\b(?:autorisation|permis) de travail (?:valide |en cours de validite )?(?:exige|requis|obligatoire|indispensable)\w*",
     r"\btitre de sejour (?:valide |en cours de validite )?(?:exige|requis|obligatoire|indispensable)\w*",
     r"\bautorise\w* a travailler (?:en|au|aux|sur le territoire) ", r"\bresiden(?:t|ts|ce) permanent(?:s|e)?\b",
+    # "Employment is limited to candidates authorized to work in the United States", "only applicants eligible to work ..."
+    r"\b(?:limited|restricted|reserved|open only|only open) to (?:candidates|applicants|individuals|persons|people|those) "
+    r"(?:who are |that are )?(?:currently |already )?(?:legally )?(?:authori[sz]ed|eligible|permitted|entitled) to work\b",
+    r"\bonly (?:candidates|applicants|individuals|persons|those) (?:who are |that are )?(?:currently |already )?(?:legally )?"
+    r"(?:authori[sz]ed|eligible|permitted|entitled) to work\b",
+    # a requirement bullet or label without "must": "- Eligible to work in Germany", "Work eligibility: authorized to work
+    # in the US". Line-anchored (matcher.py runs (?m) patterns on the text that keeps line breaks), so that "we help you
+    # become eligible to work in Germany" in a sentence never counts.
+    r"(?m)(?:^|: )(?:[-*\u00b7]\s*)?(?:be |being )?(?:currently |already )?(?:legally )?(?:eligible|authori[sz]ed|entitled|permitted) "
+    r"to (?:legally |lawfully )?(?:work|live and work) in " + _PLACE,
 ]
 CITIZENSHIP_RESTRICTED = [
     r"\b(?:u\.?s\.?a?\.?|american|canadian|british|uk|australian|eu|german|french|dutch) (?:citizens?|citizenship|nationals?)\b",
@@ -494,6 +514,9 @@ CITIZENSHIP_RESTRICTED = [
     r"لل(?:سعوديين|مواطنين|اماراتيين|قطريين|كويتيين|عمانيين) فقط", r"(?:سعودي|اماراتي|قطري|كويتي|عماني|بحريني)(?:ة)? الجنسية",
     r"(?<!pathway to )(?<!path to )(?<!route to )(?<!leading to )(?<!towards )\bpermanent residen(?:t|ts|cy|ce)\b", r"\bgreen card\b",
     r"\b(?:security|secret|top secret|government|dv|sc|baseline) clearance\b", r"\bts/sci\b",
+    # US federal "Public Trust" positions: a suitability investigation reserved, in practice, for US citizens
+    r"\bpublic trust (?:clearance|position|investigation|background|suitability|determination|eligibility)\b",
+    r"\b(?:obtain|hold|maintain|requires?|eligible for|able to pass) (?:a |an )?(?:active |current )?public trust\b",
     r"\bcitoyennete (?:canadienne|francaise|americaine)\b", r"\bcitoyens? (?:canadiens?|francais)\b",
     r"\bhabilitation (?:de securite|secret)\b",
 ]
@@ -534,3 +557,4 @@ class MatchConfig:
     title_only_min_points: int = 34
     exclude_work_auth_required: bool = True
     home_countries: list[str] = field(default_factory=lambda: ["Tunisia"])  # no work authorisation needed there
+    my_skills: list[str] = field(default_factory=list)  # empty = CANDIDATE_SKILLS

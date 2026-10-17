@@ -206,6 +206,7 @@ class Settings:
             extra_negative_titles=self.negative_titles(),
             exclude_work_auth_required=self.exclude_work_auth_required,
             home_countries=self.home_countries,
+            my_skills=self.my_skills,
         )
 
     def secrets(self) -> list[str]:

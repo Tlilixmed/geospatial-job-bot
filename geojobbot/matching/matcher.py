@@ -48,6 +48,7 @@ class MatchResult:
     why_matched: list[str] = field(default_factory=list)
     rejection_reasons: list[str] = field(default_factory=list)
     title_only: bool = False
+    skill_fit: tuple[int, int] = (0, 0)  # (skills the candidate has, skills the posting names)
 
     @property
     def skill_names(self) -> list[str]:
@@ -178,7 +179,9 @@ def work_authorization(text: str, location: dict, cfg: P.MatchConfig) -> tuple[b
     folded, marks = _folded_with_marks(text)
     offered = any(not _negated(folded, m.start(), m.end(), marks) for rx in offered_rx for m in rx.finditer(folded))
     refused = any(rx.search(folded) for rx in refused_rx)
-    demanded = any(not _waived(marks, m.start(), m.end()) for rx in demanded_rx for m in rx.finditer(folded))
+    # a pattern anchored to line starts ((?m)) reads the copy that keeps line breaks: a requirement bullet, not a sentence
+    demanded = any(not _waived(marks, m.start(), m.end()) for rx in demanded_rx
+                   for m in rx.finditer(marks if rx.flags & re.M else folded))
     restricted = any(not _waived(marks, m.start(), m.end()) for rx in restricted_rx for m in rx.finditer(folded))
     compatible = any(rx.search(folded) for rx in compatible_rx)
     country = fold(location.get("country") or "")
@@ -291,6 +294,26 @@ def _capped(hits: list[TermHit], cap: int) -> int:
     return min(cap, sum(h.weight for h in hits))
 
 
+def owned_skills(have) -> set[str]:
+    """Folded names of the candidate's skills, with what they imply (ArcGIS Pro covers ArcGIS and ArcMap)."""
+    names = list(have or P.CANDIDATE_SKILLS)
+    for name in list(names):
+        names += list(P.SKILL_IMPLIES.get(name, ()))
+    return {fold(n) for n in names}
+
+
+def skill_points(skills: list[TermHit], have, cap: int) -> int:
+    """Skills you have, scaled by the share of the posting's skills they cover. A posting naming 13 tools of which you
+    have 6 used to score the full 25 (the cap was reached by the posting's own list); now it scores on your 6, weighed
+    against the 7 you lack, a required one counting more than a "nice to have"."""
+    owned = owned_skills(have)
+    have_w = sum(h.weight for h in skills if fold(h.canonical) in owned)
+    lack_w = sum(h.weight * P.MISSING_SKILL_FACTOR.get(h.qualifier or "", 1.0) for h in skills if fold(h.canonical) not in owned)
+    if not have_w:
+        return 0
+    return round(min(cap, have_w) * have_w / (have_w + lack_w))
+
+
 def _location_points(location: dict, cfg: P.MatchConfig) -> tuple[int, str | None, bool]:
     """Return (points, evidence, mismatch)."""
     remote = location.get("remote")
@@ -331,7 +354,7 @@ def score_job(title: str, description: str, location: dict, cfg: P.MatchConfig |
     resp = extract_terms(term_text, "resp")
     families = sorted({h.family for h in skills + domains + resp if h.family})
 
-    tech_points = _capped(skills, P.CATEGORY_CAPS["tech"])
+    tech_points = skill_points(skills, cfg.my_skills, P.CATEGORY_CAPS["tech"])
     domain_points = _capped(domains, P.CATEGORY_CAPS["domain"])
     resp_points = _capped(resp, P.CATEGORY_CAPS["responsibilities"])
     loc_points, loc_evidence, loc_mismatch = _location_points(location or {}, cfg)
@@ -418,4 +441,5 @@ def score_job(title: str, description: str, location: dict, cfg: P.MatchConfig |
         why_matched=why,
         rejection_reasons=list(dict.fromkeys(rejections)),
         title_only=title_only,
+        skill_fit=(sum(fold(h.canonical) in owned_skills(cfg.my_skills) for h in skills), len(skills)),
     )

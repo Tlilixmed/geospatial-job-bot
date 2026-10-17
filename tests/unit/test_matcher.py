@@ -9,7 +9,7 @@ REMOTE = {"remote": True, "remote_scope": None}
 def test_strong_gis_job_is_high_with_evidence():
     r = M.score_job("GIS Analyst", GIS_DESCRIPTION, REMOTE)
     assert r.tier == "high" and r.score >= 70
-    assert r.breakdown["title"] == 40 and r.breakdown["tech"] == 25
+    assert r.breakdown["title"] == 40 and r.breakdown["tech"] == 23  # PostGIS is asked for and not on the candidate's list
     names = r.skill_names
     assert "ArcGIS Pro" in names and "ArcPy" in names and "FME" in names and "PostGIS" in names
     assert "ArcGIS" not in names  # "ArcGIS Pro" must not double count as "ArcGIS"
@@ -244,3 +244,34 @@ def test_negative_words_that_are_also_ordinary_words_or_real_roles():
                       "Technico-commercial SIG", "Stage SIG", "Stage - Géomatique", "Student GIS Assistant", "Commercial Surveyor"]
     assert [t for t in fine if M.classify_title(t, extra)[3]] == []
     assert [t for t in still_negative if not M.classify_title(t, extra)[3]] == []
+
+
+def test_the_skills_part_counts_the_candidates_skills_not_every_skill_a_posting_names():
+    from geojobbot.matching.profile import MatchConfig
+
+    many = ("We use ArcGIS Pro, QGIS, Python, FME, AutoCAD and MicroStation daily. Required: PostGIS, SQL, GDAL/OGR, "
+            "GeoPandas, Google Earth Engine, Leaflet and STAC catalogs with Cloud Optimized GeoTIFFs. ") * 3
+    lacking = M.score_job("GIS Analyst", many, REMOTE)
+    owning = M.score_job("GIS Analyst", many, REMOTE, MatchConfig(my_skills=[h.canonical for h in lacking.skills]))
+    assert owning.breakdown["tech"] == 25 and lacking.breakdown["tech"] < 15  # 6 of 13 is not a full match
+    assert owning.score - lacking.score == owning.breakdown["tech"] - lacking.breakdown["tech"]
+    # a missing requirement weighs more than a missing "nice to have"
+    required = M.score_job("GIS Analyst", ("Required: ArcGIS Pro and PostGIS. " + GIS_DESCRIPTION[:400]) * 2, REMOTE)
+    preferred = M.score_job("GIS Analyst", ("ArcGIS Pro required; PostGIS is a plus. " + GIS_DESCRIPTION[:400]) * 2, REMOTE)
+    assert M.skill_points(required.skills, [], 25) <= M.skill_points(preferred.skills, [], 25)
+    # nothing of yours in it: no skills points at all
+    assert M.score_job("GIS Analyst", ("Daily work in PostGIS, SQL and GeoPandas. " * 12), REMOTE).breakdown["tech"] == 0
+    # ArcGIS Pro covers ArcMap
+    assert "arcmap" in M.owned_skills(["ArcGIS Pro"]) and "arcmap" not in M.owned_skills(["QGIS"])
+
+
+def test_skills_set_with_slash_skills_reach_the_scorer():
+    from geojobbot.core.prefs import apply_prefs, default_prefs
+    from geojobbot.config import Settings
+
+    settings = Settings()
+    prefs = default_prefs()
+    prefs["my_skills"] = ["QGIS", "PostGIS", "SQL"]
+    apply_prefs(settings, prefs)
+    assert settings.match_config().my_skills == ["QGIS", "PostGIS", "SQL"]
+    assert Settings().match_config().my_skills == []  # nothing set: the built-in list from the CV

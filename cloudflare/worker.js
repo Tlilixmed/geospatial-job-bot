@@ -296,6 +296,7 @@ function entry(same, number) {
   if (job.visa && job.visa.b) lines.push(`   ${esc(job.visa.b)}`);
   const tail = [];
   const skills = [...new Set((job.sk || []).map((s) => s.split(" (")[0]))].slice(0, 4);
+  if (Array.isArray(job.sf) && job.sf[1]) tail.push(`🧰 ${job.sf[0]}/${job.sf[1]} skills`);  // the score's skills part
   if (skills.length) tail.push(esc(skills.join(", ")));
   if (job.url) tail.push(`<a href="${esc(job.url)}">Apply</a>`);
   if (tail.length) lines.push(`   ${tail.join(" · ")}`);

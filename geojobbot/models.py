@@ -110,6 +110,7 @@ class JobRecord:
     deadline: str | None = None  # application deadline read from the description (ISO date)
     deadline_reminded: bool = False
     rules: int = 0  # SCORER_VERSION the score was computed with (core/jobs.py)
+    skill_fit: list = field(default_factory=list)  # [skills the candidate has, skills the posting names]
     text_seen: str | None = None  # when the full posting text was last read (backends skip detail requests while it is recent)
     # annotations other modules put on the stored dict (learned, visa, reposts, watched…): carried through untouched,
     # so re-observing a job never silently drops what a later pipeline step wrote on it

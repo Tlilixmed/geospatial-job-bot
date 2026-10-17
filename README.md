@@ -65,12 +65,13 @@ Invalid configured slugs are listed prominently in the run summary and GitHub st
 | Category | Max | Evidence |
 |---|---|---|
 | Title | 40 | direct role 40 · adjacent role 34 · geospatial title 34 · geo term only 28 · generic title 12 |
-| Technical skills | 25 | ArcGIS Pro, QGIS, ArcPy, PyQGIS, Python, SQL, PostGIS, FME, AutoCAD, MicroStation, TerraScan, Smallworld, Metashape, Arcade, GeoJSON, spatial databases, REST APIs, plus GDAL, GeoPandas, GEE, ENVI, Pix4D… |
+| Technical skills | 25 | **your** skills among those the posting names (`MY_SKILLS` or `/skills`; the built-in list is the CV's), scaled by how much of the posting's list they cover: a posting naming 13 tools of which you have 6 scores on those 6, weighed against the 7 you lack, a missing *required* skill counting more than a missing *nice to have*. Digests show it as "🧰 6/13 skills" |
 | Domain | 20 | GIS, geomatics, cartography, surveying, cadastral, land/mineral tenure, LiDAR, point clouds, photogrammetry, remote sensing, UAV, utility mapping, telecom/fiber, electric distribution… |
 | Responsibilities | 10 | digitizing, georeferencing, map production, QA/QC, coordinate systems, field data collection… |
 | Location | 5 | remote scope / preferred locations |
 
 - **Tiers.** ≥70 is *High*, ≥55 is *Possible*, anything lower is rejected.
+- **Your skills list decides the skills part.** If you know SQL or PostGIS, the two skills postings ask for most often, add them with `/skills add SQL PostGIS`: until then a posting that requires them counts them as missing.
 - **Canonical names.** Variants collapse to one name (`Esri`/`ArcGIS Online` → ArcGIS; `ArcGIS Pro` is never double-counted as ArcGIS), and each skill counts once.
 - **Required vs preferred.** Detected from the sentence the skill appears in, e.g. "ArcGIS Pro required".
 - **Generic titles** (Analyst, Technician, Engineer, Data Analyst…) need **≥2 distinct geospatial signal families**. "GIS" and "geospatial" are one family.

@@ -344,6 +344,25 @@ and the step follows from the status on record. `/ask` is wired on both sides.
   minute is worth a sound); sixteen Workday boards take several minutes a run (about 70 s each in the dry run, mostly
   detail requests that `knows_text` saves on later runs): watch `skipped_for_time` in the run summary.
 
+### Owner's report of 2026-10-17: "jobs that require sponsorship slip in; a 97 with 6 of my 13 skills"
+
+- **F83 · the skills part of the score counted every skill a posting named, not the candidate's · [fixed]** The 25 points
+  were reached by the posting's own tool list, so with title 40, domain 20 and tasks 10 a GIS-heavy posting reached the 90s
+  whatever the candidate knew; the skills list (`MY_SKILLS`, `/skills`) only fed the "you have / not on your list" line.
+  Now `skill_points`: the candidate's skills, scaled by the share of the posting's skills they cover, a missing required
+  skill weighing 1.5 and a "nice to have" 0.5; ArcGIS Pro covers ArcGIS and ArcMap. Measured on 1,915 real postings
+  (the 2026-10-10 dry run and the research corpus): 28 of 73 High become Possible, 13 Possible drop out, none move up;
+  "Geospatial Data Engineer" (2 of 9 skills) 83 to 60, "Senior GIS Data Analyst" (6 of 7) stays 92. `/skills` now reaches
+  the scorer (`apply_prefs`), digests show "🧰 6/13 skills", `SCORER_VERSION` 4 rescores stored jobs.
+- **F84 · three demand wordings the rules missed · [fixed]** Found in accepted jobs of the 2026-10-10 dry run: "Employment
+  is limited to candidates authorized to work in the United States" (Ascent Geomatics, twice), a requirement bullet
+  "Eligible to work in Germany" (Orcrist, High 83), "requires a Public Trust Clearance" (a US DHS contractor, High 83).
+  New patterns, the bullet one anchored to line starts so that "we help you become eligible to work in Germany" stays
+  neutral; seven new demand rows and four neutral rows in the golden table.
+- **F85 · the AI review's "restricted" only cost 12 points · [fixed]** A High match at 85 stayed High at 73 although the
+  model had read "citizens only" or "no sponsorship" in the text. It now rejects (`AI_WORK_RESTRICTED`) unless the posting
+  or the model finds a sponsorship offer, the job is in a home country or open worldwide, or the user was already alerted.
+
 ### Opportunities recorded (not bugs)
 
 - **O1 · inline Yes/No buttons for writes derived from free text, and buttons under digests (`callback_query`) · [partly done]**
@@ -373,8 +392,8 @@ and the step follows from the status on record. `/ask` is wired on both sides.
 
 ## State of the review
 
-Every row above has a status. 82 findings: 81 fixed, 1 recorded as an idea (F7). Tests went from 280 to 795 (Python) and from 17
-to 39 (Worker). Not verifiable from the development machine, and therefore to watch in the next runs: the AI model chain
+Every row above has a status. 85 findings: 84 fixed, 1 recorded as an idea (F7). Tests went from 280 to 811 (Python) and from 17
+to 40 (Worker). Not verifiable from the development machine, and therefore to watch in the next runs: the AI model chain
 (the token lives in GitHub secrets; the last model of the chain is the one that worked before), France Travail live answers,
 and the first run after deployment, which rescores stored matches (`rescored_from_text` in the run summary) and may carry
 over alerts that were held back earlier (`carried_over`).

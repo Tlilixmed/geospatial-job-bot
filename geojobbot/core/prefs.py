@@ -74,3 +74,5 @@ def apply_prefs(settings, prefs: dict) -> None:
     settings.hidden_ids = list(prefs.get("hidden") or []) + list((prefs.get("applied") or {}).keys())
     settings.alerts_paused = bool(prefs.get("paused"))
     settings.watch_list = [w for w in prefs.get("watch") or [] if isinstance(w, dict) and w.get("name")]
+    if prefs.get("my_skills"):  # /skills: the scorer counts these (matcher.skill_points)
+        settings.my_skills = [str(s) for s in prefs["my_skills"]]

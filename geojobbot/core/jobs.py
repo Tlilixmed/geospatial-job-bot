@@ -21,7 +21,7 @@ from .fusion import FusedJob
 
 # Bump when the matching rules change (profile.py, matcher.py, location.py): stored matches whose text is kept are
 # scored again at the next run instead of waiting to be seen again, so a fixed rule also fixes yesterday's jobs.
-SCORER_VERSION = 3
+SCORER_VERSION = 4  # 4: the skills part counts the candidate's skills, not every skill a posting names
 
 CHANGE_FIELDS = ("title", "location_raw", "salary", "remote", "employment_type", "description_hash")
 ALERT_CHANGE_FIELDS = {"title", "location_raw", "salary", "remote"}
@@ -65,6 +65,7 @@ def _apply(rec: JobRecord, fused: FusedJob, result: MatchResult) -> None:
     rec.matched_domains = result.domain_names
     rec.why_matched = result.why_matched
     rec.rejection_reasons = result.rejection_reasons
+    rec.skill_fit = list(result.skill_fit)
 
 
 def rescore_stored(rec: dict, text: str, cfg) -> None:
@@ -80,7 +81,8 @@ def rescore_stored(rec: dict, text: str, cfg) -> None:
     result = score_job(rec.get("title") or "", text, location, cfg)
     rec.update(rules=SCORER_VERSION, score=result.score, tier=result.tier, score_breakdown=dict(result.breakdown),
                matched_skills=[f"{h.canonical} ({h.qualifier})" if h.qualifier else h.canonical for h in result.skills],
-               matched_domains=result.domain_names, why_matched=result.why_matched, rejection_reasons=result.rejection_reasons)
+               matched_domains=result.domain_names, why_matched=result.why_matched, rejection_reasons=result.rejection_reasons,
+               skill_fit=list(result.skill_fit))
     for key in ("learned", "visa"):  # explanations of adjustments that no longer exist
         rec.pop(key, None)
 
@@ -151,6 +153,27 @@ def apply_ai_veto(rec) -> bool:
         rec["tier"], rec["rejection_reasons"] = TIER_REJECTED, reasons
     else:
         rec.tier, rec.rejection_reasons = TIER_REJECTED, reasons
+    return True
+
+
+AI_WORK_RESTRICTED = "AI_WORK_RESTRICTED"
+
+
+def apply_ai_restriction(rec: dict, settings) -> bool:
+    """Reject a match the AI review found restricted (citizens only, an existing work permit, no sponsorship) when
+    nothing in the posting offers sponsorship. The wording rules read most of these; the model reads the rest
+    ("Employment is limited to ...", clearances by another name). Never in a home country, never for a role open
+    worldwide, and never a job the user was already told about."""
+    review = rec.get("ai") or {}
+    if review.get("restricted") is not True or rec.get("tier") not in (TIER_HIGH, TIER_POSSIBLE) or rec.get("notified"):
+        return False
+    if "Visa sponsorship offered" in (rec.get("why_matched") or []) or review.get("sponsorship") == "offered":
+        return False
+    homes = {fold(c) for c in getattr(settings, "home_countries", None) or []}
+    if fold(rec.get("country") or "") in homes or (rec.get("remote") and fold(rec.get("remote_scope") or "") in homes | {"worldwide"}):
+        return False
+    rec["tier"] = TIER_REJECTED
+    rec["rejection_reasons"] = list(dict.fromkeys(list(rec.get("rejection_reasons") or []) + [AI_WORK_RESTRICTED]))
     return True
 
 

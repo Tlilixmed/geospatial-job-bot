@@ -53,7 +53,7 @@ from .fusion import fuse
 from .health import format_health, health_messages
 from .index import SUFFIX as INDEX_SUFFIX
 from .index import build_index
-from .jobs import (AI_LIFT_MIN_FIT, AI_VETO_MAX_FIT, SCORER_VERSION, alert_block_reason, apply_ai_lift, apply_ai_veto, due_follow_ups, held_back_by_visa,
+from .jobs import (AI_LIFT_MIN_FIT, AI_VETO_MAX_FIT, SCORER_VERSION, alert_block_reason, apply_ai_lift, apply_ai_restriction, apply_ai_veto, due_follow_ups, held_back_by_visa,
                    is_listed, is_muted, mark_failed, mark_notified, near_miss, process_fused, prune_state, rescore_stored, select_alerts)
 from .prefs import apply_prefs, load_prefs
 from .report import build_markdown, build_summary, diagnostics_rows
@@ -526,8 +526,11 @@ class Pipeline:
         seen = set(self._adjustable(outcome))
         for cid, stored in state["jobs"].items():
             review = stored.get("ai") or {}
-            if review.get("veto") and (cid in seen or review.get("at") == to_iso(self.now)) and apply_ai_veto(stored):
+            fresh = cid in seen or review.get("at") == to_iso(self.now)
+            if review.get("veto") and fresh and apply_ai_veto(stored):
                 counts["ai_vetoed"] += 1
+            if fresh and apply_ai_restriction(stored, self.settings):
+                counts["ai_work_restricted"] += 1
         return counts
 
     def _rescore_stored(self, outcome, state: dict) -> Counter:

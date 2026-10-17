@@ -94,6 +94,9 @@ def _digest_entry(rec: dict, index: int, same: list[dict] | None = None) -> str:
         facts.append(again)
     skills = [s.split(" (")[0] for s in rec.get("matched_skills") or []]
     tail = []
+    fit = rec.get("skill_fit") or []
+    if len(fit) == 2 and fit[1]:  # how much of what the posting asks for is on your list: the score's skills part
+        tail.append(f"🧰 {fit[0]}/{fit[1]} skills")
     if skills:
         tail.append(_esc(", ".join(dict.fromkeys(skills[:DIGEST_SKILLS_SHOWN]))))
     link = rec.get("apply_url") or rec.get("url")

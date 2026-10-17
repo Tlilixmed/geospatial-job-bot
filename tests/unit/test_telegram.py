@@ -233,3 +233,9 @@ def test_command_menu_is_published_per_chat_and_language_and_the_default_list_re
     assert len(steps) == 3 and not any(ok for _, ok, _ in steps)
     assert all(TOKEN not in detail and "chat not found" in detail for _, _, detail in steps)
     assert not any(call[1].endswith("/deleteMyCommands") for call in s.calls)
+
+
+def test_digest_says_how_many_of_the_postings_skills_you_have():
+    text = format_digest([rec(skill_fit=[6, 13], canonical_id="a:1")], now=STAMP)[0][0]
+    assert "🧰 6/13 skills" in text
+    assert "🧰" not in format_digest([rec(canonical_id="a:2")], now=STAMP)[0][0]  # older records without the count
