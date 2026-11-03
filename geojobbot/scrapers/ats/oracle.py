@@ -26,20 +26,18 @@ import html as html_lib
 import re
 from urllib.parse import quote
 
-from ...matching.matcher import classify_title
 from ...models import RawJob
 from ...utils.dates import parse_datetime
 from ...utils.http import FetchError
 from ...utils.text import html_to_text, prettify_slug
 from ..base import RunContext
-from .base import ATSAdapter, BoardResult
+from .base import GENERIC_DETAIL_BUDGET, TITLE_RANK, ATSAdapter, BoardResult, title_rank
 from .detect import ORACLE_SITE, BoardRef, detect
 from .more_ats import WORKDAY_SEARCH_TERMS
 
 ORACLE_PAGE = 200            # the server serves at most 200 rows, whatever limit is asked
 ORACLE_FULL_SITE_MAX = 600   # a site this small is read in full (3 calls); larger ones are searched by keyword
 ORACLE_TERM_PAGES = 2        # 1 on a board without geospatial context: only geospatial titles pass there anyway
-TITLE_RANK = {"direct": 0, "adjacent": 1, "geo_title": 2, "geo_term": 3, "generic": 4}  # detail budget order
 ORACLE_SEARCH_TERMS = [*WORKDAY_SEARCH_TERMS, "SIG"]  # SIG: Québec postings are written in French
 API = "hcmRestApi/resources/latest"
 SITE_NUMBER_RE = re.compile(rf'data-sitenumber="({ORACLE_SITE})"')
@@ -219,9 +217,8 @@ class OracleAdapter(ATSAdapter):
                 result.prefiltered_out += 1
                 continue
             candidates.append((job_id, row, context))
-        # The detail budget goes to geospatial titles first: "GIS" also finds gas-insulated-switchgear substation jobs,
-        # whose generic titles would otherwise use up the 30 details of a run ahead of the GIS and survey postings.
-        candidates.sort(key=lambda c: TITLE_RANK.get(classify_title((c[1].get("Title") or ""))[0], len(TITLE_RANK)))
+        candidates.sort(key=lambda c: title_rank(c[1].get("Title")))
+        generic = 0
         for job_id, row, context in candidates:
             native = f"oracle:{tenant}:{job_id}"
             if ctx.knows_text(native):
@@ -229,6 +226,10 @@ class OracleAdapter(ATSAdapter):
                 continue
             if fetched >= budget or ctx.out_of_time(120):
                 continue  # read at a later run, like Workday's
+            if title_rank(row.get("Title")) >= TITLE_RANK["generic"]:
+                if generic >= GENERIC_DETAIL_BUDGET:
+                    continue
+                generic += 1
             fetched += 1
             try:
                 detail = self._detail(ctx, host, number, job_id)

@@ -50,7 +50,7 @@ Findings are numbered `F1, F2…` and carry their evidence, so a fix can be trac
 | RSS: GoGeomatics, GISjobs, GeoRezo, GSA-UK, Job Bank ×3, Guichet-Emplois ×3, Tunisie Travail ×5 | `scrapers/feeds.RssFeedBackend` | none | every run | [fixed] F48: the six Job Bank / Guichet-Emplois feeds are empty for every query (checked live 2026-09-20) and were replaced by the `jobbank` backend; F53, F55 |
 | JobSpy: Indeed, LinkedIn | `scrapers/feeds.JobSpyBackend` | none | 4 h | [skip] not reviewed this round: a thin wrapper over a third-party scraper (python-jobspy); what it returns goes through the same title filter, fusion and scoring as everything else |
 | Adzuna, Jooble, JSearch | `scrapers/feeds.py` | yes | 4 h | [fixed] F53, F54, F57 |
-| USAJOBS, ReliefWeb | `scrapers/feeds.py` | yes (not set) | 4–6 h | [fixed] F55; ReliefWeb RSS without an appname recorded as O8 |
+| USAJOBS, ReliefWeb | `scrapers/feeds.py` | yes (not set) | 4–6 h | [fixed] F55; ReliefWeb's RSS is forbidden by its robots.txt (checked 2026-11-03): the API with a free appname is the route |
 | Bundesagentur, France Travail | `scrapers/official.py` | none / yes | 6 h / 4 h | [fixed] F47, F57; France Travail still unverified live (key only in GitHub) |
 | freehire | `scrapers/aggregators.py` | none | 4 h | [fixed] F50 |
 | Hacker News "Who is hiring?" | `scrapers/community.py` | none | 24 h | [fixed] F49 |
@@ -371,6 +371,53 @@ and the step follows from the status on record. `/ask` is wired on both sides.
 - **F87 · the candidate's current work was not a scoring term · [fixed]** Point-cloud registration, scan-to-BIM and 3D
   modelling from scans (with the French recalage / modélisation 3D) are now a responsibility term of the LiDAR family.
 
+### Owner's report of 2026-11-03: "only one or two jobs per digest" (full analysis in `docs/STRUCTURE.md`)
+
+- **F88 · alerts were High only, on a thin supply · [fixed]** The workflow set `NOTIFY_POSSIBLE=false`, so Possible matches
+  never rang. Measured on the live run of 2026-11-03: about 1 reachable High a day, spread over about 6 runs, which is what
+  "one or two per digest" looks like. Possible alerts are now on by default (`/possible off` still turns them off).
+- **F89 · most High alerts were jobs the owner cannot get · [fixed]** 21 of 32 fresh High matches were on US routes that need a
+  lottery. `select_alerts` holds hard and blocked routes back from alerts unless the employer is watched; they stay in
+  `/jobs` with their badge (`ALERT_HARD_ROUTES=true` reverses it, `held_hard_route` counts them).
+- **F90 · the 15-day limit hid open jobs on employers' own systems · [fixed]** On an ATS or a public service a posting still
+  listed is still open, however old. `MAX_LIVE_JOB_AGE_HOURS` (60 days) applies there; job boards and aggregators keep 15.
+  Reachable High / Possible by window: 15 days 11/16, 30 days 16/19, 60 days 17/28. The Worker reads the limit per job (`ah`).
+- **F91 · the skills formula punished postings for naming no tools, and ignored general stacks · [fixed]** A posting naming no
+  tool scored 0 of 25, one naming only general software (React, Kubernetes) lost nothing for them. `NO_TOOLS_NAMED_POINTS`
+  gives the first 6 points, `software_stack` counts general tools as missing, and software titles have a capped title part
+  (`SOFTWARE_TITLE_MAX_POINTS`). `SCORER_VERSION` 6. Fresh High / Possible went from 32/36 to 43/50.
+- **F92 · Workday spent its detail budget on generic titles · [fixed]** The same bug as F81, on the slowest source: "Engineer" and
+  "Technicien de chantier" came first in the search results and used the 30 detail requests. `title_rank` orders every
+  ATS's detail requests by title (Workday, Oracle, Greenhouse), and at most `GENERIC_DETAIL_BUDGET` go to generic titles.
+- **F93 · the years rule read an employer's record as a requirement · [fixed]** Found when EURES brought French text in
+  quantity: "Fort de près de 20 ans d'expérience" and "riche de 20 ans d'expérience" rejected three French survey jobs
+  (`EXPERIENCE_GAP`), one at 80 points. `_EMPLOYER_RECORD_RE` skips these, and nothing above 15 years counts (the most any
+  real posting asked for). Checked on all 137 postings read as asking 6 or more years in the run of 2026-11-03: no other
+  false reading. Same review: "Entre 3 et 6 ans" read as 6 (now 3), "5 années" not read at all because only the unaccented
+  word was matched.
+- **F94 · temp-agency missions counted as reachable · [fixed]** 12 of the 103 EURES postings read say intérim, some for two
+  months, and a French route shows "open" for them. `temporary_points` takes 15 points from missions, seasons and contracts
+  of six months or less, unless the posting also says CDI or permanent. An agency that states no contract is not touched.
+- **F95 · one posting in six towns was six alerts · [fixed]** Workable lists OHM Advisors' "GIS Specialist" once per town, each
+  with its own id. `select_alerts` sends the best-scoring one per employer, title and country; the rest stay in `/jobs`
+  (`same_posting_elsewhere`). Different countries still get their own alert, and postings without an employer never merge.
+- **F96 · company names · [fixed]** Workday's legal-entity codes ("375 Parsons Global Services", "922E Airbus Defence and Space")
+  are stripped, which also lets the sponsor registers find them; the opaque tenant `slihrms` is named AtkinsRéalis; the
+  EURES placeholder "Non renseigné" means no employer rather than an employer of that name.
+- **F97 · DuckDuckGo's bot challenge looked like "no results" · [fixed]** HTTP 202 with an empty page now reports `BLOCKED`, so
+  `/sources` tells the truth. From the development machine every query got it.
+- **F98 · Workday locations like "IE.Dublin.Swords" had no country · [fixed]** `ISO_DOTTED_RE` reads them; "St.Johns" and "U.S."
+  are left alone.
+- **F99 · the fastest sources could wait behind the slowest · [fixed]** Backends start in list order on 6 workers. EURES and
+  Workable answer in seconds and yield the most, so they now start first.
+- **F100 · two AI prompts had no guard against instructions in postings · [fixed]** All of `REVIEW`, `PITCH`, `PREP`, `APPROACH` and
+  `ASK` now say that posting text is untrusted data. This is a soft layer only. The model has no tools, so the worst a
+  posting could do is sway its own score or note.
+- **F101 · dead and useless sources · [fixed]** Removed: `capellaspace` (404), three Tunisie Travail searches that returned nothing
+  usable, Job Bank's "GIS" term (a real zero). Added: EURES, Workable search, AtkinsRéalis, Stantec, Saildrone, Acciona,
+  Ferrovial, Eiffage, Surbana Jurong. Each was run through the bot's own code before being added. ReliefWeb's RSS was added
+  and taken out again the same day: the final dry run showed `ROBOTS_DISALLOWED` (`Disallow: /*/rss.xml`).
+
 ### Opportunities recorded (not bugs)
 
 - **O1 · inline Yes/No buttons for writes derived from free text, and buttons under digests (`callback_query`) · [partly done]**
@@ -391,17 +438,23 @@ and the step follows from the status on record. `/ask` is wired on both sides.
 - **O7 · salary as a structured fact at ingestion · [idea]**
 - **O8 · new sources · [partly done]** Job Bank search pages (done). WSP and Michael Baker on Oracle Recruiting Cloud
   (done, F68). GeoRezo (French geomatics jobs, full text, 50 entries) and GSA-UK (10 entries, titles filtered) RSS feeds
-  (done 2026-10-10, robots.txt allows both). Still open, each verified to exist: ReliefWeb RSS (no appname
-  needed), Le Forem open data (Wallonia), AfDB vacancies RSS, AECOM on SmartRecruiters (needs `q=`).
+  (done 2026-10-10, robots.txt allows both). Still open, each verified to exist:
+  AfDB vacancies RSS, AECOM on SmartRecruiters (needs `q=`). Le Forem's robots.txt forbids it (checked 2026-11-03). The
+  list of candidates and refusals is kept in `docs/STRUCTURE.md`.
 - **O9 · Greenhouse `?content=true` · [skip]** `knows_text` makes detail requests proportional to *new* postings, for every ATS, so
   the one-call variant is no longer needed.
 - **O10 · semantic matching with embeddings (F7) · [idea]** Second chances (F6) catch odd titles whose text carries known terms;
   embeddings would catch the rest ("Software Engineer, Maps"). Needs vectors per job and a threshold tuned on real data.
+- **O11 · LinkedIn alert emails through the Worker's `email()` handler · [waiting for the owner]** Ideas borrowed from career-ops. Probably
+  the largest single gain still open, untested. Needs Email Routing, which the owner postponed (step 10).
+- **O12 · `coverage-check`: why did the bot miss the posting I found by hand? · [idea]** `diagnose` covers a URL's scoring, not
+  whether any source would have reached it.
+- **O13 · closure phrases ("this position has been filled") as a liveness check · [idea]**
 
 ## State of the review
 
-Every row above has a status. 87 findings: 86 fixed, 1 recorded as an idea (F7). Tests went from 280 to 829 (Python) and from 17
-to 40 (Worker). Not verifiable from the development machine, and therefore to watch in the next runs: the AI model chain
+Every row above has a status. 101 findings: 100 fixed, 1 recorded as an idea (F7). Tests went from 280 to 863 (Python) and from 17
+to 41 (Worker). Not verifiable from the development machine, and therefore to watch in the next runs: the AI model chain
 (the token lives in GitHub secrets; the last model of the chain is the one that worked before), France Travail live answers,
 and the first run after deployment, which rescores stored matches (`rescored_from_text` in the run summary) and may carry
 over alerts that were held back earlier (`carried_over`).

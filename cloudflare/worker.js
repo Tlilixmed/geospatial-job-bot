@@ -228,7 +228,7 @@ async function aiHint(env, text) {
 function isCurrent(job, index, prefs, now) {
   const settings = index.settings || {};
   if (job.rel && job.p) {
-    const limit = job.rot ? settings.rotation_max_age_h : settings.max_age_h;
+    const limit = job.ah || (job.rot ? settings.rotation_max_age_h : settings.max_age_h);  // ah: this job's own limit
     if (limit && (now - Date.parse(job.p)) / 36e5 > limit) return false;
   }
   if (job.seen && now - Date.parse(job.seen) > (job.ttl || (job.rot ? 21 : 5)) * 864e5) return false;
@@ -339,7 +339,7 @@ function viewWhy(index, arg) {
   const bd = job.bd || {};
   const lines = [`<b>${esc(job.t)}</b>${job.c ? ` — ${esc(job.c)}` : ""}`, `Score ${job.s}/100 · ${esc(job.tier)}`,
     `Title ${bd.title || 0} · skills ${bd.tech || 0} · domain ${bd.domain || 0} · tasks ${bd.responsibilities || 0} · location ${bd.location || 0}`];
-  const extras = [["sponsor", "sponsor register"], ["learned", "learned"], ["visa", "visa route"], ["ai", "AI reading"], ["experience", "years asked"]]
+  const extras = [["sponsor", "sponsor register"], ["learned", "learned"], ["visa", "visa route"], ["ai", "AI reading"], ["experience", "years asked"], ["temporary", "temporary work"]]
     .filter(([key]) => bd[key]).map(([key, label]) => `${label} ${bd[key] > 0 ? "+" : ""}${bd[key]}`);
   if (extras.length) lines.push(`Adjustments: ${extras.join(" · ")}`);
   if ((job.why || []).length) lines.push("", "<b>Evidence</b>", ...job.why.map((w) => `• ${esc(w)}`));
@@ -909,7 +909,7 @@ input{flex:1 1 180px}.job,.card{background:var(--card);border:1px solid var(--li
 var D=JSON.parse(document.getElementById("data").textContent),I=D.index||{},P=D.prefs||{},jobs=I.jobs||[],now=Date.now();
 var hidden={},applied=P.applied||{};(P.hidden||[]).forEach(function(id){hidden[id]=1});
 function el(tag,cls,text){var e=document.createElement(tag);if(cls)e.className=cls;if(text!=null)e.textContent=text;return e}
-function current(j){var s=I.settings||{};if(j.rel&&j.p){var lim=j.rot?s.rotation_max_age_h:s.max_age_h;if(lim&&(now-Date.parse(j.p))/36e5>lim)return false}
+function current(j){var s=I.settings||{};if(j.rel&&j.p){var lim=j.ah||(j.rot?s.rotation_max_age_h:s.max_age_h);if(lim&&(now-Date.parse(j.p))/36e5>lim)return false}
  if(j.seen&&now-Date.parse(j.seen)>(j.ttl||(j.rot?21:5))*864e5)return false;if(j.dl&&Date.parse(j.dl)+864e5<now)return false;return !hidden[j.id]&&!applied[j.id]}
 function safe(url){return /^https?:/i.test(url||"")?url:"#"}
 function chip(text,kind){return el("span","chip"+(kind?" "+kind:""),text)}

@@ -11,14 +11,14 @@ from ..insights import fx, radar, timing, visa
 from ..utils.dates import to_iso
 from ..utils.location import ParsedLocation
 from ..utils.text import job_code
-from .jobs import is_listed, listed_days
+from .jobs import age_limit_hours, is_listed, listed_days
 
 SUFFIX = "state/index.json"
 SCHEMA = 1
 MAX_JOBS = 900
 
 
-def _entry(cid: str, rec: dict, skills: list[str] | None = None) -> dict:
+def _entry(cid: str, rec: dict, skills: list[str] | None = None, settings=None) -> dict:
     loc = ParsedLocation(raw=rec.get("location_raw") or "", city=rec.get("city"), region=rec.get("region"),
                          country=rec.get("country"), remote=rec.get("remote"), remote_scope=rec.get("remote_scope"),
                          work_mode=rec.get("work_mode"))
@@ -33,6 +33,8 @@ def _entry(cid: str, rec: dict, skills: list[str] | None = None) -> dict:
         "rej": rec.get("rejection_reasons") or [], "offered": "Visa sponsorship offered" in why,
         "src": sorted({s.get("source_name") for s in rec.get("sources") or [] if s.get("source_name")})[:5],
     }
+    if settings is not None:
+        entry["ah"] = age_limit_hours(rec, settings)  # this job's own age limit (longer on the employer's own system)
     review = rec.get("ai") or {}
     if review.get("fit") is not None:
         entry["ai"] = {k: review.get(k) for k in ("fit", "summary", "concerns", "years", "sponsorship", "languages",
@@ -72,7 +74,7 @@ def build_index(state: dict, settings, report: dict, now, help_text: str, views:
         accepted = rec.get("tier") in ("high", "possible")
         near_miss = set(rec.get("rejection_reasons") or []) <= {"LOW_SCORE"} and int(rec.get("score") or 0) >= 35
         if accepted or near_miss:
-            rows.append(_entry(cid, rec, skills))
+            rows.append(_entry(cid, rec, skills, settings))
     rows.sort(key=lambda e: (e["tier"] != "high", -e["s"]))
     counts = report.get("counts") or {}
     return {

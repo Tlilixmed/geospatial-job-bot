@@ -297,6 +297,19 @@ YEARS = [  # (sentence from a real posting, years it asks for)
     ("Forte du travail mené depuis 13 ans sur le territoire", None),
     ("Junior to Intermediate (2-6 years preferred)", None),
     ("Staff stay with the company for more than 10 years in average; a great experience.", None),
+    # the employer's own record, as French agencies put it
+    ("Fort de près de 20 ans d'expérience, il intervient sur des projets de réseaux électriques", None),
+    ("une société de Travaux Publics riche de 12 ans d'expérience sur toute la France", None),
+    ("a Canadian mining company with over 12 years of experience in exploration", None),
+    ("We have 10 years of experience in mapping", None),
+    ("With more than 20 years of experience behind it, the group is growing", None),
+    # still asked of the candidate
+    ("We have a role for someone with 5 years of experience", 5),
+    ("Un fort esprit d'équipe et 6 ans d'expérience", 6),
+    # ranges and the accented word
+    ("Entre 3 et 6 ans d'expérience en tant que Géomètre Topographe", 3),
+    ("Between 4 and 6 years of relevant experience", 4),
+    ("5 années d'expérience minimum", 5),
 ]
 
 
@@ -327,3 +340,50 @@ def test_point_cloud_registration_is_the_candidates_own_work():
     assert "Point cloud registration & 3D modelling" in names
     assert "Point cloud registration & 3D modelling" not in [h.canonical for h in M.extract_terms(
         "Register for our webinar on 3D printing; cloud registration of devices.", "resp")]
+
+
+def test_coverage_decides_the_skills_part():
+    filler = "You will join a friendly team and help colleagues with daily office duties, reporting and meetings. " * 4
+    one_owned = M.score_job("GIS Analyst", "Daily work in ArcGIS Pro. " + filler, REMOTE)
+    assert one_owned.skill_fit == (2, 2) or one_owned.skill_fit[0] == one_owned.skill_fit[1]  # all it names, you have
+    assert one_owned.breakdown["tech"] >= 15                                                  # thin evidence, but no gap
+    silent = M.score_job("GIS Analyst", "Maintain the municipal base map and help colleagues. " + filler, REMOTE)
+    assert silent.breakdown["tech"] == 6 and silent.skill_fit == (0, 0)                        # naming nothing is no evidence against
+    assert M.score_job("GIS Analyst", "", REMOTE).breakdown["tech"] == 0                       # no text at all: nothing to credit
+    lacking = M.score_job("GIS Analyst", "Daily work in PostGIS, SQL and GeoPandas. " + filler, REMOTE)
+    assert lacking.breakdown["tech"] == 0                                                      # all it names, you lack
+
+
+def test_a_software_stack_counts_as_missing_and_software_titles_are_capped():
+    filler = "You will join a friendly team and help colleagues with daily office duties, reporting and meetings. " * 4
+    plain = M.score_job("GIS Developer", "Build tools in Python and ArcGIS Pro. " + filler, REMOTE)
+    stacked = M.score_job("GIS Developer", "Build tools in Python and ArcGIS Pro with React, TypeScript, Kubernetes, Scala and AWS. " + filler, REMOTE)
+    assert stacked.breakdown["tech"] < plain.breakdown["tech"] and stacked.skill_fit[1] == plain.skill_fit[1] + 5
+    assert M.software_stack("we react quickly; the angular distance and spark of rust") == set()  # ordinary words, lower case
+    assert M.software_stack("Stack: React, AWS", ["AWS"]) == {"react"}                            # on your list: not missing
+    assert plain.breakdown["title"] == 40                                                         # GIS Developer is a direct role
+    for title in ("Senior Geospatial Software Engineer", "Full-Stack Engineer, Geospatial Platform", "LiDAR Test Engineer",
+                  "Senior LiDAR Algorithms Engineer", "Geospatial Data Scientist"):
+        assert M.score_job(title, GIS_DESCRIPTION, REMOTE).breakdown["title"] <= 20, title
+    for title in ("GIS Analyst", "Geomatics Engineer", "Cartographer", "GIS Technician"):
+        assert M.score_job(title, GIS_DESCRIPTION, REMOTE).breakdown["title"] > 20, title
+
+
+@pytest.mark.parametrize("title,extra,marked", [
+    ("Géomètre / Topographe H/F", "Contrat en intérim de 2 mois.", True),
+    ("Géomètre Topographe (H/F)", "Type de contrat : intérim, à temps plein.", True),
+    ("Technicien Géomètre (H/F)", "Prise de poste dès que possible, intérim jusqu'à mai 2027.", True),
+    ("Géomètre (H/F)", "CDD de 3 mois.", True),
+    ("Survey Assistant - Seasonal", "", True),
+    ("GIS System Administrator (Temporary)", "", True),
+    ("GIS Analyst", "This is a 6-month contract.", True),
+    ("Géomètre H/F", "Contrat en intérim puis CDI.", False),       # leads to a permanent post
+    ("Géomètre (H/F)", "CDD de 18 mois.", False),                   # long enough for a permit
+    ("GIS Analyst", "You will prepare interim reports and seasonal surveys.", False),
+])
+def test_temporary_work_is_marked_down_and_said_so(title, extra, marked):
+    plain = M.score_job("GIS Analyst", GIS_DESCRIPTION, REMOTE).breakdown
+    result = M.score_job(title, GIS_DESCRIPTION + "\n" + extra, REMOTE)
+    assert ("temporary" in result.breakdown) == marked and "temporary" not in plain
+    if marked:
+        assert result.breakdown["temporary"] == -15

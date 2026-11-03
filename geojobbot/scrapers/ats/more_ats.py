@@ -18,11 +18,11 @@ from ...utils.dates import parse_datetime
 from ...utils.http import FetchError
 from ...utils.text import html_to_text, prettify_slug
 from ..base import RunContext
-from .base import ATSAdapter, BoardResult
+from .base import GENERIC_DETAIL_BUDGET, TITLE_RANK, ATSAdapter, BoardResult, title_rank
 from .detect import BoardRef, detect
 
 WORKDAY_SEARCH_TERMS = ["GIS", "geospatial", "mapping", "LiDAR", "cartographer", "surveying", "remote sensing",
-                        "photogrammetry", "geomatics", "spatial"]
+                        "photogrammetry", "geomatics", "spatial", "surveyor", "topographe", "géomètre", "SIG"]
 WORKDAY_PAGE = 20      # the most the Workday search serves per request
 WORKDAY_MAX_PAGES = 3
 
@@ -247,6 +247,13 @@ class WorkdayAdapter(ATSAdapter):
         tenant, wd, site = ref.slug.split("/", 2)
         return tenant, wd, site
 
+    tenant_names = {"slihrms": "AtkinsRéalis"}  # tenants whose name says nothing, for postings that omit the employer
+    legal_entity_code = re.compile(r"^(?:[A-Z]{2}_)?\d{2,5}[A-Z]?\s+(?=\S)")  # "375 Parsons Global Services", "922E Airbus Defence", "FR_0425 EIFFAGE ROUTE"
+
+    @classmethod
+    def _company(cls, company: str | None, tenant: str) -> str:
+        return cls.legal_entity_code.sub("", (company or "").strip()) or cls.tenant_names.get(tenant.lower()) or prettify_slug(tenant)
+
     def _detail(self, ctx, ref: BoardRef, external_path: str, geo_context: bool, fallback: dict) -> RawJob:
         tenant, wd, site = self._parts(ref)
         origin = f"https://{tenant}.{wd}.myworkdayjobs.com"
@@ -265,7 +272,7 @@ class WorkdayAdapter(ATSAdapter):
         return RawJob(
             source_type="ats", source_name="workday", source_url=api,
             title=(info.get("title") or fallback.get("title") or "").strip(),
-            company=company or prettify_slug(tenant), url=info.get("externalUrl") or public_url,
+            company=self._company(company, tenant), url=info.get("externalUrl") or public_url,
             apply_url=info.get("externalUrl") or public_url, description=html_to_text(info.get("jobDescription")),
             location_raw=info.get("location") or fallback.get("locationsText") or "",
             workplace_type=info.get("remoteType"), employment_type=info.get("timeType"),
@@ -281,7 +288,7 @@ class WorkdayAdapter(ATSAdapter):
         public_url = f"https://{tenant}.{wd}.myworkdayjobs.com/{site}{path}"
         return RawJob(
             source_type="ats", source_name="workday", source_url=public_url, title=(item.get("title") or "").strip(),
-            company=company or prettify_slug(tenant), url=public_url, apply_url=public_url, description="",
+            company=self._company(company, tenant), url=public_url, apply_url=public_url, description="",
             location_raw=item.get("locationsText") or "", native_id=f"workday:{tenant.lower()}:{str(req_id).upper()}" if req_id else None,
             source_job_id=str(req_id) if req_id else None, extraction_method="api", geo_context=geo_context,
         )
@@ -327,8 +334,8 @@ class WorkdayAdapter(ATSAdapter):
                     break
         result = BoardResult("VALID", listed=listed_total, company=company_hint)
         budget = ctx.settings.max_detail_fetches_per_board
-        fetched = 0
-        for path, item in postings.items():
+        fetched = generic = 0
+        for path, item in sorted(postings.items(), key=lambda kv: title_rank(kv[1].get("title"))):
             title = (item.get("title") or "").strip()
             if not ctx.prefilter(title, geo_context):
                 result.prefiltered_out += 1
@@ -339,6 +346,10 @@ class WorkdayAdapter(ATSAdapter):
                 continue
             if fetched >= budget or ctx.out_of_time(120):
                 continue  # read at a later run; the known postings further down the list are still reported
+            if title_rank(title) >= TITLE_RANK["generic"]:
+                if generic >= GENERIC_DETAIL_BUDGET:
+                    continue  # also a later run: this keeps a large board from using the whole budget on "Engineer"
+                generic += 1
             fetched += 1
             raw = self._detail(ctx, ref, path, geo_context, item)
             if raw.title:

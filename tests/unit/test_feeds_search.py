@@ -335,3 +335,9 @@ def test_a_french_board_gives_the_town_from_the_title_and_its_tags_reach_the_int
         assert classify_title(tagged, extra)[3], tagged
     for fine in ("[CDI] Geomaticien·ne - Caen (14)", "Alternative Energy GIS Analyst"):
         assert classify_title(fine, extra)[3] is None, fine
+
+
+def test_duckduckgo_bot_challenge_is_reported_not_taken_for_no_results():
+    s = FakeSession({"https://html.duckduckgo.com/html/": FakeResponse(202, "<html></html>")})
+    out = DuckDuckGoBackend([]).run(make_ctx(s))
+    assert out.status != "SUCCESS" and "BLOCKED" in str(out.details.get("errors") or out.error)

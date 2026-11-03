@@ -21,7 +21,9 @@ from .fusion import FusedJob
 
 # Bump when the matching rules change (profile.py, matcher.py, location.py): stored matches whose text is kept are
 # scored again at the next run instead of waiting to be seen again, so a fixed rule also fixes yesterday's jobs.
-SCORER_VERSION = 5  # 4: the skills part counts the candidate's skills; 5: years of experience asked, point-cloud registration
+# 4: the skills part counts the candidate's skills; 5: years of experience asked, point-cloud registration;
+# 6: skills scored on coverage, software stacks count as missing, software titles capped
+SCORER_VERSION = 6
 
 CHANGE_FIELDS = ("title", "location_raw", "salary", "remote", "employment_type", "description_hash")
 ALERT_CHANGE_FIELDS = {"title", "location_raw", "salary", "remote"}
@@ -247,10 +249,23 @@ def process_fused(fused_jobs: list[FusedJob], state: dict, settings, now) -> Pro
     return outcome
 
 
+LIVE_SOURCE_TYPES = {"ats", "employer_page", "government"}
+
+
+def age_limit_hours(rec: dict, settings) -> int:
+    """How old a posting may be and still count. A job listed on the employer's own system or an official service is open
+    by definition, and one that stays open for weeks is, if anything, more likely to consider a candidate who needs a
+    visa; on an aggregator or a feed an old date more often means a dead advert."""
+    normal = settings.rotation_max_job_age_hours if rec.get("from_rotation") else settings.max_job_age_hours
+    if any(s.get("source_type") in LIVE_SOURCE_TYPES for s in rec.get("sources") or []):
+        return max(normal, int(getattr(settings, "max_live_job_age_hours", normal)))
+    return normal
+
+
 def alert_block_reason(rec: dict, settings, now) -> str | None:
     posted = parse_datetime(rec.get("posted_at"))
     if rec.get("posted_at_reliable") and posted is not None:
-        limit = settings.rotation_max_job_age_hours if rec.get("from_rotation") else settings.max_job_age_hours
+        limit = age_limit_hours(rec, settings)
         hours = age_hours(posted, now)
         if hours is not None and hours > limit:
             return "STALE_POSTING"
@@ -357,6 +372,12 @@ def select_alerts(state: dict, seen_ids: set, settings, now) -> tuple[list[dict]
         if rec.get("notified") and not rec.get("pending_update_alert"):
             counts["already_notified"] += 1
             continue
+        # a route that needs a lottery or a clearance, with nothing saying the employer sponsors: it stays in /jobs with
+        # its badge, but it is not worth a notification. A watched employer always is.
+        if (not getattr(settings, "alert_hard_routes", True) and not rec["watched"]
+                and (rec.get("visa") or {}).get("verdict") in ("hard", "blocked")):
+            counts["held_hard_route"] += 1
+            continue
         if int(rec.get("notify_attempts") or 0) >= settings.max_notify_attempts:
             counts["attempts_exhausted"] += 1
             continue
@@ -372,8 +393,17 @@ def select_alerts(state: dict, seen_ids: set, settings, now) -> tuple[list[dict]
     if getattr(settings, "alerts_paused", False):  # jobs stay un-notified and go out after /resume
         counts["paused"] = len(candidates)
         return [], counts
-    selected = candidates[: settings.max_alerts_per_run]
-    counts["deferred_by_cap"] = max(0, len(candidates) - len(selected))
+    unique, postings = [], set()
+    for rec in candidates:  # one employer advertising one title in six towns is one alert; the other towns stay in /jobs
+        posting = (normalize_company(rec.get("company") or ""), normalize_title(rec.get("title") or ""), rec.get("country"))
+        if posting[0] and posting in postings and not rec.get("pending_update_alert"):
+            mark_notified(rec, now)
+            counts["same_posting_elsewhere"] += 1
+            continue
+        postings.add(posting)
+        unique.append(rec)
+    selected = unique[: settings.max_alerts_per_run]
+    counts["deferred_by_cap"] = max(0, len(unique) - len(selected))
     return selected, counts
 
 

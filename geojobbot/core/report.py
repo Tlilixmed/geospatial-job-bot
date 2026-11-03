@@ -95,6 +95,8 @@ def build_summary(report: dict) -> str:
         f"  Blocked (stale posting): {c.get('blocked_stale', 0)}",
         f"  Deferred (per-run cap): {c.get('deferred_by_cap', 0)}",
         f"  Muted / hidden or applied / held while paused: {c.get('muted', 0)} / {c.get('hidden', 0)} / {c.get('paused', 0)}",
+        f"  Held back, hard visa route (still in /jobs): {c.get('held_hard_route', 0)}",
+        f"  Same posting in another town (still in /jobs): {c.get('same_posting_elsewhere', 0)}",
         f"  Pending (Telegram not configured / dry run): {c.get('alerts_pending', 0)}",
         "",
         f"Sponsor registers: {c.get('sponsor_matches', 0)} of this run's jobs are from employers on an official register"

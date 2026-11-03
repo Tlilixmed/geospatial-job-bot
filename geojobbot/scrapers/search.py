@@ -155,6 +155,8 @@ class DuckDuckGoBackend(_SearchBase):
 
     def search(self, ctx: RunContext, query: str) -> list[tuple[str, str]]:
         response = ctx.client.get(self.endpoint, params={"q": query})
+        if response.status_code == 202:  # its bot challenge: an empty page, not "no results"; the source report must say so
+            raise FetchError("BLOCKED", "bot challenge (HTTP 202)", 202, self.endpoint)
         return self.parse_results(response.text)
 
 

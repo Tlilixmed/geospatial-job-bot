@@ -70,3 +70,25 @@ def test_eu_tenders_start_quietly_then_report_only_new_french_speaking_ones():
     new = signals.check(ctx, state)
     assert [s["id"] for s in new] == ["ted:new-1"] and new[0]["country"] == "Belgium"  # German and architecture notices never appear
     assert "EU public tenders" in signals.format_signals(new)
+
+
+def test_workable_search_reads_the_whole_posting_and_filters_on_the_title():
+    from geojobbot.scrapers.aggregators import WorkableSearchBackend
+
+    def rows(method, url, params, body):
+        return FakeResponse(200, {"totalSize": 3, "jobs": [
+            {"id": "u1", "title": "GIS Analyst", "description": "<p>" + GIS_DESCRIPTION + "</p>", "requirementsSection": "<p>ArcGIS Pro required</p>",
+             "url": "https://jobs.workable.com/view/abc/gis-analyst", "location": {"city": "Riyadh", "subregion": "Riyadh Region", "countryName": "Saudi Arabia"},
+             "created": "2026-10-23T20:42:25.682Z", "company": {"title": "Geo Consult"}, "workplace": "on_site", "employmentType": "Full-time"},
+            {"id": "u2", "title": "Geospatial Developer", "description": "x", "url": "https://jobs.workable.com/view/def/x", "location": {"countryName": "Canada"},
+             "created": "2026-10-23T20:42:25.682Z", "company": {"title": "RemoteCo"}, "workplace": "remote"},
+            {"id": "u3", "title": "Account Manager", "description": "mentions GIS once", "url": "https://jobs.workable.com/view/ghi/x", "location": {}, "created": None, "company": {}},
+            {"id": "u1", "title": "GIS Analyst", "description": "again", "url": "https://jobs.workable.com/view/abc/gis-analyst", "location": {}, "company": {}},
+        ]})
+
+    out = WorkableSearchBackend().run(make_ctx(FakeSession({WorkableSearchBackend.api: rows})))
+    assert out.status == "SUCCESS" and [j.title for j in out.jobs] == ["GIS Analyst", "Geospatial Developer"] and out.prefiltered_out >= 1
+    job, remote = out.jobs
+    assert job.company == "Geo Consult" and job.location_raw == "Riyadh, Riyadh Region, Saudi Arabia" and "ArcGIS Pro required" in job.description
+    assert job.source_job_id == "workable_search:u1" and job.posted_at_reliable and remote.remote_flag is True
+    assert WorkableSearchBackend().run(make_ctx(FakeSession({WorkableSearchBackend.api: FakeResponse(500, {})}))).status == "FAILED"

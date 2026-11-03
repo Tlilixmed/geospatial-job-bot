@@ -300,7 +300,14 @@ def _capped(hits: list[TermHit], cap: int) -> int:
 # average of 15 years of expertise", "over the past 75 years", "CDD de 3 ans" describe the employer or the contract.
 _YEARS_RE = re.compile(
     r"\b(?:minimum(?:\s+of)?|at\s+least|more\s+than|over|plus\s+de|au\s+moins|minimum\s+de|d.au\s+moins)?\s*"
-    r"(\d{1,2})\s*\+?\s*(?:(?:-|\u2013|to|a|\u00e0)\s*\d{1,2}\s*\+?\s*)?(?:years?|yrs|ans|annees)\b", re.I)
+    r"(\d{1,2})\s*\+?\s*(?:(?:-|\u2013|to|a|\u00e0|et|and)\s*\d{1,2}\s*\+?\s*)?(?:years?|yrs|ans|ann[e\u00e9]es)\b", re.I)
+# The employer's own record, right before the number: "fort de près de 20 ans d'expérience", "riche de 12 ans d'expérience",
+# "a mining company with over 12 years of experience", "we have 10 years of experience".
+_EMPLOYER_RECORD_RE = re.compile(
+    r"\b(?:forte?s?|riches?)\s+d(?:e\b|['\u2019])|\bboasting\b|"
+    r"\b(?:company|firm|group|groupe|soci[e\u00e9]t[e\u00e9]|entreprise|cabinet)\s+(?:with|avec)\b|"
+    r"\b(?:we\s+(?:have|bring)|our\s+(?:team|company|firm)\s+(?:has|brings)|nous\s+(?:avons|cumulons))\b[^,]{0,12}$", re.I)
+MOST_YEARS_ASKED = 15  # the most any real posting asked for in the dry runs; more than this is the employer talking about itself
 _EXPERIENCE_WORD_RE = re.compile(r"\bexp[eé]rien\w*|\bexperience\b", re.I)
 _NOT_REQUIREMENT_RE = re.compile(r"\b(?:average|moyenne|history|histoire|since|depuis|founded|fond[ée]e?|past|past\s+\d+|"
                                  r"anniversary|retention|staying|stay|old|ago|il\s+y\s+a)\b", re.I)
@@ -315,10 +322,10 @@ def required_years(text: str) -> int | None:
             continue
         for match in _YEARS_RE.finditer(sentence):
             window = sentence[max(0, match.start() - 40): match.end() + 20]
-            if _NOT_REQUIREMENT_RE.search(window):
+            if _NOT_REQUIREMENT_RE.search(window) or _EMPLOYER_RECORD_RE.search(sentence[max(0, match.start() - 40): match.start()]):
                 continue
             years = int(match.group(1))
-            if 1 <= years <= 25:
+            if 1 <= years <= MOST_YEARS_ASKED:
                 found.append(years)
     return min(found) if found else None
 
@@ -334,6 +341,22 @@ def experience_points(text: str, cfg) -> tuple[int, bool]:
     return next((points for over, points in reversed(P.EXPERIENCE_PENALTY) if gap >= over), 0), False
 
 
+# A temp-agency mission, a season or a few months' contract cannot carry a work permit. "Interim" alone is not enough in
+# a description ("interim reports"), and a posting that also says CDI or permanent gets the benefit of the doubt.
+_TEMPORARY_TITLE_RE = re.compile(r"\b(?:temporary|seasonal|saisonni\w+|int[e\u00e9]rim)\b", re.I)
+_TEMPORARY_TEXT_RE = re.compile(
+    r"\b(?:contrat|mission|poste)\s*(?:d['\u2019]\s*|en\s+|:\s*)int[e\u00e9]rim\b|\bint[e\u00e9]rimaires?\b|\bint[e\u00e9]rim\s+(?:de\s+\d|jusqu)|"
+    r"\b(?:contrat|poste|emploi)\s+saisonni\w+|\bseasonal\s+(?:position|role|job|employment|contract)\b|"
+    r"\bcdd\s+de\s+[1-6]\s+mois\b|\b[1-6][- ]months?\s+(?:contract|assignment)\b|\btemporary\s+(?:position|role|job|assignment|contract)\b", re.I)
+_PERMANENT_RE = re.compile(r"\bCDI\b|\bpermanent\s+(?:position|role|job|contract)\b")
+
+
+def temporary_points(title: str, description: str) -> int:
+    if _PERMANENT_RE.search(description or ""):
+        return 0
+    return P.TEMPORARY_WORK_POINTS if _TEMPORARY_TITLE_RE.search(title or "") or _TEMPORARY_TEXT_RE.search(description or "") else 0
+
+
 def owned_skills(have) -> set[str]:
     """Folded names of the candidate's skills, with what they imply (ArcGIS Pro covers ArcGIS and ArcMap)."""
     names = list(have or P.CANDIDATE_SKILLS)
@@ -342,16 +365,31 @@ def owned_skills(have) -> set[str]:
     return {fold(n) for n in names}
 
 
-def skill_points(skills: list[TermHit], have, cap: int) -> int:
-    """Skills you have, scaled by the share of the posting's skills they cover. A posting naming 13 tools of which you
-    have 6 used to score the full 25 (the cap was reached by the posting's own list); now it scores on your 6, weighed
-    against the 7 you lack, a required one counting more than a "nice to have"."""
+@lru_cache(maxsize=1)
+def _software_res() -> tuple[re.Pattern, re.Pattern]:
+    return re.compile(P.SOFTWARE_STACK_RE, re.I), re.compile(P.SOFTWARE_TITLE_RE)
+
+
+def software_stack(text: str, have=None) -> set[str]:
+    """The general software tools a posting names that are not on the candidate's list."""
+    owned = owned_skills(have)
+    return {found for found in (fold(m.group(0)) for m in _software_res()[0].finditer(text or "")) if found not in owned}
+
+
+def skill_points(skills: list[TermHit], have, cap: int, stack: int = 0, described: bool = True) -> int:
+    """Coverage decides: the share of what the posting asks for that the candidate has, a missing required skill counting
+    more than a "nice to have" and a software stack (`stack` tools) counting as missing. A posting naming 13 tools of
+    which you have 6 no longer scores the full 25. How much evidence there is only scales it (a single tool is thin
+    evidence, three or four solid ones are not). A posting that names nothing at all earns a small neutral credit."""
+    if not skills and not stack:
+        return P.NO_TOOLS_NAMED_POINTS if described else 0
     owned = owned_skills(have)
     have_w = sum(h.weight for h in skills if fold(h.canonical) in owned)
     lack_w = sum(h.weight * P.MISSING_SKILL_FACTOR.get(h.qualifier or "", 1.0) for h in skills if fold(h.canonical) not in owned)
+    lack_w += stack * P.SOFTWARE_STACK_WEIGHT
     if not have_w:
         return 0
-    return round(min(cap, have_w) * have_w / (have_w + lack_w))
+    return round(cap * have_w / (have_w + lack_w) * min(1.0, 0.4 + have_w / cap))
 
 
 def _location_points(location: dict, cfg: P.MatchConfig) -> tuple[int, str | None, bool]:
@@ -394,7 +432,11 @@ def score_job(title: str, description: str, location: dict, cfg: P.MatchConfig |
     resp = extract_terms(term_text, "resp")
     families = sorted({h.family for h in skills + domains + resp if h.family})
 
-    tech_points = skill_points(skills, cfg.my_skills, P.CATEGORY_CAPS["tech"])
+    has_description = len(description.strip()) >= 300
+    stack = software_stack(full_text, cfg.my_skills)
+    tech_points = skill_points(skills, cfg.my_skills, P.CATEGORY_CAPS["tech"], len(stack), has_description)
+    if _software_res()[1].search(fold(title or "")):
+        title_points = min(title_points, P.SOFTWARE_TITLE_MAX_POINTS)
     domain_points = _capped(domains, P.CATEGORY_CAPS["domain"])
     resp_points = _capped(resp, P.CATEGORY_CAPS["responsibilities"])
     loc_points, loc_evidence, loc_mismatch = _location_points(location or {}, cfg)
@@ -415,11 +457,11 @@ def score_job(title: str, description: str, location: dict, cfg: P.MatchConfig |
     if sponsorship:  # an employer that sponsors makes any location reachable
         loc_points, loc_mismatch = P.CATEGORY_CAPS["location"], False
 
-    has_description = len(description.strip()) >= 300
     exp_points, too_senior = experience_points(description, cfg) if has_description else (0, False)
     if too_senior:
         rejections.append(EXPERIENCE_GAP)
-    score = title_points + tech_points + domain_points + resp_points + loc_points + exp_points
+    temp_points = temporary_points(title or "", description or "")
+    score = title_points + tech_points + domain_points + resp_points + loc_points + exp_points + temp_points
     title_only = False
     weak_title = kind != "none" and weak_only_title(title or "")
     if weak_title and has_description:
@@ -475,6 +517,7 @@ def score_job(title: str, description: str, location: dict, cfg: P.MatchConfig |
             "title": title_points, "tech": tech_points, "domain": domain_points,
             "responsibilities": resp_points, "location": loc_points,
             **({"experience": exp_points} if exp_points else {}),
+            **({"temporary": temp_points} if temp_points else {}),
         },
         title_kind=kind,
         title_evidence=title_evidence,
@@ -485,5 +528,5 @@ def score_job(title: str, description: str, location: dict, cfg: P.MatchConfig |
         why_matched=why,
         rejection_reasons=list(dict.fromkeys(rejections)),
         title_only=title_only,
-        skill_fit=(sum(fold(h.canonical) in owned_skills(cfg.my_skills) for h in skills), len(skills)),
+        skill_fit=(sum(fold(h.canonical) in owned_skills(cfg.my_skills) for h in skills), len(skills) + len(stack)),
     )

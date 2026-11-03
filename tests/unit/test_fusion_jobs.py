@@ -111,7 +111,7 @@ def test_alert_selection_dedup_and_retry_budget():
 
 
 def test_stale_blocking_and_rotation_window_and_missing_date():
-    settings = make_settings(max_job_age_hours=48, rotation_max_job_age_hours=336)
+    settings = make_settings(max_job_age_hours=48, rotation_max_job_age_hours=336, max_live_job_age_hours=0)
     st = state()
     old = raw(posted_at=NOW - timedelta(days=5))
     undated = raw(native_id="greenhouse:3", url="https://boards.greenhouse.io/acme/jobs/3", apply_url=None,
@@ -212,3 +212,56 @@ def test_an_adzuna_advert_re_served_by_another_aggregator_is_the_same_job():
     fused = fuse([direct, served, other], {}, NOW)
     assert sorted(len(f.raws) for f in fused) == [1, 2]
     assert next(f for f in fused if len(f.raws) == 2).canonical_id == "adzuna:5012345678"
+
+
+def test_a_job_still_on_the_employers_own_system_stays_open_longer_than_one_on_an_aggregator():
+    from geojobbot.core.jobs import age_limit_hours, alert_block_reason
+
+    settings = make_settings(max_job_age_hours=360, rotation_max_job_age_hours=360, max_live_job_age_hours=1440)
+    def rec(days, source_type):
+        return {"posted_at": (NOW - timedelta(days=days)).isoformat(), "posted_at_reliable": True, "sources": [{"source_type": source_type}]}
+
+    assert alert_block_reason(rec(40, "ats"), settings, NOW) is None
+    assert alert_block_reason(rec(40, "government"), settings, NOW) is None
+    assert alert_block_reason(rec(61, "ats"), settings, NOW) == "STALE_POSTING"
+    assert alert_block_reason(rec(40, "aggregator"), settings, NOW) == "STALE_POSTING"
+    assert alert_block_reason(rec(40, "feed"), settings, NOW) == "STALE_POSTING"
+    assert alert_block_reason(rec(10, "feed"), settings, NOW) is None
+    assert age_limit_hours(rec(1, "ats"), settings) == 1440 and age_limit_hours(rec(1, "feed"), settings) == 360
+
+
+def test_a_hard_visa_route_stays_listed_but_does_not_alert_unless_asked_or_watched():
+    base = {"tier": "high", "score": 85, "title": "GIS Analyst", "company": "Acme", "notified": False, "visa": {"verdict": "hard"},
+            "first_seen": NOW.isoformat(), "last_seen": NOW.isoformat()}
+    state_ = {"jobs": {"a:1": {**base, "canonical_id": "a:1"},
+                       "a:2": {**base, "canonical_id": "a:2", "title": "Geomatics Engineer", "visa": {"verdict": "open"}},
+                       "a:3": {**base, "canonical_id": "a:3", "company": "Fugro"}}}
+    settings = make_settings(alert_hard_routes=False)
+    settings.watch_list = [{"name": "Fugro"}]
+    selected, counts = select_alerts(state_, {"a:1", "a:2", "a:3"}, settings, NOW)
+    assert {r["canonical_id"] for r in selected} == {"a:2", "a:3"} and counts["held_hard_route"] == 1
+    settings = make_settings(alert_hard_routes=True)
+    assert len(select_alerts(state_, {"a:1", "a:2", "a:3"}, settings, NOW)[0]) == 3
+
+
+def test_one_posting_in_several_towns_is_one_alert():
+    base = {"tier": "high", "title": "GIS Specialist", "company": "OHM Advisors", "country": "Canada", "notified": False,
+            "first_seen": NOW.isoformat(), "last_seen": NOW.isoformat()}
+    state_ = {"jobs": {"a:1": {**base, "canonical_id": "a:1", "score": 84, "city": "Toledo"},
+                       "a:2": {**base, "canonical_id": "a:2", "score": 86, "city": "Akron"},
+                       "a:3": {**base, "canonical_id": "a:3", "score": 84, "country": "Ireland"},      # another country is another chance
+                       "a:4": {**base, "canonical_id": "a:4", "score": 84, "title": "GIS Analyst"},
+                       "a:5": {**base, "canonical_id": "a:5", "score": 70, "company": None},           # unknown employers may differ
+                       "a:6": {**base, "canonical_id": "a:6", "score": 70, "company": None}}}
+    selected, counts = select_alerts(state_, set(state_["jobs"]), make_settings(), NOW)
+    assert {r["canonical_id"] for r in selected} == {"a:2", "a:3", "a:4", "a:5", "a:6"} and counts["same_posting_elsewhere"] == 1
+    assert state_["jobs"]["a:1"]["notified"] is True and state_["jobs"]["a:2"]["notified"] is False  # the best of them goes out
+
+
+def test_a_paused_run_marks_nothing():
+    base = {"tier": "high", "score": 84, "title": "GIS Specialist", "company": "OHM", "notified": False, "first_seen": NOW.isoformat(), "last_seen": NOW.isoformat()}
+    state_ = {"jobs": {"a:1": {**base, "canonical_id": "a:1"}, "a:2": {**base, "canonical_id": "a:2"}}}
+    settings = make_settings()
+    settings.alerts_paused = True
+    assert select_alerts(state_, {"a:1", "a:2"}, settings, NOW)[0] == []
+    assert not any(r["notified"] for r in state_["jobs"].values())

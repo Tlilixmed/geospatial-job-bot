@@ -268,10 +268,17 @@ ISO_CODES = dict(ISO_PREFIX, **{
     "CM": "Cameroon", "LB": "Lebanon",
 })
 ISO_PREFIX_RE = re.compile(r"^([A-Z]{2}) +[-–] +(.+)$")
+ISO_DOTTED_RE = re.compile(r"^([A-Z]{2})\.([^.\s][^.]*(?:\.[^.]+)*)$")  # Workday: "IE.Dublin.Swords", "CA.QC.Montreal", "AE.Dubai"
 
 
 def parse_location(raw: str | None, remote_flag: bool | None = None, workplace_type=None) -> ParsedLocation:
     text = (raw or "").strip()
+    dotted = ISO_DOTTED_RE.match(text)
+    if dotted and dotted.group(1) in ISO_CODES:
+        places = dotted.group(2).split(".")
+        parsed = parse_location(", ".join([p.strip() for p in reversed(places)] + [ISO_CODES[dotted.group(1)]]), remote_flag, workplace_type)
+        parsed.raw = text
+        return parsed
     prefixed = ISO_PREFIX_RE.match(text)
     if prefixed and prefixed.group(1) in ISO_PREFIX:
         rest = prefixed.group(2)

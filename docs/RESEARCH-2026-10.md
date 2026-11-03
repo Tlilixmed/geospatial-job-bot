@@ -58,7 +58,7 @@ The report as written before the implementation follows.
 |---|---|---|
 | **GeoRezo** `https://georezo.net/extern.php?fid=10&show=50` | Confirmed | Every post is a geomatics, SIG or topography job: about 50 in 6 weeks, full text, works with the existing `RssFeedBackend` and no code. The best French source found. |
 | **GSA-UK** `https://www.gsa-uk.org.uk/job-opportunities/feed/` | Partly | UK survey roles, about 7-8 a week, full text. Some posts are sales or project-manager roles, and there are near-duplicates. |
-| **Cadremploi** `https://www.cadremploi.fr/emploi/liste_offres?query=sig` | Confirmed (refutes the "blocked" claim) | 28 results, about 10-15 real SIG jobs, JSON-LD on detail pages. Do not use `/rss/`, which robots.txt disallows. |
+| **Cadremploi** `https://www.cadremploi.fr/emploi/liste_offres?query=sig` | Confirmed (refutes the "blocked" claim). **Corrected 2026-11-03: it now answers 403 to the bot, so it was not added.** | 28 results, about 10-15 real SIG jobs, JSON-LD on detail pages. Do not use `/rss/`, which robots.txt disallows. |
 | **Tanitjobs** (Tunisia) | Confirmed | Sitemap plus JSON-LD. 0 genuine geospatial postings today; the one slug hit was automotive "géomètre". |
 | **Emploitic** (Algeria) | Confirmed | 4 topographe postings out of 4,377. |
 | **Impactpool** | Partly | 90 GIS results; one URL returns only 40, so paging is needed. UNITAR, UNOPS, ICRISAT, WFP. No JSON-LD. |

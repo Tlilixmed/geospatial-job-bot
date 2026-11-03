@@ -892,3 +892,10 @@ test("lists say how many of a posting's skills you have", async () => {
   assert.match(h.sent[0].text, /🧰 6\/13 skills/);
   assert.equal((h.sent[0].text.match(/🧰/g) || []).length, 1);  // an index from before the count shows nothing
 });
+
+test("a job carries its own age limit: 40 days old on the employer's system is still listed", async () => {
+  const h = harness({ index: makeIndex([job("gh:acme:1", { p: iso(24 * 40), ah: 1440 }), job("gh:acme:2", { p: iso(24 * 40), t: "Old advert" })]) });
+  await h.say("/jobs");
+  assert.match(h.sent[0].text, /Top 1 of 1 current matches/);
+  assert.doesNotMatch(h.sent[0].text, /Old advert/);  // no limit of its own: the general 15 days apply
+});

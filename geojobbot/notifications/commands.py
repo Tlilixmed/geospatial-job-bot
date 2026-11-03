@@ -61,7 +61,7 @@ HELP = """🗺️ <b>Geospatial job bot — commands</b>
 /threshold 70 55 — High and Possible cut-offs
 /locations Canada, Tunisia · /locations reset
 /interns on|off — include internships
-/possible on|off — alert on Possible matches too (default: High only)
+/possible on|off — alert on Possible matches too (default: on)
 /pause · /resume — hold or release alerts
 
 <b>Run</b>
@@ -399,7 +399,8 @@ class CommandProcessor:
                      **{k: breakdown.get(k, 0) for k in ("title", "tech", "domain", "responsibilities", "location")})]
         extras = [f"{label} {int(breakdown[key]):+d}" for key, label in (("sponsor", "sponsor register"), ("learned", "learned"),
                                                                         ("visa", "visa route"), ("ai", "AI reading"),
-                                                                        ("experience", "years asked")) if breakdown.get(key)]
+                                                                        ("experience", "years asked"),
+                                                                        ("temporary", "temporary work")) if breakdown.get(key)]
         if extras:
             lines.append("Adjustments: " + " · ".join(extras))
         if rec.get("why_matched"):

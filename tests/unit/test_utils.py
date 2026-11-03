@@ -105,3 +105,12 @@ def test_french_locations():
     assert remote.remote is True and remote.remote_scope == "Canada"
     hybrid = parse_location("Montréal, QC (Hybride)")
     assert hybrid.work_mode == "hybrid" and hybrid.country == "Canada" and hybrid.region == "Quebec"
+
+
+def test_dotted_workday_locations():
+    from geojobbot.utils.location import parse_location
+
+    assert (parse_location("IE.Dublin.Swords").city, parse_location("IE.Dublin.Swords").country) == ("Swords", "Ireland")
+    assert (parse_location("CA.QC.Montreal").region, parse_location("CA.QC.Montreal").country) == ("Quebec", "Canada")
+    assert parse_location("AE.Dubai").country == "United Arab Emirates" and parse_location("GB.London").country == "United Kingdom"
+    assert parse_location("U.S.").raw == "U.S." and parse_location("St.Johns").raw == "St.Johns"  # not a country code and a place

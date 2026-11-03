@@ -18,8 +18,8 @@ greenhouse = [
   "albedo",          # Albedo - VHR imagery (11)
   "developmentseed", # Development Seed - geospatial software (1)
   "nearspacelabs",   # Near Space Labs - aerial imagery (1)
-  "capellaspace",    # Capella Space - SAR (0 at last check, board exists)
   "koboldmetals",    # KoBold Metals - AI mineral exploration (33)
+  "saildroneinc",    # Saildrone - hydrographic surveyors, remote (48; verified 2026-11-03)
 ]
 lever = [
   "aeva",            # Aeva - LiDAR sensors (45)
@@ -71,6 +71,12 @@ workday = [
   "https://bentleysystems.wd5.myworkdayjobs.com/bentley",    # Bentley Systems - infrastructure/reality modelling (88)
   "https://ordnancesurvey.wd3.myworkdayjobs.com/OS_Careers", # Ordnance Survey - UK national mapping (4)
   "https://maxar.wd1.myworkdayjobs.com/Vantor",              # Vantor, formerly Maxar - satellite imagery (140)
+  # Construction and engineering groups with survey and GIS roles in reachable countries (verified 2026-11-03)
+  "https://acciona.wd3.myworkdayjobs.com/acciona_employment_channel", # Acciona - GIS Analyst Australia, surveyors Canada
+  "https://ferrovial.wd3.myworkdayjobs.com/ferrovial_career_site",    # Ferrovial - land surveyors UK, Canada
+  "https://eiffage.wd3.myworkdayjobs.com/eiffage_careers",            # Eiffage - géomètres, topographes France
+  "https://surbanajurong.wd3.myworkdayjobs.com/sj_careers",           # Surbana Jurong - GIS UAE, Saudi Arabia, Singapore
+  "https://slihrms.wd3.myworkdayjobs.com/careers",                    # AtkinsRéalis - geomatics Montréal, Dublin, Dubai, Saudi Arabia, London
 ]
 # Oracle Recruiting Cloud: paste the public career-site URL, e.g.
 # "https://pod.fa.dc.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1". The API answers any site
@@ -78,10 +84,11 @@ workday = [
 # is reported INVALID. Sites over 600 postings are searched by geospatial keywords.
 oracle = [
   "https://emit.fa.ca3.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_2001", # WSP - engineering, survey, GIS (4049)
+  "https://hdhl.fa.us6.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1",    # Stantec - geomatics, mostly Canada (1646; verified 2026-11-03)
   "https://ebxs.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_2",    # Michael Baker - US engineering, survey (295)
 ]
 
-# Not on any supported ATS (checked): Hexagon, Stantec, Ecopia, Felt, Overture Maps, Wherobots,
+# Not on any supported ATS (checked): Hexagon, Ecopia, Felt, Overture Maps, Wherobots,
 # Safe Software; Carto is on Pinpoint (no adapter). Add them as career sites below once you have
 # verified that the page exposes JSON-LD or job links.
 
@@ -191,8 +198,8 @@ geospatial = false
 # Government of Canada Job Bank (EN) and Guichet-Emplois (FR): their Atom feeds still answer, but without entries, so
 # they are read from the search pages by the "jobbank" backend (geojobbot/scrapers/official.py).
 
-# Tunisie Travail (WordPress job board): one feed per search term; titles read "Company recrute Title".
-# The "SIG" search is broad, so irrelevant titles are prefiltered; the others are precise.
+# Tunisie Travail (WordPress job board): one feed per search term; titles read "Company recrute Title". The cartographe,
+# télédétection and SIG searches were dropped on 2026-11-03: they returned nothing that passed the title filter.
 [[rss_feeds]]
 name = "tunisietravail-topographe"
 url = "https://www.tunisietravail.net/search/topographe/feed/rss2/"
@@ -202,24 +209,6 @@ geospatial = false
 [[rss_feeds]]
 name = "tunisietravail-geomatique"
 url = "https://www.tunisietravail.net/search/g%C3%A9omatique/feed/rss2/"
-source_type = "feed"
-geospatial = false
-
-[[rss_feeds]]
-name = "tunisietravail-cartographe"
-url = "https://www.tunisietravail.net/search/cartographe/feed/rss2/"
-source_type = "feed"
-geospatial = false
-
-[[rss_feeds]]
-name = "tunisietravail-teledetection"
-url = "https://www.tunisietravail.net/search/t%C3%A9l%C3%A9d%C3%A9tection/feed/rss2/"
-source_type = "feed"
-geospatial = false
-
-[[rss_feeds]]
-name = "tunisietravail-sig"
-url = "https://www.tunisietravail.net/search/SIG/feed/rss2/"
 source_type = "feed"
 geospatial = false
 

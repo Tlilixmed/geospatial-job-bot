@@ -16,6 +16,7 @@ from ...models import BackendOutput, RawJob
 from ...utils.http import FetchError
 from ..base import Backend, RunContext
 from .detect import BoardRef
+from ...matching.matcher import classify_title
 
 log = logging.getLogger(__name__)
 
@@ -31,6 +32,16 @@ class BoardResult:
     company: str | None = None
     variant: str | None = None
     detail_errors: int = 0
+
+
+TITLE_RANK = {"direct": 0, "adjacent": 1, "geo_title": 2, "geo_term": 3, "generic": 4}
+GENERIC_DETAIL_BUDGET = 8  # of a board's detail requests in one run, for titles that say nothing geospatial
+
+
+def title_rank(title: str | None) -> int:
+    """Detail requests are limited per board: geospatial titles are read first. A keyword search also finds "Technicien
+    de chantier" or gas-insulated-switchgear ("GIS") engineers, which otherwise use up the budget ahead of the real ones."""
+    return TITLE_RANK.get(classify_title(title or "")[0], len(TITLE_RANK))
 
 
 class ATSAdapter:

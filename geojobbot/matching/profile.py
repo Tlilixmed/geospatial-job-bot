@@ -70,7 +70,7 @@ GEO_TITLE_TERMS = [
     r"\bsurvey\s+(?:technician|tech|cad|crew|party|assistant)\b", r"\bland\s+(?:information|tenure|records)\b",
     r"\bmineral\s+tenure\b", r"\bspatial\s+(?:data|analyst|analysis|information|scientist)\b",
     r"\b(?:mapping|mapper)\b", r"\bmap\s+(?:draft\w*|technician|editor|maker|production)\b",
-    r"\bgeographic information\b", r"\bgeodes\w*", r"\bhydrograph\w*", r"\bbathymetr\w*",
+    r"\bgeographic information\b", r"\bgeodes\w*", r"\bgeodet\w*", r"\bhydrograph\w*", r"\bbathymetr\w*",
     r"\bearth observation\b", r"\bgeodata\b",
     # French (titles are accent-folded before these run). Buried-network detection (DT-DICT) is surveying work in
     # France; "détection réseau(x)" is also intrusion detection, so the plural without a security word in the title, or a
@@ -158,7 +158,7 @@ INTERNSHIP_TITLES = [
     "Intern", "Interns", "Internship", "Co-op", "Coop", "Trainee", "Traineeship", "Apprentice", "Apprenticeship",
     "Working Student", "Student", "Summer Student", "Werkstudent", "Praktikum", "Praktikant", "Graduate Program",
     "Stagiaire", "Stage", "Stage PFE", "PFE", "Alternance", "Alternant", "Alternante", "Apprenti", "Apprentie",
-    "Étudiant", "Étudiante", "Becario", "Prácticas",
+    "Étudiant", "Étudiante", "Becario", "Beca", "Prácticas",
     # GeoRezo tags: "[Altern]" apprenticeship, "[VSC]" civic volunteering, PhD and post-doc positions
     "Altern", "VSC", "Volontariat", "Service civique", "Thèse", "Doctorat", "Doctorant", "Doctorante",
     "Post-doctorat", "Postdoctorat", "Post-doc", "Postdoc",
@@ -459,12 +459,31 @@ CANDIDATE_YEARS = 3
 # rejected (EXPERIENCE_GAP), as "10+ years" is for someone with 3.
 EXPERIENCE_PENALTY = ((2, -5), (3, -10), (4, -15))
 EXPERIENCE_REJECT_GAP = 5
+# A temp-agency mission or a season is a long shot for someone who needs a work permit: marked down, not rejected, as some
+# lead to a permanent post (matcher.temporary_points).
+TEMPORARY_WORK_POINTS = -15
 CANDIDATE_SKILLS = ["ArcGIS Pro", "ArcGIS", "QGIS", "Python", "ArcPy", "AutoCAD", "MicroStation", "FME", "TerraScan",
                     "Smallworld", "Agisoft Metashape", "CloudCompare/LAStools", "Spatial databases"]
 # Owning the left skill means owning the right ones too (the older or broader product of the same family).
 SKILL_IMPLIES = {"ArcGIS Pro": ("ArcGIS", "ArcMap"), "ArcGIS": ("ArcMap",)}
 # How much a skill the candidate lacks weighs against the ones they have, by how the posting asks for it.
 MISSING_SKILL_FACTOR = {"required": 1.5, "preferred": 0.5}
+# A posting that names no tool at all says nothing against the candidate: a small neutral credit, not zero.
+NO_TOOLS_NAMED_POINTS = 6
+# A general software stack is not a geospatial skill and earns nothing, but it does count as missing: a "GIS" posting
+# built on React, Kubernetes and Scala is a software job. Names on the candidate's list (/skills) are not counted.
+SOFTWARE_STACK_WEIGHT = 3
+SOFTWARE_STACK_RE = (r"\b(?:java|scala|kotlin|c\+\+|c#|\.net|typescript|javascript|node\.?js|golang|kubernetes|k8s|docker|terraform|"
+                     r"pyspark|kafka|airflow|pytorch|tensorflow|webgl|three\.js|cesiumjs|deck\.gl|graphql|microservices|ci/cd)(?![\w+#])|"
+                     r"(?-i:\bReact(?:\.js|JS)?\b|\bAngular\b|\bRust\b|\bSpark\b|\bAWS\b|\bAzure\b|\bGCP\b)")
+# Titles of software, ML and hardware-test roles keep a geospatial word ("Senior Geospatial Software Engineer", "LiDAR
+# Test Engineer") but are not the candidate's trade: the title earns at most SOFTWARE_TITLE_MAX_POINTS. "GIS Developer"
+# stays a direct role: scripting and GIS tools are.
+SOFTWARE_TITLE_RE = (r"\b(?:full[\s-]?stack|front[\s-]?end|back[\s-]?end|devops|sre|site reliability|software (?:engineer|developer)|"
+                     r"java\s?script|react|scala|java|c\+\+|webgl|three\.js|computer vision|perception|algorithms?|firmware|embedded|"
+                     r"machine learning|ml engineer|ai engineer|data scientist|test engineer|calibration|validation engineer|"
+                     r"manufacturing|platform engineer)\b")
+SOFTWARE_TITLE_MAX_POINTS = 20
 
 # Work authorisation. Three kinds of wording, kept apart because they behave differently (geojobbot/matching/matcher.py):
 #   SPONSORSHIP_REFUSED     the employer says it will not sponsor: rejects, and cancels any "offer" wording elsewhere

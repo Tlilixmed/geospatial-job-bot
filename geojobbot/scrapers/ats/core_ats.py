@@ -16,7 +16,7 @@ from ...utils.dates import parse_datetime
 from ...utils.http import FetchError
 from ...utils.text import html_to_text, prettify_slug
 from ..base import RunContext
-from .base import ATSAdapter, BoardResult
+from .base import ATSAdapter, BoardResult, title_rank
 from .detect import UUID_RE, BoardRef, detect
 
 
@@ -72,6 +72,7 @@ class GreenhouseAdapter(ATSAdapter):
         result.company = company
         budget = ctx.settings.max_detail_fetches_per_board
         fetched = 0
+        candidates.sort(key=lambda item: title_rank(item.get("title")))
         for item in candidates:
             # the budget goes to postings nobody has read yet, not to the same first thirty of a board with 400
             if fetched < budget and not ctx.knows_text(f"greenhouse:{item['id']}") and not ctx.out_of_time(120):

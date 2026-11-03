@@ -1,4 +1,4 @@
-from conftest import GIS_DESCRIPTION, FakeResponse, FakeSession, make_ctx
+from conftest import GIS_DESCRIPTION, FakeResponse, FakeSession, make_ctx, make_settings
 
 from geojobbot.scrapers.ats.base import ATSBackend
 from geojobbot.scrapers.ats.core_ats import AshbyAdapter, GreenhouseAdapter, LeverAdapter
@@ -304,3 +304,39 @@ def test_workday_paging_reads_the_total_of_the_first_page_and_stops_on_repeats()
         offsets, result = _workday_offsets(hits, repeat, claimed)
         assert offsets == expected, (hits, repeat, claimed, offsets)
         assert result.prefiltered_out == min(hits, 60) and result.listed == (hits if claimed is None else claimed)
+
+
+def test_workday_spends_its_detail_budget_on_geospatial_titles_first():
+    origin = "https://acme.wd5.myworkdayjobs.com"
+    api = f"{origin}/wday/cxs/acme/External"
+    generic = [{"title": f"Project Engineer {i}", "externalPath": f"/job/X/Engineer_G{i}", "locationsText": "Paris", "bulletFields": [f"G{i}"]}
+               for i in range(20)]
+    wanted = [{"title": "Land Surveyor", "externalPath": "/job/X/Surveyor_S1", "locationsText": "Leeds", "bulletFields": ["S1"]},
+              {"title": "GIS Analyst", "externalPath": "/job/X/Analyst_S2", "locationsText": "Leeds", "bulletFields": ["S2"]}]
+
+    def jobs(method, url, params, body):
+        rows = (generic + wanted) if body.get("searchText") == "GIS" and body["offset"] == 0 else []
+        return FakeResponse(200, {"total": len(rows), "jobPostings": rows})
+
+    def detail(method, url, params, body):
+        return FakeResponse(200, {"jobPostingInfo": {"title": url.rsplit("/", 1)[1], "jobDescription": "<p>" + GIS_DESCRIPTION + "</p>",
+                                                     "location": "Leeds", "jobReqId": url.rsplit("_", 1)[1]}})
+
+    routes = {f"{api}/jobs": jobs}
+    routes.update({f"{api}{row['externalPath']}": detail for row in generic + wanted})
+    session = FakeSession(routes)
+    ctx = make_ctx(session, make_settings(max_detail_fetches_per_board=30))
+    WorkdayAdapter().fetch_board(ctx, BoardRef("workday", "acme/wd5/External"), geo_context=True, variant=None, company_hint="Acme")
+    read = [c[1].rsplit("_", 1)[1] for c in session.calls if "/job/X/" in c[1]]
+    assert read[:2] in (["S2", "S1"], ["S1", "S2"])           # the real ones first, ahead of twenty "Engineer" postings
+    assert len(read) == 2 + 8                                 # and generic titles get a slice of the budget, not all of it
+
+
+def test_workday_company_names_drop_legal_entity_codes_and_name_opaque_tenants():
+    from geojobbot.scrapers.ats.more_ats import WorkdayAdapter
+
+    assert WorkdayAdapter._company("375 Parsons Global Services", "parsons") == "Parsons Global Services"
+    assert WorkdayAdapter._company("922E Airbus Defence and Space", "ag") == "Airbus Defence and Space"
+    assert WorkdayAdapter._company("FR_0425 EIFFAGE ROUTE", "eiffage") == "EIFFAGE ROUTE"
+    assert WorkdayAdapter._company("3M Company", "mmm") == "3M Company"
+    assert WorkdayAdapter._company(None, "slihrms") == "AtkinsRéalis" and WorkdayAdapter._company("", "wsp") == "Wsp"

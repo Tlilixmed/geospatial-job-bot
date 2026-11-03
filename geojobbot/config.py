@@ -85,6 +85,8 @@ class Settings:
     medium_threshold: int = 55
     notify_possible: bool = True
     max_job_age_hours: int = 360  # 15 days: postings older than this are never alerted
+    max_live_job_age_hours: int = 1440  # 60 days for a job still listed on the employer's own system or an official service
+    alert_hard_routes: bool = False  # alert on jobs whose visa route is hard or blocked (they always stay in /jobs)
     rotation_max_job_age_hours: int = 360
     max_alerts_per_run: int = 20  # the rest follow next run, best first: a digest should be readable
     max_notify_attempts: int = 5
@@ -255,6 +257,8 @@ def load_settings() -> Settings:
     s.medium_threshold = env_int("MEDIUM_MATCH_THRESHOLD", s.medium_threshold)
     s.notify_possible = env_bool("NOTIFY_POSSIBLE", s.notify_possible)
     s.max_job_age_hours = env_int("MAX_JOB_AGE_HOURS", s.max_job_age_hours)
+    s.max_live_job_age_hours = env_int("MAX_LIVE_JOB_AGE_HOURS", s.max_live_job_age_hours)
+    s.alert_hard_routes = env_bool("ALERT_HARD_ROUTES", s.alert_hard_routes)
     s.rotation_max_job_age_hours = env_int("ROTATION_MAX_JOB_AGE_HOURS", s.rotation_max_job_age_hours)
     s.max_alerts_per_run = env_int("MAX_ALERTS_PER_RUN", s.max_alerts_per_run)
     s.max_notify_attempts = env_int("MAX_NOTIFY_ATTEMPTS", s.max_notify_attempts)

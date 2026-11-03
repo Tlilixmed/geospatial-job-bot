@@ -15,10 +15,12 @@ from __future__ import annotations
 import base64
 import logging
 import re
+from datetime import datetime, timezone
 
 from ..models import BackendOutput, RawJob
 from ..utils.dates import parse_datetime
 from ..utils.http import FetchError
+from ..utils.location import ISO_CODES
 from ..utils.text import fold, html_to_text
 from .base import Backend, RunContext
 from .feeds import days_window, rotating_batch
@@ -168,10 +170,6 @@ FRENCH_MONTHS = {"janvier": 1, "fevrier": 2, "mars": 3, "avril": 4, "mai": 5, "j
 
 def _french_date(text: str):
     """"17 septembre 2026" -> datetime (UTC), or None."""
-    from datetime import datetime, timezone
-
-    from ..utils.text import fold
-
     match = re.search(r"(\d{1,2})(?:er)? ([a-z]+) (20\d{2})", fold(text))
     if not match or match.group(2) not in FRENCH_MONTHS:
         return None
@@ -179,6 +177,99 @@ def _french_date(text: str):
         return datetime(int(match.group(3)), FRENCH_MONTHS[match.group(2)], int(match.group(1)), tzinfo=timezone.utc)
     except ValueError:
         return None
+
+
+class EuresBackend(Backend):
+    """EURES, the European Commission's job mobility portal: the public services of the EU and EEA in one search, full
+    text and dates, no key. Searched by title with geomatics words, last week's postings. "GIS", "SIG" and any two words
+    ("GIS analyst", "technicien SIG") are left out: a title search matches either word, 8,000 to 26,000 unrelated postings
+    and none that qualified when measured. Only postings readable in English or French are kept."""
+
+    name = "eures"
+    phase = "extraction"
+    source_type = "government"
+    min_interval_hours = 6
+    api = "https://europa.eu/eures/api/jv-searchengine/public/jv-search/search"
+    terms = ["géomètre", "topographe", "géomaticien", "géomatique", "cartographe", "cartographer", "surveyor", "geospatial",
+             "lidar", "photogrammetry", "geomatics", "télédétection"]
+    page_size = 50  # the most it accepts
+    max_pages = 3   # "géomètre" alone has about 150 postings in a week
+    languages = ("en", "fr")  # what the candidate reads, best first
+    no_employer = ("non renseigné", "not specified")  # how a public service words an employer it keeps to itself
+
+    @classmethod
+    def query(cls, term: str, page: int = 1) -> dict:
+        return {"keywords": [{"keyword": term, "specificSearchCode": "TITLE"}], "publicationPeriod": "LAST_WEEK", "occupationUris": [],
+                "skillUris": [], "requiredExperienceCodes": [], "positionScheduleCodes": [], "sectorCodes": [],
+                "educationAndQualificationLevelCodes": [], "positionOfferingCodes": [], "locationCodes": [], "euresFlagCodes": [],
+                "otherBenefitsCodes": [], "requiredLanguages": [], "resultsPerPage": cls.page_size, "sortSearch": "MOST_RECENT",
+                "page": page, "sessionId": "geojobbot"}
+
+    @classmethod
+    def to_raw(cls, item: dict) -> RawJob | None:
+        translations = item.get("translations") or {}
+        language = next((code for code in cls.languages if code in translations or code in (item.get("availableLanguages") or [])), None)
+        if language is None:
+            return None
+        text = translations.get(language) or {}
+        countries = [ISO_CODES.get(str(code).upper()) for code in item.get("locationMap") or {}]
+        posted = datetime.fromtimestamp(int(item["creationDate"]) / 1000, timezone.utc) if item.get("creationDate") else None
+        url = f"https://europa.eu/eures/portal/jv-se/jv-details/{item['id']}?lang={language}"
+        employer = (item.get("employer") or {}).get("name") or None
+        return RawJob(
+            source_type="government", source_name="eures", source_url=cls.api, title=html_to_text(text.get("title") or item.get("title")),
+            company=None if (employer or "").casefold() in cls.no_employer else employer, url=url, apply_url=url,
+            description=html_to_text(text.get("description") or item.get("description")),
+            location_raw=", ".join(c for c in countries if c), posted_at=posted, posted_at_reliable=posted is not None,
+            source_job_id=f"eures:{item['id']}", extraction_method="api", geo_context=False,
+        )
+
+    def run(self, ctx: RunContext) -> BackendOutput:
+        out = BackendOutput()
+        errors, ok, seen, other_language = [], 0, set(), 0
+        for term in self.terms:
+            for page in range(1, self.max_pages + 1):
+                if ctx.out_of_time(200):
+                    break
+                try:
+                    data = ctx.client.post(self.api, json=self.query(term, page), headers={"Accept": "application/json"},
+                                           detect_challenge=False).json()
+                except FetchError as exc:
+                    errors.append(f"{term}: {exc.kind}")
+                    break
+                except ValueError:
+                    errors.append(f"{term}: non-JSON response")
+                    break
+                items = data.get("jvs") if isinstance(data, dict) else None
+                if not isinstance(items, list):
+                    errors.append(f"{term}: unexpected structure")
+                    break
+                ok += 1
+                for item in items:
+                    if not isinstance(item, dict) or not item.get("id") or item["id"] in seen:
+                        continue
+                    seen.add(item["id"])
+                    try:
+                        job = self.to_raw(item)
+                    except Exception:
+                        ctx.record_parser_error(self.name)
+                        continue
+                    if job is None:
+                        other_language += 1
+                    elif job.title and ctx.prefilter(job.title, False):
+                        out.jobs.append(job)
+                    else:
+                        out.prefiltered_out += 1
+                if page * self.page_size >= int(data.get("numberRecords") or 0):
+                    break
+        out.details = {"queries_ok": ok, "other_language": other_language, "errors": errors[:10]}
+        if out.jobs:
+            ctx.snapshot(self.name, [j.snapshot() for j in out.jobs])
+        if ok == 0 and errors:
+            out.status, out.error = "FAILED", errors[0]
+        elif errors:
+            out.status = "PARTIAL"
+        return out
 
 
 class JobBankBackend(Backend):
@@ -194,7 +285,7 @@ class JobBankBackend(Backend):
     source_type = "government"
     min_interval_hours = 6
     sites = {"en": "https://www.jobbank.gc.ca", "fr": "https://www.guichetemplois.gc.ca"}
-    terms = [("en", "geomatics"), ("en", "GIS"), ("en", "land surveyor"), ("en", "survey technician"), ("en", "remote sensing"),
+    terms = [("en", "geomatics"), ("en", "land surveyor"), ("en", "survey technician"), ("en", "remote sensing"),
              ("en", "cartographer"), ("en", "LiDAR"), ("fr", "géomatique"), ("fr", "arpenteur"), ("fr", "cartographe"), ("fr", "SIG")]
     weak_terms = {"land surveyor", "survey technician", "arpenteur"}
     queries_per_run = 3

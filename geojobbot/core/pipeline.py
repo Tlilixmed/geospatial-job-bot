@@ -31,9 +31,9 @@ from ..notifications.weekly import format_follow_ups, format_weekly
 from ..scrapers.ats.base import ATSBackend
 from ..scrapers.ats.detect import parse_board_url
 from ..scrapers.ats.more_ats import all_adapters
-from ..scrapers.aggregators import FreehireBackend
+from ..scrapers.aggregators import FreehireBackend, WorkableSearchBackend
 from ..scrapers.community import HackerNewsHiringBackend
-from ..scrapers.official import BundesagenturBackend, FranceTravailBackend, JobBankBackend
+from ..scrapers.official import BundesagenturBackend, EuresBackend, FranceTravailBackend, JobBankBackend
 from ..scrapers.base import Backend, RunContext
 from ..scrapers.feeds import (AdzunaBackend, ArbeitnowBackend, HimalayasBackend, JobicyBackend, JobSpyBackend,
                               JoobleBackend, JSearchBackend, ReliefWebBackend, RemoteOKBackend, RemotiveBackend,
@@ -86,7 +86,8 @@ def build_backends(settings, sponsor_data=None) -> list[Backend]:
     sources = settings.sources or {}
     ats_cfg = sources.get("ats", {}) or {}
     adapters = all_adapters()
-    backends: list[Backend] = []
+    # The sources that answer in seconds and yield the most go first: they must not wait for slots behind Workday.
+    backends: list[Backend] = [EuresBackend(), WorkableSearchBackend()]
     for name, adapter in adapters.items():
         slugs = [ref.slug for ref in (parse_board_url(name, s) for s in ats_cfg.get(name, []) or [] if s) if ref]
         backends.append(ATSBackend(adapter, slugs))

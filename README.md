@@ -4,6 +4,8 @@ Finds relevant GIS / geospatial / surveying / LiDAR / remote-sensing jobs from l
 
 ---
 
+`docs/STRUCTURE.md` maps every part of the bot with measured yields and a verdict for each; `docs/REVIEW.md` is the record of findings and fixes.
+
 ## 1. How it works
 
 ```
@@ -32,10 +34,11 @@ Finds relevant GIS / geospatial / surveying / LiDAR / remote-sensing jobs from l
 | Career pages + sitemaps | `career_sites` | Configured company pages: JSON-LD jobs, embedded ATS boards, job links, job sitemaps. |
 | Generic extraction | `generic_pages` | Any queued public job page: JSON-LD `JobPosting` → embedded JSON → structured HTML. ATS URLs are fetched through the ATS API instead. |
 | Geospatial boards | `career_sites` (GEO CAREERS), `rss_feeds` (GoGeomatics, GISjobs.com, GeoRezo, GSA-UK) | GEO CAREERS is the largest geospatial-only board: 700+ postings with structured data, read through its sitemap newest-first. |
-| Official employment services | `bundesagentur`, `francetravail`, `jobbank` | Germany's public job API (no key; German-language postings skipped), France Travail (free key, newest first) and Canada's Job Bank with its French twin Guichet-Emplois (search pages; the posting's schema.org RDFa gives the full text). |
+| Official employment services | `eures`, `bundesagentur`, `francetravail`, `jobbank` | EURES, the European Commission's portal over the public services of the EU and EEA (no key; title search, full text; postings readable in English or French only; mostly France today, so it overlaps France Travail where that key is set), Germany's public job API (no key; German-language postings skipped), France Travail (free key, newest first) and Canada's Job Bank with its French twin Guichet-Emplois (search pages; the posting's schema.org RDFa gives the full text). |
 | Keyless aggregator | `freehire` | freehire.dev: about four million open postings read from company ATS boards and partner feeds (Adzuna, WhatJobs, EURES…), with full descriptions and no key. Queried by title, newest first, four terms per run on rotation. Its own AI fields (visa sponsorship, relocation) are not trusted: the text goes through this bot's wording rules. |
+| Keyless ATS search | `workable_search` | jobs.workable.com: Workable's public search across all its customers, full text and dates, no key. Finds employers nobody could list by hand; the title must qualify, because the search reads the whole posting. |
 | Community | `hn_hiring` | Hacker News "Who is hiring?" monthly thread through the free Algolia API, once a day, strict geospatial filter. |
-| Public feeds | `remotive`, `jobicy`, `himalayas`, `arbeitnow`, `remoteok`, `rss_feeds`, `usajobs` | Rate-respecting JSON/RSS feeds (each has a minimum interval). `rss_feeds` ships with GoGeomatics (Canada), GISjobs.com and Tunisie Travail searches. |
+| Public feeds | `remotive`, `jobicy`, `himalayas`, `arbeitnow`, `remoteok`, `rss_feeds`, `usajobs` | Rate-respecting JSON/RSS feeds (each has a minimum interval). `rss_feeds` ships with GoGeomatics (Canada), GISjobs.com, GeoRezo, GSA-UK and two Tunisie Travail searches. |
 | Job boards without feeds | `career_sites` with `source_type = "feed"` | Keyword search pages of boards such as Keejob (Tunisia): job links are followed and each posting's JSON-LD is read. |
 | Aggregator APIs (optional) | `adzuna`, `jooble`, `jsearch` | Free API keys. Adzuna covers Canada, UK, US and more; Jooble covers Tunisia, the Maghreb and Canada; JSearch returns Google for Jobs results (LinkedIn, Indeed, Glassdoor, employer sites) with full descriptions. |
 | Search (optional) | `search_searxng`, `search_duckduckgo` | Discovery only: results are never used as job data. |
@@ -71,7 +74,8 @@ Invalid configured slugs are listed prominently in the run summary and GitHub st
 | Location | 5 | remote scope / preferred locations |
 
 - **Tiers.** ≥70 is *High*, ≥55 is *Possible*, anything lower is rejected.
-- **Years of experience.** The smallest number of years a posting asks for, read only from sentences about experience ("an average of 15 years of expertise" or "CDD de 3 ans" do not count), is compared with `MY_EXPERIENCE_YEARS` (default 3): two or three years more cost 5 or 10 points, four more cost 15, five or more reject the job (`EXPERIENCE_GAP`).
+- **Years of experience.** The smallest number of years a posting asks for, read only from sentences about experience ("an average of 15 years of expertise", "CDD de 3 ans" or an employer's own record such as "fort de 20 ans d'expérience" do not count), is compared with `MY_EXPERIENCE_YEARS` (default 3): two or three years more cost 5 or 10 points, four more cost 15, five or more reject the job (`EXPERIENCE_GAP`).
+- **Temporary work.** A temp-agency mission ("contrat en intérim de 2 mois"), a season or a contract of six months or less loses 15 points, because it cannot carry a work permit. A posting that also says CDI or permanent keeps its points. `/why` shows it as "temporary work".
 - **Your skills list decides the skills part.** If you know SQL or PostGIS, the two skills postings ask for most often, add them with `/skills add SQL PostGIS`: until then a posting that requires them counts them as missing.
 - **Canonical names.** Variants collapse to one name (`Esri`/`ArcGIS Online` → ArcGIS; `ArcGIS Pro` is never double-counted as ArcGIS), and each skill counts once.
 - **Required vs preferred.** Detected from the sentence the skill appears in, e.g. "ArcGIS Pro required".
@@ -84,7 +88,7 @@ Invalid configured slugs are listed prominently in the run summary and GitHub st
 - **Sponsorship.** A posting that offers visa sponsorship gets the full location score wherever it is.
 - **Internships.** Intern, co-op, trainee, apprentice, working-student titles and their French, German and Spanish forms (stagiaire, stage, PFE, alternance, Werkstudent, prácticas…) are rejected. `EXCLUDE_INTERNSHIPS=false` or `/interns on` brings them back.
 - **Work authorisation.** Postings that require an existing right to work, citizenship or permanent residency, a security clearance, or that state no visa sponsorship is offered (English and French wording) are rejected with `WORK_AUTHORIZATION_REQUIRED`, unless the job is in one of `HOME_COUNTRIES` (default `Tunisia`) or the posting says sponsorship is available, in which case "Visa sponsorship offered" appears in the evidence and the digest shows 🛂. Disable with `EXCLUDE_WORK_AUTH_REQUIRED=false`.
-- **Rejection codes:** `NO_RELEVANT_TITLE`, `NEGATIVE_TITLE`, `INSUFFICIENT_GEOSPATIAL_SIGNALS`, `LOW_TECHNICAL_RELEVANCE`, `LOCATION_MISMATCH`, `WORK_AUTHORIZATION_REQUIRED`, `LOW_SCORE`.
+- **Rejection codes:** `NO_RELEVANT_TITLE`, `NEGATIVE_TITLE`, `INSUFFICIENT_GEOSPATIAL_SIGNALS`, `LOW_TECHNICAL_RELEVANCE`, `LOCATION_MISMATCH`, `WORK_AUTHORIZATION_REQUIRED`, `EXPERIENCE_GAP`, `LOW_SCORE`.
 - **French postings.** Titles such as "Ingénieur SIG", "Géomaticien", "Topographe", "Cartographe" or "Chargé d'études SIG" and French skill and domain wording (télédétection, photogrammétrie, nuages de points, levés topographiques, "maîtrise de QGIS exigée"…) are recognised alongside English, so Tunisian, Maghreb and Québec sources score properly. Accents are folded before title matching.
 - **Customising.** Edit `geojobbot/matching/profile.py` to add roles, skills, domains or negatives.
 
@@ -191,11 +195,14 @@ Observations sharing a key become one job. A fuzzy key (normalised company + tit
 
 A job is alerted only when **all** of these hold:
 
-- it is High, or Possible with `NOTIFY_POSSIBLE=true` (the shipped workflow sets `false`: alerts are High only, `/possible on` changes it from Telegram, and `/jobs` or `/range` always show the Possible ones);
+- it is High, or Possible with `NOTIFY_POSSIBLE=true` (the default since 2026-11-03; `/possible off` turns it off from Telegram, and `/jobs` or `/range` always show the Possible ones);
 - it was seen live this run;
 - it hasn't been notified yet;
 - it has retry budget left;
-- it isn't stale. The age limit is 15 days (`MAX_JOB_AGE_HOURS=360`, also `ROTATION_MAX_JOB_AGE_HOURS` for rotating discovered boards). The same window drives each source's own "posted within" filter (JobSpy, Adzuna, USAJOBS, JSearch). A job is never rejected just for lacking a posting date.
+- its visa route isn't hard or blocked, unless the employer is on your watch list or `ALERT_HARD_ROUTES=true`. Those jobs stay in `/jobs` with their badge, but a US posting behind a lottery isn't worth a notification;
+- it isn't stale. The age limit is 15 days (`MAX_JOB_AGE_HOURS=360`, also `ROTATION_MAX_JOB_AGE_HOURS` for rotating discovered boards) and 60 days on an employer's own system or a public employment service (`MAX_LIVE_JOB_AGE_HOURS=1440`), where a posting still listed is still open. The 15-day window drives each source's own "posted within" filter (JobSpy, Adzuna, USAJOBS, JSearch). A job is never rejected just for lacking a posting date.
+
+One employer advertising the same title in several towns of a country gets one alert, for the best-scoring town; the others stay in `/jobs`.
 
 Delivery rules:
 
@@ -445,7 +452,7 @@ In a dry run, alerts are printed rather than sent and no state is written, unles
 - `[[rss_feeds]]` (shipped: GoGeomatics, GISjobs.com, GeoRezo, GSA-UK, Tunisie Travail searches). Job Bank's Atom feeds answered without entries for every query when checked on 2026-09-20, so the `jobbank` backend reads its search pages instead.
 - extra search queries
 
-> Every ATS slug shipped in `sources.toml` was checked against the live public APIs on 2026-09-16, the Oracle sites and the last six Workday tenants on 2026-10-10 (the file lists the job count per board). Companies change ATS providers, so run `validate-sources` or check the run summary after editing and fix or remove anything reported `INVALID`. SmartRecruiters and Workable answer with an empty list for unknown accounts, so confirm a non-empty board before adding one there.
+> Every ATS slug shipped in `sources.toml` was checked against the live public APIs on 2026-09-16, the Oracle sites and six Workday tenants on 2026-10-10, the boards added since on 2026-11-03 (the file lists the job count per board). Companies change ATS providers, so run `validate-sources` or check the run summary after editing and fix or remove anything reported `INVALID`. SmartRecruiters and Workable answer with an empty list for unknown accounts, so confirm a non-empty board before adding one there.
 
 **Environment variables** (all optional unless noted):
 
@@ -455,8 +462,10 @@ In a dry run, alerts are printed rather than sent and no state is written, unles
 | `DRY_RUN_WRITE_STATE` | `false` | write state during a dry run |
 | `REQUIRE_R2` | `false` (`true` in Actions) | fail instead of falling back to local state |
 | `HIGH_MATCH_THRESHOLD` / `MEDIUM_MATCH_THRESHOLD` | `70` / `55` | tier thresholds |
-| `NOTIFY_POSSIBLE` | `true` (`false` in the shipped workflow) | alert on Possible matches; `/possible on\|off` overrides it |
+| `NOTIFY_POSSIBLE` | `true` | alert on Possible matches; `/possible on\|off` overrides it |
+| `ALERT_HARD_ROUTES` | `false` | also alert on jobs whose visa route is hard or blocked (they are always in `/jobs`) |
 | `MAX_JOB_AGE_HOURS` / `ROTATION_MAX_JOB_AGE_HOURS` | `360` / `360` | freshness limits (15 days) |
+| `MAX_LIVE_JOB_AGE_HOURS` | `1440` | freshness limit on employers' own systems and public services (60 days): a posting still listed there is still open |
 | `MAX_ALERTS_PER_RUN` / `MAX_NOTIFY_ATTEMPTS` | `20` / `5` | alert flood control and retry budget |
 | `ALERT_ON_CHANGES` | `false` | re-alert when a notified job's title/location/salary/remote status changes |
 | `ALERT_FORMAT` | `digest` | `digest`: one numbered list per run · `individual`: one message per job |

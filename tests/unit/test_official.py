@@ -105,3 +105,60 @@ def test_jobbank_is_read_from_its_search_pages_and_postings_from_their_rdfa():
     assert result.method == "rdfa" and job.title == "geomatics technician" and job.company == "MTE Consultants Inc."
     assert job.location_raw == "Burlington, ON" and job.posted_at.day == 17 and len(job.description) >= 300 and job.url == first.url
     assert extract_jobs('<span property="title">x</span><div property="description">too short</div>', first.url, NOW).jobs == []
+
+
+# ------------------------------------------------------------------ EURES
+def eures_item(item_id, title, languages=("fr",), country="FR", **kw):
+    translations = {code: {"title": title, "description": GIS_DESCRIPTION} for code in languages}
+    return {"id": item_id, "title": title, "description": GIS_DESCRIPTION, "creationDate": "1792803753000", "locationMap": {country: [f"{country}105"]},
+            "employer": {"name": "Acme Topo"}, "availableLanguages": list(languages), "translations": translations, **kw}
+
+
+def test_eures_searches_titles_keeps_what_the_candidate_can_read_and_places_the_job():
+    from geojobbot.scrapers.official import EuresBackend
+
+    calls = []
+
+    def search(method, url, params, body):
+        calls.append(body)
+        return FakeResponse(200, {"numberRecords": 3, "jvs": [
+            eures_item("A1", "Géomètre-topographe (H/F)"),
+            eures_item("A2", "Geomatics Engineer", languages=("de", "en"), country="LU"),
+            eures_item("A3", "Vermessungsingenieur", languages=("de",), country="DE"),   # German only: not readable
+            eures_item("A1", "Géomètre-topographe (H/F)"),                               # the same posting from another term
+            eures_item("A4", "Chef de chantier"),                                         # not a geospatial title
+        ]})
+
+    out = EuresBackend().run(make_ctx(FakeSession({EuresBackend.api: search})))
+    assert out.status == "SUCCESS" and [j.title for j in out.jobs] == ["Géomètre-topographe (H/F)", "Geomatics Engineer"]
+    first, second = out.jobs
+    assert first.location_raw == "France" and first.source_job_id == "eures:A1" and first.company == "Acme Topo" and first.posted_at.year == 2026
+    assert first.url.endswith("/A1?lang=fr") and second.url.endswith("/A2?lang=en") and second.location_raw == "Luxembourg"
+    assert out.details["other_language"] == 1 and out.prefiltered_out == 1
+    sent = calls[0]
+    assert sent["publicationPeriod"] == "LAST_WEEK" and sent["keywords"][0]["specificSearchCode"] == "TITLE" and sent["resultsPerPage"] <= 50
+    assert len(calls) == len(EuresBackend.terms)                                          # three records: one page per term is enough
+    assert not {"GIS", "SIG"} & set(EuresBackend.terms) and not [t for t in EuresBackend.terms if " " in t]  # these match thousands of unrelated postings
+
+
+def test_eures_reads_deep_results_page_by_page_up_to_a_limit_and_hides_placeholder_employers():
+    from geojobbot.scrapers.official import EuresBackend
+
+    pages = []
+
+    def search(method, url, params, body):
+        pages.append((body["keywords"][0]["keyword"], body["page"]))
+        n = len(pages)
+        return FakeResponse(200, {"numberRecords": 500 if body["keywords"][0]["keyword"] == "géomètre" else 1,
+                                  "jvs": [eures_item(f"B{n}", "Géomètre (H/F)", employer={"name": "Non renseigné"})]})
+
+    out = EuresBackend().run(make_ctx(FakeSession({EuresBackend.api: search})))
+    assert [p for t, p in pages if t == "géomètre"] == [1, 2, 3] and [p for t, p in pages if t == "lidar"] == [1]
+    assert out.jobs and out.jobs[0].company is None
+
+
+def test_eures_failures_are_reported():
+    from geojobbot.scrapers.official import EuresBackend
+
+    assert EuresBackend().run(make_ctx(FakeSession({EuresBackend.api: FakeResponse(500, {})}))).status == "FAILED"
+    assert EuresBackend().run(make_ctx(FakeSession({EuresBackend.api: FakeResponse(200, {"unexpected": 1})}))).status == "FAILED"
