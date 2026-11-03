@@ -241,6 +241,7 @@ class PersonioAdapter(ATSAdapter):
 
 class WorkdayAdapter(ATSAdapter):
     ats = "workday"
+    rotation_limit = 10  # about a minute a board: 71 boards took the whole run on 2026-11-03, and left nothing for the AI
 
     @staticmethod
     def _parts(ref: BoardRef) -> tuple[str, str, str]:

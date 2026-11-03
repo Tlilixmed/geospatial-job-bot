@@ -46,6 +46,7 @@ def title_rank(title: str | None) -> int:
 
 class ATSAdapter:
     ats: str = "ats"
+    rotation_limit: int | None = None  # discovered boards per run, when below ROTATION_BOARDS_PER_ATS
 
     def fetch_board(self, ctx: RunContext, ref: BoardRef, *, geo_context: bool, variant: str | None,
                     company_hint: str | None) -> BoardResult:
@@ -75,7 +76,8 @@ class ATSBackend(Backend):
 
     def run(self, ctx: RunContext) -> BackendOutput:
         registry = ctx.registry
-        selection = registry.select(self.adapter.ats, self.configured_slugs, ctx.settings.rotation_boards_per_ats)
+        selection = registry.select(self.adapter.ats, self.configured_slugs,
+                                    min(ctx.settings.rotation_boards_per_ats, self.adapter.rotation_limit or ctx.settings.rotation_boards_per_ats))
         out = BackendOutput()
         counts = {"VALID": 0, "INVALID": 0, "EMPTY_UNVERIFIED": 0, "SCHEMA_MISMATCH": 0, "ERROR": 0}
         invalid_configured, unverified_configured, errors = [], [], []

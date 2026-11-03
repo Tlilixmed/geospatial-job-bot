@@ -31,6 +31,8 @@ def _status_line(result: dict) -> str:
         extra.append(f"{result['prefiltered_out']} prefiltered")
     if detail.get("boards_checked") is not None:
         extra.append(f"{detail['boards_checked']} boards")
+    if result.get("duration_s", 0) >= 1:
+        extra.append(f"{round(result['duration_s'])}s")
     if result.get("error"):
         extra.append(truncate(result["error"], 90))
     suffix = f" ({'; '.join(extra)})" if extra else ""
@@ -147,10 +149,10 @@ def build_markdown(report: dict) -> str:
     md = [f"## Geospatial job bot — run `{report['run_id']}` · code `{report.get('code') or 'local'}`", "",
           f"**High:** {c.get('tier_high', 0)} · **Possible:** {c.get('tier_possible', 0)} · "
           f"**Rejected:** {c.get('tier_rejected', 0)} · **Alerts sent:** {c.get('alerts_sent', 0)} · "
-          f"**New jobs:** {c.get('new', 0)}", "", "| Source | Status | Jobs | Note |", "|---|---|---|---|"]
+          f"**New jobs:** {c.get('new', 0)}", "", "| Source | Status | Jobs | Seconds | Note |", "|---|---|---|---|---|"]
     for result in report["sources"]:
         note = truncate(result.get("error") or "", 80).replace("|", "/")
-        md.append(f"| {result['name']} | {result['status']} | {result.get('jobs', 0)} | {note} |")
+        md.append(f"| {result['name']} | {result['status']} | {result.get('jobs', 0)} | {round(result.get('duration_s') or 0)} | {note} |")
     invalid = {k: v for k, v in report.get("invalid_configured", {}).items() if v}
     if invalid:
         md += ["", "### ⚠️ Invalid configured sources"] + [f"- **{k}**: {', '.join(v)}" for k, v in invalid.items()]

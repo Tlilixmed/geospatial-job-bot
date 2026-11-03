@@ -555,31 +555,9 @@ class JobSpyBackend(Backend):
                 specs.append((location, (country.strip() or settings.jobspy_country_indeed).lower()))
         return specs or [("Remote", settings.jobspy_country_indeed.lower())]
 
-    @staticmethod
-    def patch_country_parsing() -> None:
-        """python-jobspy aborts a whole LinkedIn search when a result's country is missing from its
-        enum (Tunisia, for example). Fall back to WORLDWIDE so the row is kept instead."""
-        try:
-            from jobspy.model import Country
-        except Exception:
-            return
-        original = getattr(Country.from_string, "__func__", None)
-        if original is None or getattr(original, "_geojobbot_tolerant", False):
-            return
-
-        def tolerant(cls, value):
-            try:
-                return original(cls, value)
-            except ValueError:
-                return cls.WORLDWIDE
-
-        tolerant._geojobbot_tolerant = True
-        Country.from_string = classmethod(tolerant)
-
     def run(self, ctx: RunContext) -> BackendOutput:
         from jobspy import scrape_jobs
 
-        self.patch_country_parsing()
         out = BackendOutput()
         cursor = ctx.cursor(self.name)
         start = int(cursor.get("index", 0))
@@ -602,7 +580,9 @@ class JobSpyBackend(Backend):
                     continue
                 kwargs = dict(site_name=sites, search_term=term, location=location,
                               results_wanted=ctx.settings.jobspy_results_wanted,
-                              hours_old=int(ctx.settings.max_job_age_hours), country_indeed=country, verbose=0)
+                              hours_old=int(ctx.settings.max_job_age_hours), verbose=0)
+                if country != "worldwide":  # not a country to the library: LinkedIn, the only site left for these, does not read it
+                    kwargs["country_indeed"] = country
                 if "linkedin" in sites and ctx.settings.jobspy_linkedin_fetch_description:
                     kwargs["linkedin_fetch_description"] = True
                 try:

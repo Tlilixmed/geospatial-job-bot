@@ -1,2 +1,3 @@
 # Supplementary aggregator discovery. Optional: the bot runs without it.
-python-jobspy>=1.1.80
+# Pinned: the backends use its LinkedIn reader, and 1.2 to 1.4 changed enough to stop every search (2026-11-03).
+python-jobspy==1.4.1

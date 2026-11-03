@@ -107,6 +107,8 @@ jobs:
           ALERT_HARD_ROUTES: ${{ vars.ALERT_HARD_ROUTES }}
           MAX_LIVE_JOB_AGE_HOURS: ${{ vars.MAX_LIVE_JOB_AGE_HOURS }}
           DUCKDUCKGO_ENABLED: ${{ vars.DUCKDUCKGO_ENABLED || 'false' }}
+          # 504s from its index, and 23,196 boards are already known: more than the rotation reaches (2026-11-03)
+          COMMONCRAWL_ENABLED: ${{ vars.COMMONCRAWL_ENABLED || 'false' }}
           BOT_USER_AGENT: ${{ vars.BOT_USER_AGENT }}
           # Optional tuning through repository variables; an unset variable is an empty string, which means "use the default"
           AI_MODELS: ${{ vars.AI_MODELS }}

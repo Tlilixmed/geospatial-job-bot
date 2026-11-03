@@ -177,7 +177,7 @@ class Pipeline:
             wait = min(backend.min_interval_hours, max(1, failures))
             if getattr(backend, "quota_bound", False) and failures and last_attempt and self.now - last_attempt < timedelta(hours=wait):
                 result.status = "SKIPPED"
-                result.error = f"failed {failures}x, last try {to_iso(last_attempt)}; next try after {wait}h"
+                result.error = f"failed {failures}x ({record.get('last_error') or 'no detail'}); next try after {wait}h"
                 return result, []
         started = time.monotonic()
         jobs = []
@@ -248,6 +248,9 @@ class Pipeline:
         registry = BoardRegistry(state, self.now, hot_days=settings.hot_board_days)
         ctx = RunContext(settings, client, state, run_id=self.run_id, now=self.now, registry=registry,
                          match_config=settings.match_config())
+        # Sources that run to the clock left the AI nothing: 0 of 512 reviews on 2026-11-03. They stop early by its budget.
+        ai_reserve = settings.ai_time_budget_s if settings.cloudflare_ai_token else 0
+        ctx.deadline -= ai_reserve
         backends = self.backends if self.backends is not None else build_backends(
             settings, sponsor_data=lambda: self._sponsor_registry(manager).data if settings.sponsor_registers else None, manager=manager)
 
@@ -256,6 +259,7 @@ class Pipeline:
             results, found = self._run_phase(phase, backends, ctx)
             report["sources"].extend(r.to_dict() for r in results)
             raws.extend(found)
+        ctx.deadline += ai_reserve
         counts = report["counts"]
         counts["raw"] = len(raws)
         yields.record_run(state, raws, self.now)

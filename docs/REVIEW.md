@@ -426,6 +426,27 @@ and the step follows from the status on record. `/ask` is wired on both sides.
   with soft breaks, through the real Worker code, then a real run reading 7 of 7 texts); real LinkedIn mail and Email
   Routing itself could not be tested from the development machine.
 
+### Production's own run report of 2026-11-03
+
+- **F103 · JobSpy crashed on every run from about 2026-10-19 · [fixed]** `requirements-optional.txt` said `>=1.1.80`, so Actions installed
+  the newest release. 1.4.0 (2026-10-19) removed `Country.from_string`, which `patch_country_parsing` touched outside its
+  guard, and `Country.WORLDWIDE`, which the `Tunisia@worldwide` search passed. The development machine still had 1.1.82, so
+  every local run and audit looked fine, and `docs/STRUCTURE.md` wrongly said no source was broken. Now pinned to 1.4.1, the patch
+  is gone (1.4.1 accepts unknown countries itself), `worldwide` is no longer passed, and the alert reader uses 1.4.1's
+  `_fetch_details`. Verified in a virtual environment with production's libraries: the full suite, four real searches
+  including Tunisia (33 jobs in 24 seconds), and the reader.
+- **F104 · the AI reviewed 0 of 512 · [fixed]** The sources ran to the clock, so `ctx.out_of_time(120)` stopped the reviews before the
+  first one. With a token set, the sources' deadline now comes `AI_TIME_BUDGET_SECONDS` early and is given back afterwards.
+- **F105 · Workday took the whole run, and Common Crawl kept failing · [fixed]** Production reached 71 Workday boards at about a minute each
+  and stopped for time. `rotation_limit` caps discovered Workday boards at 10 per run; configured and hot boards always run.
+  Common Crawl failed in production as it did locally, runs before every other source, and has found 23,196 boards, more
+  than the rotation reaches, so the workflow turns it off.
+- **F106 · the index reached 1.32 MB · [fixed]** It holds at most 100 near misses (`MAX_NEAR_MISSES`), and no job past its age limit or
+  deadline: the Worker parsed those on every message only to filter them out. On the local run the near-miss cap alone
+  saves about 28%. The real figure comes with the next run report.
+- **F107 · the report hid what would have explained this · [fixed]** Each source's seconds now appear in the summary and the table. A quota
+  source waiting after failures keeps its reason: "failed 211x" said nothing about why JSearch fails.
+
 ### Opportunities recorded (not bugs)
 
 - **O1 · inline Yes/No buttons for writes derived from free text, and buttons under digests (`callback_query`) · [partly done]**
@@ -462,7 +483,7 @@ and the step follows from the status on record. `/ask` is wired on both sides.
 
 ## State of the review
 
-Every row above has a status. 102 findings: 101 fixed, 1 recorded as an idea (F7). Tests went from 280 to 880 (Python) and from 17
+Every row above has a status. 107 findings: 106 fixed, 1 recorded as an idea (F7). Tests went from 280 to 889 (Python) and from 17
 to 46 (Worker). Not verifiable from the development machine, and therefore to watch in the next runs: the AI model chain
 (the token lives in GitHub secrets; the last model of the chain is the one that worked before), France Travail live answers,
 and the first run after deployment, which rescores stored matches (`rescored_from_text` in the run summary) and may carry

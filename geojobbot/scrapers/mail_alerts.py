@@ -13,7 +13,6 @@ import html as html_lib
 import json
 import re
 from datetime import timedelta
-from types import SimpleNamespace
 
 from ..models import RawJob
 from ..utils.dates import parse_datetime
@@ -102,13 +101,15 @@ def jobspy_reader(settings):
     if not (settings.jobspy_enabled and "linkedin" in sites and settings.jobspy_linkedin_fetch_description):
         return None
     try:
-        from jobspy.linkedin import LinkedIn
-        from jobspy.model import DescriptionFormat
-    except Exception:
+        from jobspy.linkedin import LinkedIn, RequestsRotating, create_session, headers
+        from jobspy.model import ScraperInput
+
+        reader = LinkedIn()
+        reader.scraper_input = ScraperInput(site_name=["linkedin"])
+        reader.session = create_session(RequestsRotating([], clear_cookies=True), reader.scraper_input, headers)
+    except Exception:  # not installed, or a release with other internals: the jobs stay title-only
         return None
-    reader = LinkedIn()
-    reader.scraper_input = SimpleNamespace(description_format=DescriptionFormat.MARKDOWN)
-    return lambda job_id: str(reader._get_job_details(job_id).get("description") or "")
+    return lambda job_id: str(reader._fetch_details(job_id).get("description") or "")
 
 
 class MailAlertsBackend(Backend):

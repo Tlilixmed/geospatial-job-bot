@@ -43,7 +43,7 @@ Finds relevant GIS / geospatial / surveying / LiDAR / remote-sensing jobs from l
 | Your own job alerts (optional) | `linkedin_alerts` | LinkedIn alert emails you subscribed to, received by the Cloudflare Worker through free Email Routing (a domain on Cloudflare, no mailbox: `cloudflare/README.md`, step 10). Up to 12 posting texts per run are read through JobSpy's LinkedIn reader; the others stay title-only evidence. |
 | Aggregator APIs (optional) | `adzuna`, `jooble`, `jsearch` | Free API keys. Adzuna covers Canada, UK, US and more; Jooble covers Tunisia, the Maghreb and Canada; JSearch returns Google for Jobs results (LinkedIn, Indeed, Glassdoor, employer sites) with full descriptions. |
 | Search (optional) | `search_searxng`, `search_duckduckgo` | Discovery only: results are never used as job data. |
-| Supplementary | `jobspy` | Optional `python-jobspy`: Indeed and LinkedIn by default (Glassdoor, Bayt, Google can be enabled), one Indeed country per location, LinkedIn descriptions fetched for scoring. |
+| Supplementary | `jobspy` | Optional `python-jobspy`, pinned in `requirements-optional.txt` because the bot reads its internals: Indeed and LinkedIn by default (Glassdoor, Bayt, Google can be enabled), one Indeed country per location, LinkedIn descriptions fetched for scoring. |
 
 **Board registry and rotation.** Configured boards are fetched every run. Boards discovered by Common Crawl, search or career pages are stored in R2. Each run checks:
 
@@ -476,10 +476,10 @@ In a dry run, alerts are printed rather than sent and no state is written, unles
 | `EXTRA_NEGATIVE_TITLES` | empty | comma-separated extra exclusions |
 | `EXCLUDE_INTERNSHIPS` | `true` | reject internships, co-ops, traineeships and student jobs |
 | `EXCLUDE_WORK_AUTH_REQUIRED`, `HOME_COUNTRIES` | `true`, `Tunisia` | reject postings needing existing work authorisation / no sponsorship, except in home countries |
-| `ROTATION_BOARDS_PER_ATS` | `60` | discovered boards checked per ATS per run |
+| `ROTATION_BOARDS_PER_ATS` | `60` | discovered boards checked per ATS per run (at most 10 on Workday, which takes about a minute a board) |
 | `MAX_DETAIL_FETCHES_PER_BOARD` | `30` | per-job detail requests per board |
 | `GENERIC_PAGES_PER_RUN` / `GENERIC_PAGES_PER_HOST` / `PAGE_REFETCH_DAYS` | `80` / `15` / `7` | generic crawler budget |
-| `COMMONCRAWL_ENABLED` / `COMMONCRAWL_PAGES_PER_RUN` | `true` / `2` | Common Crawl board discovery |
+| `COMMONCRAWL_ENABLED` / `COMMONCRAWL_PAGES_PER_RUN` | `true` (`false` in the shipped workflow) / `2` | Common Crawl board discovery |
 | `SEARCH_QUERIES_PER_RUN` | `8` | rotating search queries |
 | `SEARXNG_URL` | empty | enables SearXNG backend |
 | `DUCKDUCKGO_ENABLED` | `true` | DuckDuckGo HTML backend (obeys robots.txt) |
@@ -504,7 +504,7 @@ In a dry run, alerts are printed rather than sent and no state is written, unles
 | `JSEARCH_API_KEY`, `JSEARCH_REQUESTS_PER_RUN`, `JSEARCH_QUERIES` | empty, `1`, fifteen `query@country` entries (CA, TN, US, FR, BE, CH, DE, GB, AU, AE, SA, QA) | enables JSearch; queries rotate across runs to stay inside the free quota |
 | `DISABLED_BACKENDS` | empty | e.g. `search_duckduckgo,arbeitnow` |
 | `SOURCE_CONCURRENCY` | `6` | parallel backends |
-| `RUN_TIME_BUDGET_MINUTES` | `40` | soft deadline; backends stop early and report PARTIAL |
+| `RUN_TIME_BUDGET_MINUTES` | `40` (`45` in the shipped workflow) | soft deadline; backends stop early and report PARTIAL, and earlier still by `AI_TIME_BUDGET_SECONDS` when the AI is on, so that it gets its time |
 | `DEFAULT_HOST_DELAY`, `HTTP_TIMEOUT` | `1.5`, `30` | politeness and timeouts |
 | `STATE_PREFIX`, `STATE_BACKUPS_KEEP`, `ALLOW_STATE_RESET` | empty, `20`, `false` | state storage |
 | `RAW_RETENTION_DAYS`, `RUN_RETENTION_DAYS`, `STORE_RAW_SNAPSHOTS` | `14`, `90`, `true` | artifacts |

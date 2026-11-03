@@ -11,11 +11,12 @@ from ..insights import fx, radar, timing, visa
 from ..utils.dates import to_iso
 from ..utils.location import ParsedLocation
 from ..utils.text import job_code
-from .jobs import age_limit_hours, is_listed, listed_days
+from .jobs import age_limit_hours, alert_block_reason, is_listed, listed_days
 
 SUFFIX = "state/index.json"
 SCHEMA = 1
 MAX_JOBS = 900
+MAX_NEAR_MISSES = 100  # the best of them, for /range: every other one is CPU the Worker spends on each message
 
 
 def _entry(cid: str, rec: dict, skills: list[str] | None = None, settings=None) -> dict:
@@ -71,11 +72,15 @@ def build_index(state: dict, settings, report: dict, now, help_text: str, views:
     for cid, rec in state.get("jobs", {}).items():
         if not is_listed(rec, now):
             continue  # gone from its source: it would only push a fresh job past MAX_JOBS; /why on an old code goes to Python
+        if alert_block_reason(rec, settings, now):
+            continue  # too old or past its deadline: the Worker's lists would filter it out anyway, after parsing it
         accepted = rec.get("tier") in ("high", "possible")
         near_miss = set(rec.get("rejection_reasons") or []) <= {"LOW_SCORE"} and int(rec.get("score") or 0) >= 35
         if accepted or near_miss:
             rows.append(_entry(cid, rec, skills, settings))
     rows.sort(key=lambda e: (e["tier"] != "high", -e["s"]))
+    accepted = [e for e in rows if e["tier"] in ("high", "possible")]
+    rows = accepted + [e for e in rows if e["tier"] not in ("high", "possible")][:MAX_NEAR_MISSES]
     counts = report.get("counts") or {}
     return {
         "schema": SCHEMA, "generated_at": to_iso(now), "help": help_text, "views": views or {},
