@@ -1108,30 +1108,32 @@ function decodeMailPart(body, encoding) {
   return body;
 }
 
-/** Best-effort text of an email from its raw MIME: the first text/plain part, else the stripped text/html one. */
-function mailText(raw, depth = 0) {
+/** The decoded body of the first part of this type in an email's raw MIME. */
+function mailPart(raw, type, depth = 0) {
   const head = raw.slice(0, raw.search(/\r?\n\r?\n/) + 1);
   const boundary = (head.match(/boundary="?([^";\r\n]+)"?/i) || [])[1];
   const parts = boundary ? raw.split(new RegExp(`--${boundary.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?:--)?`)) : [raw];
-  const pick = (type) => {
-    for (const part of parts) {
-      const split = part.search(/\r?\n\r?\n/);
-      if (split === -1) continue;
-      const headers = part.slice(0, split);
-      if (depth < 3 && part !== raw && /content-type:\s*multipart\//i.test(headers)) {  // multipart/alternative inside multipart/mixed
-        const nested = mailText(part.replace(/^\s+/, ""), depth + 1);
-        if (nested) return nested;
-        continue;
-      }
-      if (!new RegExp(`content-type:\\s*${type}`, "i").test(headers)) continue;
-      const encoding = (headers.match(/content-transfer-encoding:\s*([^\r\n]+)/i) || [])[1];
-      return decodeMailPart(part.slice(split).trim(), encoding);
+  for (const part of parts) {
+    const split = part.search(/\r?\n\r?\n/);
+    if (split === -1) continue;
+    const headers = part.slice(0, split);
+    if (depth < 3 && part !== raw && /content-type:\s*multipart\//i.test(headers)) {  // multipart/alternative inside multipart/mixed
+      const nested = mailPart(part.replace(/^\s+/, ""), type, depth + 1);
+      if (nested) return nested;
+      continue;
     }
-    return "";
-  };
-  const plain = pick("text/plain");
+    if (!new RegExp(`content-type:\\s*${type}`, "i").test(headers)) continue;
+    const encoding = (headers.match(/content-transfer-encoding:\s*([^\r\n]+)/i) || [])[1];
+    return decodeMailPart(part.slice(split).trim(), encoding);
+  }
+  return "";
+}
+
+/** Best-effort text of an email: the first text/plain part, else the stripped text/html one. */
+function mailText(raw) {
+  const plain = mailPart(raw, "text/plain");
   if (plain) return plain;
-  const page = pick("text/html");
+  const page = mailPart(raw, "text/html");
   return page ? page.replace(/<style[\s\S]*?<\/style>/gi, " ").replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/\s+/g, " ") : "";
 }
 
@@ -1162,8 +1164,71 @@ function matchApplication(prefs, fromAddress, subject, text) {
   return best;
 }
 
+// ---------------------------------------------------------------------------- LinkedIn job alerts by email
+// Alerts are left in the bucket for the scraper (geojobbot/scrapers/mail_alerts.py), and nothing else happens to them here.
+const ALERT_SENDER = /^(?:jobalerts|jobs-listings)[\w.+-]*@(?:[\w-]+\.)*linkedin\.com$/i;
+const ALERT_JOB_LINK = /linkedin\.com\/(?:comm\/)?jobs\/view\/(?:[^\s"'<>?]*-)?(\d{6,})/g;
+const ALERT_FOLDER = "mail-alerts/";
+const ALERT_PART_MAX = 200000;
+const GMAIL_CONFIRMATION = "forwarding-noreply@google.com";
+
+const mailAddress = (value) => {
+  const text = String(value || "");
+  return ((text.match(/<([^<>\s]+)>/) || [])[1] || text).trim().toLowerCase();
+};
+
+/** Email Routing prepends its own result, so only the first Authentication-Results header is its word; a sender can add
+ * more below it. A forwarded alert still passes: the sender's DKIM signature survives forwarding. */
+function dmarcPassed(message) {
+  const first = String(message.headers.get("authentication-results") || "").split(/,\s*(?=[\w.-]+\s*;)/)[0];
+  return /^\s*mx\.cloudflare\.net\s*;/i.test(first) && /\bdmarc=pass\b/i.test(first);
+}
+
+/** Every link loses its parameters before anything is stored: LinkedIn's carry tracking and one-time sign-in tokens. */
+const withoutLinkParameters = (text) => String(text || "").replace(/(https?:\/\/[^\s"'<>?]+)\?[^\s"'<>]*/gi, "$1").slice(0, ALERT_PART_MAX);
+const jobLinksIn = (text) => new Set([...String(text).matchAll(ALERT_JOB_LINK)].map((m) => m[1])).size;
+/** Nothing below the last job is needed, and the footer names the account holder. `tail`: what may follow its link. */
+function withoutFooter(text, tail) {
+  let end = 0;
+  for (const match of String(text).matchAll(ALERT_JOB_LINK)) end = match.index + match[0].length;
+  return end ? text.slice(0, end + tail) : text;
+}
+
+async function storeAlertMail(message, env) {
+  const subject = String(message.headers.get("subject") || "").slice(0, 200);
+  if (!dmarcPassed(message)) {  // said out loud once per mail: this is also how a broken setup shows itself
+    await reply(env, [`⚠️ A mail claiming to be a LinkedIn job alert failed the sender check, so I ignored it.\n<i>${esc(subject.slice(0, 120))}</i>`], true);
+    return;
+  }
+  const raw = Number(message.rawSize || 0) > MAIL_MAX_BYTES ? "" : await new Response(message.raw).text();
+  const plain = withoutFooter(withoutLinkParameters(mailPart(raw, "text/plain")), 1);
+  const html = jobLinksIn(plain) ? "" : withoutFooter(withoutLinkParameters(mailPart(raw, "text/html")), 2000);
+  const links = jobLinksIn(plain) || jobLinksIn(html);
+  if (!links) {
+    await reply(env, [`📬 A LinkedIn mail came in with no job link I recognise. If real alerts do this, their format changed.\n<i>${esc(subject.slice(0, 120))}</i>`], true);
+    return;
+  }
+  const prefix = keyOf(env, ALERT_FOLDER);
+  const first = !(await env.INBOX.list({ prefix, limit: 1 })).objects.length;
+  const at = new Date().toISOString();
+  await env.INBOX.put(`${prefix}${at.replace(/[:.]/g, "-")}-${crypto.randomUUID().slice(0, 8)}.json`,
+    JSON.stringify({ subject, received_at: at, plain, html }), { httpMetadata: { contentType: "application/json" } });
+  if (first) await reply(env, [`📬 LinkedIn alert received, ${links} job link${links === 1 ? "" : "s"}. The next scraper run reads it; /sources then shows <code>linkedin_alerts</code>.`], true);
+}
+
+/** Gmail asks for a code before it forwards anything to an address. With no mailbox here, the code has to come to the chat. */
+async function relayGmailCode(message, env) {
+  const subject = String(message.headers.get("subject") || "");
+  const code = (subject.match(/\(#(\d+)\)/) || [])[1];
+  await reply(env, [`📧 Gmail asks to confirm forwarding to this address.\n${code ? `Confirmation code: <code>${code}</code>` : `<i>${esc(subject.slice(0, 160))}</i>`}\n`
+    + "Enter it in Gmail: Settings → Forwarding and POP/IMAP."], false);
+}
+
 async function handleMail(message, env) {
   if (!env.INBOX) return;
+  const claimed = mailAddress(message.headers.get("from") || message.from);  // a forwarded mail keeps its From, not its envelope
+  if (ALERT_SENDER.test(claimed)) return storeAlertMail(message, env);
+  if (claimed === GMAIL_CONFIRMATION && dmarcPassed(message)) return relayGmailCode(message, env);
   const subject = message.headers.get("subject") || "(no subject)";
   // a huge mail (attachments) is judged by its subject alone; bulk mail is not an answer to an application
   const raw = Number(message.rawSize || 0) > MAIL_MAX_BYTES ? "" : await new Response(message.raw).text();

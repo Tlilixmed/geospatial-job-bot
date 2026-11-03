@@ -40,6 +40,7 @@ Finds relevant GIS / geospatial / surveying / LiDAR / remote-sensing jobs from l
 | Community | `hn_hiring` | Hacker News "Who is hiring?" monthly thread through the free Algolia API, once a day, strict geospatial filter. |
 | Public feeds | `remotive`, `jobicy`, `himalayas`, `arbeitnow`, `remoteok`, `rss_feeds`, `usajobs` | Rate-respecting JSON/RSS feeds (each has a minimum interval). `rss_feeds` ships with GoGeomatics (Canada), GISjobs.com, GeoRezo, GSA-UK and two Tunisie Travail searches. |
 | Job boards without feeds | `career_sites` with `source_type = "feed"` | Keyword search pages of boards such as Keejob (Tunisia): job links are followed and each posting's JSON-LD is read. |
+| Your own job alerts (optional) | `linkedin_alerts` | LinkedIn alert emails you subscribed to, received by the Cloudflare Worker through free Email Routing (a domain on Cloudflare, no mailbox: `cloudflare/README.md`, step 10). Up to 12 posting texts per run are read through JobSpy's LinkedIn reader; the others stay title-only evidence. |
 | Aggregator APIs (optional) | `adzuna`, `jooble`, `jsearch` | Free API keys. Adzuna covers Canada, UK, US and more; Jooble covers Tunisia, the Maghreb and Canada; JSearch returns Google for Jobs results (LinkedIn, Indeed, Glassdoor, employer sites) with full descriptions. |
 | Search (optional) | `search_searxng`, `search_duckduckgo` | Discovery only: results are never used as job data. |
 | Supplementary | `jobspy` | Optional `python-jobspy`: Indeed and LinkedIn by default (Glassdoor, Bayt, Google can be enabled), one Indeed country per location, LinkedIn descriptions fetched for scoring. |
@@ -267,6 +268,7 @@ There is no SQLite and no GitHub cache. A single gzipped JSON document is simple
 
 ```
 state/state.json.gz                         authoritative state (jobs, boards, sources, cursors, page cache)
+mail-alerts/<received>-<id>.json            LinkedIn alert mail left by the Worker, without link parameters or footer (kept 7 days)
 state/prefs.json                            preferences set from Telegram (mutes, applications and outcomes, hidden, thresholds, pause, skills)
 state/index.json                            compact read model for the Cloudflare Worker, rewritten by every run
 state/descriptions.json.gz                  descriptions of accepted jobs (6,000 characters each) for /pitch and late AI reviews

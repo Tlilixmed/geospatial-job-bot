@@ -47,6 +47,7 @@ function harness({ index, prefs, ai, inbox = true, prefix = "", telegramAnswer }
       get: async (key) => { reads.push(key); return objects.has(key) ? { json: async () => JSON.parse(objects.get(key)) } : null; },
       head: async (key) => (objects.has(key) ? { uploaded: uploaded.get(key) || new Date() } : null),
       put: async (key, value) => { writes.push(key); objects.set(key, value); uploaded.set(key, new Date()); },
+      list: async ({ prefix: wanted }) => ({ objects: [...objects.keys()].filter((key) => key.startsWith(wanted)).map((key) => ({ key })) }),
     };
   }
   if (prefix) env.STATE_PREFIX = prefix;
@@ -898,4 +899,81 @@ test("a job carries its own age limit: 40 days old on the employer's system is s
   await h.say("/jobs");
   assert.match(h.sent[0].text, /Top 1 of 1 current matches/);
   assert.doesNotMatch(h.sent[0].text, /Old advert/);  // no limit of its own: the general 15 days apply
+});
+
+// ---------------------------------------------------------------------------- LinkedIn alerts by email
+const VERIFIED = "mx.cloudflare.net; dkim=pass header.d=linkedin.com; dmarc=pass header.from=linkedin.com; spf=fail";
+const ALERT_BODY = ["Your job alert for GIS in France", "2 new jobs match your preferences.", "----------",
+  "Géomaticien", "Acme Topo", "Paris, France", "", "View job: https://www.linkedin.com/comm/jobs/view/4123456789/?trackingId=3Dabc&otpToken=3Dsecret1&midToken=3Dsecret2", "----------",
+  "Unsubscribe: https://www.linkedin.com/comm/jobs/alerts?otpToken=3Dsecret3"].join("\r\n");
+
+function alertMail({ from = "LinkedIn Job Alerts <jobalerts-noreply@linkedin.com>", envelope, auth = VERIFIED, subject = "GIS: 2 new jobs", body = ALERT_BODY } = {}) {
+  const boundary = "b0undary";
+  const raw = [`From: ${from}`, `Subject: ${subject}`, `Content-Type: multipart/alternative; boundary="${boundary}"`, "",
+    `--${boundary}`, "Content-Type: text/plain; charset=utf-8", "Content-Transfer-Encoding: quoted-printable", "", body.replace(/é/g, "=C3=A9"),
+    `--${boundary}`, "Content-Type: text/html; charset=utf-8", "", "<p>html</p>", `--${boundary}--`, ""].join("\r\n");
+  const headers = new Map([["subject", subject], ["from", from]]);
+  if (auth) headers.set("authentication-results", auth);
+  return { from: envelope || from, headers, raw: new Response(raw).body };
+}
+const deliver = async (m, env) => { const pending = []; await worker.email(m, env, { waitUntil: (p) => pending.push(p) }); await Promise.all(pending); };
+const alertsIn = (h, prefix = "") => [...h.objects.keys()].filter((k) => k.startsWith(`${prefix}mail-alerts/`));
+
+test("a verified LinkedIn alert is stored without any link parameter, and only the first one is announced", async () => {
+  const h = harness({ index: makeIndex([]) });
+  await deliver(alertMail(), h.env);
+  const [key] = alertsIn(h);
+  const stored = h.objects.get(key);
+  assert.doesNotMatch(stored, /otpToken|midToken|trackingId|secret/);  // sign-in tokens never reach the bucket
+  assert.doesNotMatch(stored, /Unsubscribe/);  // nor the footer, which names the account holder
+  const item = JSON.parse(stored);
+  assert.match(item.plain, /Géomaticien/);
+  assert.match(item.plain, /https:\/\/www\.linkedin\.com\/comm\/jobs\/view\/4123456789\//);
+  assert.equal(item.html, "");  // the text part had the links
+  assert.equal(h.sent.length, 1);
+  assert.match(h.sent[0].text, /1 job link\b/);
+  assert.equal(h.sent[0].disable_notification, true);
+  await deliver(alertMail(), h.env);
+  assert.equal(alertsIn(h).length, 2);
+  assert.equal(h.sent.length, 1);  // a daily mail is not a daily message
+});
+
+test("an alert forwarded by Gmail is recognised by its From header, and the state prefix is respected", async () => {
+  const h = harness({ index: makeIndex([]), prefix: "bot/" });
+  await deliver(alertMail({ envelope: "someone+caf_=x=example.test@gmail.com" }), h.env);
+  assert.equal(alertsIn(h, "bot/").length, 1);
+});
+
+test("a mail claiming to be a LinkedIn alert is stored only if Cloudflare itself says DMARC passed", async () => {
+  const forged = ["mx.cloudflare.net; dkim=fail; dmarc=fail header.from=linkedin.com, mx.cloudflare.net; dmarc=pass",  // a second header below Cloudflare's
+    "evil.example; dmarc=pass", "", "mx.cloudflare.net; dmarc=none"];
+  for (const auth of forged) {
+    const h = harness({ index: makeIndex([]) });
+    await deliver(alertMail({ auth }), h.env);
+    assert.equal(alertsIn(h).length, 0, auth);
+    assert.match(h.sent[0].text, /failed the sender check/);
+    assert.doesNotMatch(h.sent[0].text, /View job/);
+  }
+});
+
+test("a LinkedIn mail without job links is reported, and other LinkedIn mail takes the normal path", async () => {
+  const h = harness({ index: makeIndex([]) });
+  await deliver(alertMail({ body: "You created a job alert. Nice." }), h.env);
+  assert.equal(alertsIn(h).length, 0);
+  assert.match(h.sent[0].text, /no job link I recognise/);
+  const other = harness({ index: makeIndex([]) });
+  await deliver(alertMail({ from: "LinkedIn <jobs-noreply@linkedin.com>", subject: "Your application was viewed", body: "Someone viewed it." }), other.env);
+  assert.equal(alertsIn(other).length, 0);
+  assert.match(other.sent[0].text, /not one I can classify/);
+});
+
+test("Gmail's forwarding code reaches the chat, ringing, only when the sender is verified", async () => {
+  const subject = "(#987654321) Gmail Forwarding Confirmation - Receive Mail from someone@gmail.com";
+  const h = harness({ index: makeIndex([]) });
+  await deliver(alertMail({ from: "Gmail Team <forwarding-noreply@google.com>", subject, body: "Confirm." }), h.env);
+  assert.match(h.sent[0].text, /<code>987654321<\/code>/);
+  assert.equal(h.sent[0].disable_notification, undefined);
+  const forged = harness({ index: makeIndex([]) });
+  await deliver(alertMail({ from: "Gmail Team <forwarding-noreply@google.com>", subject, auth: "mx.cloudflare.net; dmarc=fail", body: "Confirm." }), forged.env);
+  assert.doesNotMatch(forged.sent[0].text, /Confirmation code/);
 });

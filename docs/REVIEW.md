@@ -418,6 +418,14 @@ and the step follows from the status on record. `/ask` is wired on both sides.
   Ferrovial, Eiffage, Surbana Jurong. Each was run through the bot's own code before being added. ReliefWeb's RSS was added
   and taken out again the same day: the final dry run showed `ROBOTS_DISALLOWED` (`Disallow: /*/rss.xml`).
 
+- **F102 · LinkedIn only reached the bot through JobSpy's searches · [fixed]** `linkedin_alerts` reads the alert emails the owner
+  subscribes to: a keyless, legitimate feed that does not depend on JobSpy's search working. The Worker stores a mail only
+  when Cloudflare's own first `Authentication-Results` header says `dmarc=pass`, and removes every link's parameters and
+  the footer first, because LinkedIn's links carry one-time sign-in tokens. Job links are rebuilt from the id. The record
+  shares JobSpy's id, so a job seen both ways is one job. Checked end to end on a built mail with real job ids (quoted-printable
+  with soft breaks, through the real Worker code, then a real run reading 7 of 7 texts); real LinkedIn mail and Email
+  Routing itself could not be tested from the development machine.
+
 ### Opportunities recorded (not bugs)
 
 - **O1 · inline Yes/No buttons for writes derived from free text, and buttons under digests (`callback_query`) · [partly done]**
@@ -445,16 +453,17 @@ and the step follows from the status on record. `/ask` is wired on both sides.
   the one-call variant is no longer needed.
 - **O10 · semantic matching with embeddings (F7) · [idea]** Second chances (F6) catch odd titles whose text carries known terms;
   embeddings would catch the rest ("Software Engineer, Maps"). Needs vectors per job and a threshold tuned on real data.
-- **O11 · LinkedIn alert emails through the Worker's `email()` handler · [waiting for the owner]** Ideas borrowed from career-ops. Probably
-  the largest single gain still open, untested. Needs Email Routing, which the owner postponed (step 10).
+- **O11 · LinkedIn alert emails through the Worker's `email()` handler · [built, F102]** The code is in; it starts when the owner sets
+  up Email Routing and forwarding (`cloudflare/README.md`, step 10). Other boards' alert mail (APEC, Cadremploi, Bayt) could
+  follow the same path: those sites refuse bots, but their alerts are delivered to the subscriber.
 - **O12 · `coverage-check`: why did the bot miss the posting I found by hand? · [idea]** `diagnose` covers a URL's scoring, not
   whether any source would have reached it.
 - **O13 · closure phrases ("this position has been filled") as a liveness check · [idea]**
 
 ## State of the review
 
-Every row above has a status. 101 findings: 100 fixed, 1 recorded as an idea (F7). Tests went from 280 to 863 (Python) and from 17
-to 41 (Worker). Not verifiable from the development machine, and therefore to watch in the next runs: the AI model chain
+Every row above has a status. 102 findings: 101 fixed, 1 recorded as an idea (F7). Tests went from 280 to 880 (Python) and from 17
+to 46 (Worker). Not verifiable from the development machine, and therefore to watch in the next runs: the AI model chain
 (the token lives in GitHub secrets; the last model of the chain is the one that worked before), France Travail live answers,
 and the first run after deployment, which rescores stored matches (`rescored_from_text` in the run summary) and may carry
 over alerts that were held back earlier (`carried_over`).

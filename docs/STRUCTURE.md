@@ -30,7 +30,7 @@ The columns come from separate live runs on the same day, so small differences b
                                         │
  discovery   career pages, sitemaps, search, Common Crawl
                                         │  boards and job pages found
- extraction  ATS APIs · public services · aggregators · feeds · JobSpy   (6 at a time)
+ extraction  ATS APIs · public services · aggregators · feeds · JobSpy · alert mail   (6 at a time)
                                         │  1,982 raw observations
  fusion      one record per posting                                      1,846 unique
                                         │
@@ -70,7 +70,7 @@ The counts are from the dry run of 2026-11-03 (empty state, no API keys, Common 
 
 **Replace candidate:** Common Crawl took 227 seconds, hit 504 errors and produced nothing accepted. Check `/sources` over a month and switch it off if that holds (`COMMONCRAWL_ENABLED=false`).
 
-**Replace candidate:** LinkedIn through JobSpy is the best non-French source, and it can stop working at any time. LinkedIn alert emails would be a sturdier way to get the same jobs ([decision 1](#decisions-for-the-owner)).
+**Replace candidate:** LinkedIn through JobSpy is the best non-French source, and its searches can stop working at any time. LinkedIn alert emails are now built as a sturdier way to get the same jobs. They start when Email Routing is set up ([decision 1](#decisions-for-the-owner)).
 
 ### 3. Fusion: keep
 
@@ -150,8 +150,9 @@ Dry run of 2026-11-03, from the development machine. *Reachable* means accepted 
 | `greenhouse` | 129 | 595 | 12 | 6 | 2 | keep; most of these firms hire engineers, not GIS staff |
 | `oracle` | 186 | 72 | 25 | 20 | 0 | keep; older but still open jobs |
 | `ashby` | 3 | 232 | 2 | 2 | 1 | keep, cheap |
-| `smartrecruiters` | 12 | 16 | 1 | 1 | 1 | your call, decision 4 |
-| `jobspy` Indeed | with LinkedIn | 17 | 4 | 0 | 0 | your call, decision 5 |
+| `smartrecruiters` | 12 | 16 | 1 | 1 | 1 | kept for now, decision 4 |
+| `jobspy` Indeed | with LinkedIn | 17 | 4 | 0 | 0 | kept for now, decision 5 |
+| `linkedin_alerts` (new) | | | | | | built, no real mail yet: starts with the setup in decision 1 |
 | `lever`, `recruitee`, `workable` boards | 11 | 83 | 0 | 0 | 0 | improve: review which boards are listed |
 | `remotive`, `jobicy`, `hn_hiring` | 7 | 7 | 0 | 0 | 0 | cheap; retire if a month of `/sources` agrees |
 | `bundesagentur`, `arbeitnow`, `remoteok` | 35 | 0 | 0 | 0 | 0 | same; Bundesagentur's postings are in German, which the bot skips |
@@ -175,7 +176,7 @@ Dry run of 2026-11-03, from the development machine. *Reachable* means accepted 
 | Idea | State |
 |---|---|
 | Guard against instructions inside postings | done this round |
-| Read LinkedIn alert emails | your decision (decision 1), probably the largest gain left |
+| Read LinkedIn alert emails | built (decision 1), probably the largest gain left, waiting for the setup |
 | `coverage-check`: why did the bot miss a posting I found by hand? | recorded as O12 |
 | Closure phrases as a check that a job is still open | recorded as O13 |
 | Degree counted as years of experience, repost rules | not needed yet |
@@ -201,10 +202,12 @@ Not to copy: spoofed browser identities, APIs forbidden by robots.txt, borrowed 
 
 ## Decisions for the owner
 
-1. **LinkedIn alert emails (the postponed step 10).** You set LinkedIn job alerts to arrive at a Cloudflare address and the Worker reads them. Recommended: it is probably the largest gain left, and it would rely less on JobSpy. It is untested, and it needs Email Routing on a domain.
-2. **ReliefWeb.** Request a free app name and set `RELIEFWEB_APPNAME`. Recommended: UN and NGO GIS jobs, often hired internationally, and the code is ready.
-3. **SmartRecruiters-wide search.** Roughly 3 to 5 jobs a week, but its terms bar "automatic means". Recommended: leave it out.
-4. **The current SmartRecruiters boards.** The API's `robots.txt` says `Disallow: /`, and the yield here was 1 job. Recommended: remove them.
-5. **Indeed through JobSpy.** It works by impersonating the iOS app, and gave no reachable job here. Recommended: `JOBSPY_SITES=linkedin`.
-6. **Reed (UK).** A free key, yield unknown. Worth trying if the UK is a real target.
-7. **Your skills.** SQL and PostGIS are what postings ask for most. If you know them, send `/skills add SQL PostGIS`: until then they count as missing.
+Answers of 2026-11-03: decision 1 is built and needs the setup below, 2 to 6 are skipped for now, 7 is done.
+
+1. **LinkedIn alert emails (step 10 of `cloudflare/README.md`).** Built: `geojobbot/scrapers/mail_alerts.py` and the Worker's `email()` handler. It needs a domain on Cloudflare and free Email Routing, not a mailbox. Real LinkedIn mail has not been through it yet, so the first alerts are the real test: check `/sources` for `linkedin_alerts`.
+2. **ReliefWeb.** Request a free app name and set `RELIEFWEB_APPNAME`. UN and NGO GIS jobs, often hired internationally, and the code is ready.
+3. **SmartRecruiters-wide search.** Roughly 3 to 5 jobs a week, but its terms bar "automatic means". Left out.
+4. **The current SmartRecruiters boards.** The API's `robots.txt` says `Disallow: /`, and the yield here was 1 job. Still running.
+5. **Indeed through JobSpy.** It works by impersonating the iOS app, and gave no reachable job here. Still running; `JOBSPY_SITES=linkedin` would stop it.
+6. **Reed (UK).** A free key, yield unknown. Not tried.
+7. **Your skills.** SQL and PostGIS added with `/skills`. Done.

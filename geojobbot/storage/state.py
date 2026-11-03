@@ -7,6 +7,7 @@ Layout (keys are relative to STATE_PREFIX):
   runs/<YYYY-MM-DD>/<run>.json.gz         run report + match diagnostics
   runs/latest.json                        latest run summary (small, uncompressed)
   raw/<YYYY-MM-DD>/<run>/<source>.jsonl.gz raw normalised snapshots (retention: RAW_RETENTION_DAYS)
+  mail-alerts/<received>-<id>.json        job-alert mail left by the Worker, links without parameters (kept 7 days)
 
 Integrity strategy:
 * A single PUT is atomic in R2, so the state object is always a complete document.

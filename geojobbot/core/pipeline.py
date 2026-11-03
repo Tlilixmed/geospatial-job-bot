@@ -33,6 +33,7 @@ from ..scrapers.ats.detect import parse_board_url
 from ..scrapers.ats.more_ats import all_adapters
 from ..scrapers.aggregators import FreehireBackend, WorkableSearchBackend
 from ..scrapers.community import HackerNewsHiringBackend
+from ..scrapers.mail_alerts import MailAlertsBackend
 from ..scrapers.official import BundesagenturBackend, EuresBackend, FranceTravailBackend, JobBankBackend
 from ..scrapers.base import Backend, RunContext
 from ..scrapers.feeds import (AdzunaBackend, ArbeitnowBackend, HimalayasBackend, JobicyBackend, JobSpyBackend,
@@ -81,13 +82,14 @@ def build_store(settings) -> ObjectStore:
     return LocalStore(settings.local_state_dir)
 
 
-def build_backends(settings, sponsor_data=None) -> list[Backend]:
-    """`sponsor_data`: callable returning the sponsor registers' data, for the employer prospector."""
+def build_backends(settings, sponsor_data=None, manager=None) -> list[Backend]:
+    """`sponsor_data`: callable returning the sponsor registers' data, for the employer prospector. `manager`: the state
+    manager, whose bucket holds the alert mail the Worker received."""
     sources = settings.sources or {}
     ats_cfg = sources.get("ats", {}) or {}
     adapters = all_adapters()
     # The sources that answer in seconds and yield the most go first: they must not wait for slots behind Workday.
-    backends: list[Backend] = [EuresBackend(), WorkableSearchBackend()]
+    backends: list[Backend] = [EuresBackend(), WorkableSearchBackend(), MailAlertsBackend(manager)]
     for name, adapter in adapters.items():
         slugs = [ref.slug for ref in (parse_board_url(name, s) for s in ats_cfg.get(name, []) or [] if s) if ref]
         backends.append(ATSBackend(adapter, slugs))
@@ -247,7 +249,7 @@ class Pipeline:
         ctx = RunContext(settings, client, state, run_id=self.run_id, now=self.now, registry=registry,
                          match_config=settings.match_config())
         backends = self.backends if self.backends is not None else build_backends(
-            settings, sponsor_data=lambda: self._sponsor_registry(manager).data if settings.sponsor_registers else None)
+            settings, sponsor_data=lambda: self._sponsor_registry(manager).data if settings.sponsor_registers else None, manager=manager)
 
         raws = []
         for phase in ("discovery", "extraction"):

@@ -128,12 +128,44 @@ It uses the `GITHUB_TOKEN` (*Actions: Read and write* covers listing runs) and t
 Cost: 24 invocations a day, each one R2 `head()` and at most four GitHub requests; Workers Free allows 5 Cron
 Triggers. To see the effect, compare `event` = `schedule` with `workflow_dispatch` in the scraper's run list.
 
-## 10. Optional: employer replies by email become outcomes
-If your domain is on Cloudflare (a portfolio site is enough), **Email Routing** can hand mail to this Worker:
+## 10. Optional: LinkedIn job alerts and employer replies by email
+You need a domain, and its DNS must be on Cloudflare (the free plan is enough). You do **not** need a mailbox or paid
+email: **Email Routing** is free and hands the mail straight to this Worker, which keeps nothing but the job lines.
 
-1. Cloudflare dashboard → your domain → **Email → Email Routing → Enable** (it adds the MX records).
-2. **Custom addresses → Create address**: e.g. `jobs@yourdomain`, action **Send to a Worker** → `geojobbot-telegram`.
-3. Use that address on your applications (or forward employer mail to it).
+**a. Put the domain on Cloudflare** (skip if it is already there). Cloudflare dashboard → **Add a domain** → Free plan → check
+that the imported DNS records look complete → change the nameservers at your registrar to the two Cloudflare gives you. It
+can take up to 24 hours. If the domain already receives mail somewhere, stop here: step b replaces its MX records.
+
+**b. Turn on Email Routing.** **Compute → Email Service → Email Routing → Onboard Domain**, pick the domain, accept the DNS
+records (on older dashboards: your domain → **Email → Email Routing**). You can skip "destination addresses": they are only
+for forwarding to a mailbox.
+
+**c. Create the address.** **Routing Rules → Create routing rule**. Email pattern: something hard to guess, such as
+`alerts-k7m2q`. Action: **Send to a Worker**, Worker: `geojobbot-telegram`. Do not use a catch-all, and do not put the address
+in this public repository.
+
+**d. Forward the alerts to it.** LinkedIn sends alerts to your account's main address, so forward them from that inbox. In Gmail:
+1. **Settings → Forwarding and POP/IMAP → Add a forwarding address**, enter the address. The confirmation code arrives in
+   Telegram, because this Worker is that address's only reader. Enter it in Gmail and choose **Verify**. There is no need to
+   forward all your mail.
+2. Search box → **Show search options**. From: `jobalerts-noreply@linkedin.com OR jobs-listings@linkedin.com` → **Create filter** →
+   **Forward it to** the address → **Create filter**.
+
+**e. Create the alerts on LinkedIn.** **Jobs**, search a title and a place, **Set alert**, daily, by email. Titles in both
+languages and the countries you target, for example `GIS` and `Géomaticien` in France, `GIS Analyst` in Canada.
+
+**f. Check it.** The first alert brings *📬 LinkedIn alert received, N job links*. After the next scraper run, `/sources` lists
+`linkedin_alerts`. Two messages mean something needs a look: *failed the sender check* (the mail did not prove it came from
+LinkedIn) and *no job link I recognise* (a mail with no jobs, which is normal for "you created an alert"; if real alerts do
+it, their format changed). `/sources` showing `linkedin_alerts` as PARTIAL also points to a format change.
+
+What the bot does with an alert: the Worker accepts it only when Cloudflare reports `dmarc=pass` for LinkedIn's domain, removes
+every link's parameters (LinkedIn's carry one-time sign-in tokens) and the footer that names you, and leaves the rest in the
+bucket for a week (`mail-alerts/`). Each scraper run reads the jobs and fetches up to 12 posting texts through JobSpy's LinkedIn
+reader, so the normal rules apply. A posting whose text cannot be read stays title-only evidence, at most *Possible*.
+
+**Employer replies** can use the same address, or a second rule such as `jobs@yourdomain`: use it on your applications, or forward
+employer mail to it.
 
 Each mail is matched to one of your applications by the sender's domain or the company name, read for its meaning
 (rejection, interview invitation, offer, acknowledgement; English and French wording) and, when the reading is clear
